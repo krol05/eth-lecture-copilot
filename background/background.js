@@ -41,7 +41,7 @@ async function callClaudeGuide(transcriptText, systemPrompt, model, apiKey) {
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model, max_tokens: 16000, temperature: 0.1,
+      model, max_tokens: 8192, temperature: 0.1,
       system: systemPrompt,
       messages: [{ role: 'user', content: transcriptText }]
     })
@@ -56,7 +56,7 @@ async function callOpenAIGuide(transcriptText, systemPrompt, model, apiKey) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model, temperature: 0.1,
+      model, temperature: 0.1, max_tokens: 8192,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: systemPrompt },
