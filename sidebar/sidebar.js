@@ -265,9 +265,12 @@
 
     const section = document.createElement('div');
     section.id = 'manual-paste-section';
-    section.style.cssText = 'padding: 12px 14px; border-top: 1px solid var(--border);';
+    section.style.cssText = 'padding: 12px 14px; border-top: 1px solid var(--border); position: relative;';
     section.innerHTML = `
-      <p class="section-label" style="margin-bottom: 8px;">Manual Transcript</p>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <p class="section-label" style="margin:0;">Manual Transcript</p>
+        <button id="close-manual-btn" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;" title="Close">&times;</button>
+      </div>
       <textarea id="manual-transcript" placeholder="Paste transcript here (plain text with optional [HH:MM:SS] timestamps)…"
         style="width:100%;height:120px;resize:vertical;background:var(--bg-2);border:1px solid var(--border);
                border-radius:8px;color:var(--text-primary);font-size:12px;padding:8px;outline:none;font-family:inherit;"></textarea>
@@ -276,6 +279,10 @@
       </button>
     `;
     document.getElementById('tab-guide').insertBefore(section, guideEmpty);
+
+    document.getElementById('close-manual-btn').addEventListener('click', () => {
+      section.remove();
+    });
 
     document.getElementById('use-manual-btn').addEventListener('click', () => {
       const text = document.getElementById('manual-transcript').value.trim();
@@ -287,7 +294,7 @@
         lectureUrl: currentLectureUrl,
         videoDuration: 0
       };
-      section.style.display = 'none';
+      section.remove();
       setStatus('ready', 'Manual transcript loaded');
       updateGenerateButton();
     });
@@ -348,6 +355,8 @@
 
       setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
       showGuideContent();
+      const mp = document.getElementById('manual-paste-section');
+      if (mp) mp.remove();
 
     } catch (err) {
       console.error('[Copilot] GENERATE_GUIDE error:', err.message);
