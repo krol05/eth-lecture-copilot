@@ -419,20 +419,42 @@ Now process the following transcript:`;
 
   function toSeconds(v) {
     if (typeof v === 'number' && isFinite(v)) return v;
+
     if (typeof v === 'string') {
-      const hms = v.match(/^(\d+):(\d+):(\d+)$/);
-      if (hms) return +hms[1] * 3600 + +hms[2] * 60 + +hms[3];
-      const ms = v.match(/^(\d+):(\d+)$/);
-      if (ms) return +ms[1] * 60 + +ms[2];
-      const n = parseFloat(v);
+      const s = v.trim();
+      if (!s) return 0;
+
+      // HH:MM:SS(.ms)  (also supports comma decimals)
+      const hms = s.match(/^(\d+):(\d+):(\d+(?:[.,]\d+)?)$/);
+      if (hms) {
+        const h = +hms[1];
+        const m = +hms[2];
+        const sec = parseFloat(hms[3].replace(',', '.'));
+        if (isFinite(h) && isFinite(m) && isFinite(sec)) return h * 3600 + m * 60 + sec;
+      }
+
+      // MM:SS(.ms)
+      const ms = s.match(/^(\d+):(\d+(?:[.,]\d+)?)$/);
+      if (ms) {
+        const m = +ms[1];
+        const sec = parseFloat(ms[2].replace(',', '.'));
+        if (isFinite(m) && isFinite(sec)) return m * 60 + sec;
+      }
+
+      // Raw numeric string (including decimals)
+      const normalized = s.replace(',', '.');
+      const n = parseFloat(normalized);
       if (isFinite(n)) return n;
     }
+
     return 0;
   }
 
   function sanitizeGuide(g) {
     if (!Array.isArray(g.guide)) return g;
-    g.guide = g.guide.map(b => ({
+
+    // Coerce timestamps first
+    const blocks = g.guide.map(b => ({
       start_time: toSeconds(b.start_time),
       end_time: toSeconds(b.end_time),
       title: b.title ?? 'Untitled Section',
@@ -441,6 +463,26 @@ Now process the following transcript:`;
       definitions: Array.isArray(b.definitions) ? b.definitions : [],
       notes: typeof b.notes === 'string' ? b.notes : ''
     }));
+
+    // Sort by time (some models may output blocks slightly out of order)
+    blocks.sort((a, b) => (a.start_time - b.start_time));
+
+    // Ensure each block has a valid [start, end) range.
+    for (let i = 0; i < blocks.length; i++) {
+      const cur = blocks[i];
+      const next = blocks[i + 1];
+
+      // Clamp negatives
+      if (!isFinite(cur.start_time) || cur.start_time < 0) cur.start_time = 0;
+      if (!isFinite(cur.end_time) || cur.end_time < 0) cur.end_time = 0;
+
+      // Fix missing/invalid end_time by using next start_time (or +1s)
+      if (!isFinite(cur.end_time) || cur.end_time <= cur.start_time) {
+        cur.end_time = next ? next.start_time : (cur.start_time + 1);
+      }
+    }
+
+    g.guide = blocks;
     return g;
   }
 
