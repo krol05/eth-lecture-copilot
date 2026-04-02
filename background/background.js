@@ -12,8 +12,13 @@
  * Responds with: { success: true, data: ... } or { success: false, error: string }
  */
 
-// Inline the providers and prompts logic (service workers can't import content script files directly)
-// We duplicate the API call logic here since importScripts is limited in MV3.
+// Default model per provider — best current option as of 2025
+// Users don't select a model; the extension always uses the best one.
+const DEFAULT_MODELS = {
+  gemini: 'gemini-2.5-flash',        // 1M context, fast, cheap, best for long transcripts
+  claude: 'claude-sonnet-4-5',       // 200k context, excellent instruction following
+  openai: 'gpt-4.1-mini'            // 1M context, fast, cost-efficient
+};
 
 // ─── API Helpers ─────────────────────────────────────────────────────────────
 
@@ -165,7 +170,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleMessage(message) {
-  const { type, provider, model, apiKey } = message;
+  const { type, provider, apiKey } = message;
+  const model = message.model || DEFAULT_MODELS[provider];
 
   switch (type) {
 

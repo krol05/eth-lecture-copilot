@@ -140,6 +140,11 @@ body {
   line-height: 1.4;
 }
 
+.model-badge {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* API key row */
 .key-input-row {
   display: flex;
