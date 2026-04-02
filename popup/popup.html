@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ETH Lecture Copilot Settings</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="popup-header">
+    <svg class="logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+    </svg>
+    <div>
+      <div class="app-name">ETH Lecture Copilot</div>
+      <div class="app-sub">AI-powered study assistant</div>
+    </div>
+  </header>
+
+  <main class="popup-body">
+
+    <div class="field-group">
+      <label class="field-label" for="provider-select">AI Provider</label>
+      <select id="provider-select" class="field-select">
+        <option value="gemini">Google Gemini</option>
+        <option value="claude">Anthropic Claude</option>
+        <option value="openai">OpenAI GPT</option>
+      </select>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label" for="model-select">Model</label>
+      <select id="model-select" class="field-select">
+        <!-- Populated by popup.js -->
+      </select>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label" for="api-key-input">
+        API Key
+        <a id="api-key-link" href="#" class="label-link" target="_blank">Get key ↗</a>
+      </label>
+      <div class="key-input-row">
+        <input type="password" id="api-key-input" class="field-input" placeholder="Paste your API key…" autocomplete="off">
+        <button id="toggle-key" class="icon-btn" title="Show/hide key">
+          <svg id="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+          <svg id="eye-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+        </button>
+      </div>
+      <p class="field-hint">Stored locally in your browser. Never sent anywhere except the AI provider.</p>
+    </div>
+
+    <button id="save-btn" class="save-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+        <polyline points="17 21 17 13 7 13 7 21"/>
+        <polyline points="7 3 7 8 15 8"/>
+      </svg>
+      Save Settings
+    </button>
+
+    <div id="status-msg" class="status-msg" style="display:none"></div>
+
+    <div class="divider"></div>
+
+    <div class="info-section">
+      <div class="info-row">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-label">Not configured</span>
+      </div>
+      <p class="info-hint">Open a lecture on <strong>video.ethz.ch</strong> to use the copilot.</p>
+    </div>
+
+  </main>
+
+  <footer class="popup-footer">
+    <span>ETH Lecture Copilot v1.0</span>
+    <a href="https://github.com/krol05/eth-lecture-copilot" target="_blank" class="footer-link">GitHub ↗</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

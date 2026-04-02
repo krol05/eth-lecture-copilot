@@ -1,0 +1,257 @@
+/* popup.css — ETH Lecture Copilot settings popup */
+
+:root {
+  --bg-0: #0f1117;
+  --bg-1: #161b22;
+  --bg-2: #1e2430;
+  --bg-3: #252d3a;
+  --border: rgba(255, 255, 255, 0.08);
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #586069;
+  --accent: #7ca1fd;
+  --accent-hover: #9ab4ff;
+  --success: #3fb950;
+  --error: #f85149;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+[data-theme="light"] {
+  --bg-0: #ffffff;
+  --bg-1: #f6f8fa;
+  --bg-2: #eaeef2;
+  --bg-3: #d0d7de;
+  --border: rgba(0, 0, 0, 0.1);
+  --text-primary: #1f2328;
+  --text-secondary: #57606a;
+  --text-muted: #8c959f;
+  --accent: #215caf;
+  --accent-hover: #014083;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  background: var(--bg-0);
+  color: var(--text-primary);
+  width: 320px;
+  min-height: 100px;
+}
+
+/* ─── Header ──────────────────────────────────────────────────────────────── */
+.popup-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 16px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+}
+
+.logo {
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.app-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.app-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ─── Body ────────────────────────────────────────────────────────────────── */
+.popup-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ─── Fields ──────────────────────────────────────────────────────────────── */
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.label-link {
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+.label-link:hover { text-decoration: underline; }
+
+.field-select, .field-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color 0.15s;
+  appearance: none;
+}
+
+.field-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+  cursor: pointer;
+}
+
+.field-select:focus, .field-input:focus {
+  border-color: var(--accent);
+}
+
+.field-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* API key row */
+.key-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.key-input-row .field-input { flex: 1; }
+
+.icon-btn {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+.icon-btn:hover { color: var(--text-primary); border-color: var(--border); }
+.icon-btn svg { width: 14px; height: 14px; }
+
+/* ─── Save Button ─────────────────────────────────────────────────────────── */
+.save-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 9px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.save-btn:hover { background: var(--accent-hover); }
+.save-btn svg { width: 14px; height: 14px; }
+
+/* ─── Status Message ──────────────────────────────────────────────────────── */
+.status-msg {
+  font-size: 12px;
+  text-align: center;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+}
+.status-msg.success { background: rgba(63,185,80,0.12); color: var(--success); }
+.status-msg.error   { background: rgba(248,81,73,0.12);  color: var(--error); }
+
+/* ─── Divider ─────────────────────────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0 -16px;
+  width: calc(100% + 32px);
+}
+
+/* ─── Info Section ────────────────────────────────────────────────────────── */
+.info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+.status-dot.ready   { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.status-dot.missing { background: var(--error); }
+
+.info-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.info-hint strong { color: var(--text-secondary); font-weight: 600; }
+
+/* ─── Footer ──────────────────────────────────────────────────────────────── */
+.popup-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-1);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.footer-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 11px;
+}
+.footer-link:hover { text-decoration: underline; }
