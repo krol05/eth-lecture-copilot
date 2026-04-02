@@ -60,7 +60,7 @@ Works with pretty much any major provider. Just pick one in the popup, paste you
 2. Open `chrome://extensions` in Chrome (or any Chromium browser)
 3. Enable **Developer mode** (top right)
 4. Click **Load unpacked** and select the repo folder
-5. Navigate to any lecture on [video.ethz.ch](https://video.ethz.ch) -the sidebar appears automatically
+5. Navigate to any lecture on [video.ethz.ch](https://video.ethz.ch) - the sidebar appears automatically
 6. Click the extension icon in the toolbar to set your AI provider and API key
 
 ## Usage
@@ -68,7 +68,7 @@ Works with pretty much any major provider. Just pick one in the popup, paste you
 1. Open a lecture on video.ethz.ch
 2. The extension detects the transcript automatically
 3. Click **Generate Guide** in the sidebar
-4. Browse the guide while watching -it follows along with the video
+4. Browse the guide while watching - it follows along with the video
 5. Switch to the **Q&A** tab to ask questions about the material
 
 If automatic transcript detection doesn't work for a particular lecture, you can always paste the transcript manually.
