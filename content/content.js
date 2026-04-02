@@ -26,6 +26,9 @@
   let timestampInterval = null;
   let lastBlockIndex = -1;
   let speedOverlayTimeout = null;
+  let extractionGen = 0;
+  let lastKnownHref = '';
+  let lectureNavDebounce = null;
 
   const SIDEBAR_WIDTH = '380px';
   const SIDEBAR_MIN_WIDTH = 280;
@@ -38,6 +41,7 @@
     if (!isLecturePage()) return;
 
     // Wait for the video element to appear (Paella loads dynamically)
+    lastKnownHref = location.href;
     waitForVideo().then(video => {
       videoEl = video;
       enableVideoCORS(video);
@@ -46,6 +50,8 @@
       initKeyboardShortcuts();
       initiateTranscriptExtraction();
     });
+
+    installLectureNavigationWatch();
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
@@ -70,6 +76,49 @@
     try {
       video.crossOrigin = 'anonymous';
     } catch (_) {}
+  }
+
+  function installLectureNavigationWatch() {
+    lastKnownHref = location.href;
+
+    const onHrefMaybeChanged = () => {
+      if (location.href === lastKnownHref) return;
+      lastKnownHref = location.href;
+      scheduleLectureSoftReload();
+    };
+
+    window.addEventListener('popstate', onHrefMaybeChanged);
+    const _pushState = history.pushState;
+    const _replaceState = history.replaceState;
+    history.pushState = function () {
+      const r = _pushState.apply(this, arguments);
+      queueMicrotask(onHrefMaybeChanged);
+      return r;
+    };
+    history.replaceState = function () {
+      const r = _replaceState.apply(this, arguments);
+      queueMicrotask(onHrefMaybeChanged);
+      return r;
+    };
+
+    // Some SPAs update the URL without hooking history; poll as fallback.
+    setInterval(() => {
+      if (location.href !== lastKnownHref) onHrefMaybeChanged();
+    }, 1500);
+  }
+
+  function scheduleLectureSoftReload() {
+    clearTimeout(lectureNavDebounce);
+    lectureNavDebounce = setTimeout(() => {
+      if (!isLecturePage()) return;
+      postToSidebar({ type: 'EXTENSION_READY', lectureUrl: location.href });
+      waitForVideo(15000).then(video => {
+        videoEl = video;
+        if (video) enableVideoCORS(video);
+        startTimestampSync();
+        initiateTranscriptExtraction();
+      });
+    }, 400);
   }
 
   function waitForVideo(timeout = 15000) {
@@ -234,14 +283,16 @@
   // ─── Transcript Extraction ───────────────────────────────────────────────────
 
   function initiateTranscriptExtraction() {
+    const gen = ++extractionGen;
     postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'extracting' });
 
     const maxAttempts = 8;
     const retryDelayMs = 1500;
 
     const attemptExtraction = (attempt) => {
+      if (gen !== extractionGen) return;
       const fallbackVtt = findCaptionsUrlFromPage();
-      if (fallbackVtt) return fetchAndPublishVtt(fallbackVtt, null);
+      if (fallbackVtt) return fetchAndPublishVtt(fallbackVtt, null, gen);
 
       const eventCandidates = extractCandidateEventIds();
       if (!eventCandidates.length) {
@@ -249,16 +300,19 @@
           setTimeout(() => attemptExtraction(attempt + 1), retryDelayMs);
           return;
         }
+        if (gen !== extractionGen) return;
         postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'no_event_id' });
         return;
       }
 
       const tryCandidate = (idx) => {
+        if (gen !== extractionGen) return;
         if (idx >= eventCandidates.length) {
           if (attempt < maxAttempts - 1) {
             setTimeout(() => attemptExtraction(attempt + 1), retryDelayMs);
             return;
           }
+          if (gen !== extractionGen) return;
           postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'no_event_id' });
           return;
         }
@@ -267,6 +321,7 @@
         chrome.runtime.sendMessage(
           { type: 'FETCH_JSON', url: `https://dist.tobira.ethz.ch/mh_default_org/engage-player/${eventId}/data.json` },
           response => {
+            if (gen !== extractionGen) return;
             if (!response || !response.success) {
               tryCandidate(idx + 1);
               return;
@@ -277,7 +332,7 @@
               tryCandidate(idx + 1);
               return;
             }
-            fetchAndPublishVtt(vttUrl, eventId);
+            fetchAndPublishVtt(vttUrl, eventId, gen);
           }
         );
       };
@@ -288,8 +343,9 @@
     attemptExtraction(0);
   }
 
-  function fetchAndPublishVtt(vttUrl, eventId) {
+  function fetchAndPublishVtt(vttUrl, eventId, gen) {
     chrome.runtime.sendMessage({ type: 'FETCH_VTT', url: vttUrl }, vttResp => {
+      if (gen !== extractionGen) return;
       if (!vttResp || !vttResp.success) {
         postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'error', error: vttResp?.error || 'VTT request failed' });
         return;
