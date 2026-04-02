@@ -35,13 +35,13 @@ const PROVIDER_MAP = {
 // Default model per provider — first/best model in the list
 const DEFAULT_MODELS = {
   anthropic:  'claude-sonnet-4-6',
-  openai:     'gpt-5.4-mini',
+  openai:     'gpt-4o',
   google:     'gemini-2.5-flash',
   xai:        'grok-4',
-  deepseek:   'deepseek-v4',
+  deepseek:   'deepseek-chat',
   mistral:    'mistral-large-latest',
   openrouter: 'anthropic/claude-sonnet-4-6',
-  groq:       'llama-4-maverick-17b-128e-instruct',
+  groq:       'meta-llama/llama-4-maverick-17b-128e-instruct',
   together:   'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
   cerebras:   'llama-4-scout-17b-16e-instruct'
 };
