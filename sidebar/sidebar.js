@@ -16,7 +16,7 @@
   'use strict';
 
   // ─── State ────────────────────────────────────────────────────────────────
-  let transcript = null;      // { cues, text, lectureTitle, videoDuration }
+  let transcript = null;      // { cues, text, lectureTitle, lectureUrl, videoDuration }
   let guide = null;           // parsed guide JSON
   let settings = null;        // { provider, model, apiKey }
   let currentBlockIndex = -1;
@@ -25,6 +25,7 @@
   let isChatting = false;
   let requestIdCounter = 0;
   const pendingRequests = {};
+  let currentLectureUrl = null;
 
   // ─── DOM Refs ─────────────────────────────────────────────────────────────
   const statusBar    = document.getElementById('status-bar');
@@ -42,11 +43,11 @@
   const attachCb     = document.getElementById('attach-frame-cb');
   const framePreview = document.getElementById('frame-preview-label');
   const themeToggle  = document.getElementById('theme-toggle');
+  const regenerateBtn = document.getElementById('regenerate-btn');
 
   // ─── Init ─────────────────────────────────────────────────────────────────
 
   function init() {
-    // Request settings from content script
     postToContent({ type: 'GET_SETTINGS' });
 
     // Tab switching
@@ -54,29 +55,81 @@
       btn.addEventListener('click', () => switchTab(btn.dataset.tab));
     });
 
-    // Theme toggle
     themeToggle.addEventListener('click', toggleTheme);
     applyStoredTheme();
 
-    // Generate button
     generateBtn.addEventListener('click', onGenerateClick);
+    regenerateBtn.addEventListener('click', onRegenerateClick);
 
-    // Q&A input
+    document.getElementById('manual-paste-link').addEventListener('click', e => {
+      e.preventDefault();
+      showManualPasteOption();
+    });
+
     qaInput.addEventListener('input', onQaInputChange);
     qaInput.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQaMessage(); }
     });
     qaSend.addEventListener('click', sendQaMessage);
 
-    // Attach frame checkbox
     attachCb.addEventListener('change', () => {
       framePreview.style.display = attachCb.checked ? 'inline' : 'none';
     });
 
-    // Listen for messages from content script
     window.addEventListener('message', onContentMessage);
 
     setStatus('loading', 'Waiting for video page…');
+  }
+
+  function tryRestoreFromCache(lectureUrl) {
+    if (!lectureUrl) return;
+    currentLectureUrl = lectureUrl;
+    chrome.storage?.local?.get(['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages'], saved => {
+      if (saved.currentLectureUrl !== lectureUrl) {
+        chrome.storage?.local?.remove(['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages']);
+        resetGuideUI();
+        setStatus('loading', 'New lecture detected — waiting for transcript…');
+        return;
+      }
+      if (saved.currentGuide?.guide?.length) {
+        guide = saved.currentGuide;
+        setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
+        showGuideContent();
+      }
+      if (saved.currentTranscript) {
+        transcript = saved.currentTranscript;
+        updateGenerateButton();
+      }
+      if (Array.isArray(saved.currentQaMessages) && saved.currentQaMessages.length) {
+        qaMessages = saved.currentQaMessages;
+        restoreChatUI();
+      }
+    });
+  }
+
+  function resetGuideUI() {
+    guide = null;
+    transcript = null;
+    currentBlockIndex = -1;
+    qaMessages = [];
+    isGenerating = false;
+    guideContent.style.display = 'none';
+    guideEmpty.style.display = '';
+    generateError.style.display = 'none';
+    generateBtn.disabled = true;
+    generateBtn.querySelector('.btn-text').textContent = 'Generate Guide';
+    generateBtn.querySelector('.btn-spinner').style.display = 'none';
+    qaMessages_el.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture. I have the full transcript and guide as context.</p></div>';
+    const manualSection = document.getElementById('manual-paste-section');
+    if (manualSection) manualSection.remove();
+  }
+
+  function restoreChatUI() {
+    const welcome = qaMessages_el.querySelector('.qa-welcome');
+    if (welcome) welcome.remove();
+    for (const m of qaMessages) {
+      appendChatMsg(m.role, m.content, !!m.imageBase64);
+    }
   }
 
   // ─── Message Handling ─────────────────────────────────────────────────────
@@ -89,6 +142,7 @@
 
       case 'EXTENSION_READY':
         setStatus('loading', 'Detecting transcript…');
+        tryRestoreFromCache(msg.lectureUrl);
         break;
 
       case 'SETTINGS':
@@ -125,6 +179,7 @@
   }
 
   function postToContent(msg) {
+    msg._copilot = true;
     window.parent.postMessage(msg, '*');
   }
 
@@ -133,9 +188,19 @@
   }
 
   function apiRequest(payload) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const id = makeRequestId();
+      const timeoutMs = payload?.type === 'GENERATE_GUIDE' ? 180000 : 120000;
+      const timer = setTimeout(() => {
+        delete pendingRequests[id];
+        reject(new Error('Request timed out. Please try again or switch model/provider.'));
+      }, timeoutMs);
       pendingRequests[id] = resolve;
+      const originalResolve = pendingRequests[id];
+      pendingRequests[id] = (data) => {
+        clearTimeout(timer);
+        originalResolve(data);
+      };
       postToContent({ type: 'API_REQUEST', requestId: id, payload });
     });
   }
@@ -171,12 +236,18 @@
   }
 
   function handleTranscriptReady(msg) {
+    if (msg.lectureUrl) currentLectureUrl = msg.lectureUrl;
     transcript = {
       cues: msg.cues,
       text: msg.transcriptText,
       lectureTitle: msg.lectureTitle,
+      lectureUrl: msg.lectureUrl || currentLectureUrl,
       videoDuration: msg.videoDuration
     };
+    chrome.storage?.local?.set({
+      currentTranscript: transcript,
+      currentLectureUrl: currentLectureUrl
+    });
     setStatus('ready', `Transcript loaded · ${msg.cues.length} cues`);
     updateGenerateButton();
   }
@@ -206,6 +277,7 @@
         cues: [],
         text,
         lectureTitle: document.title || 'Lecture',
+        lectureUrl: currentLectureUrl,
         videoDuration: 0
       };
       section.style.display = 'none';
@@ -218,16 +290,16 @@
 
   function updateGenerateButton() {
     const hasTranscript = transcript && transcript.text;
-    const hasSettings = settings && settings.apiKey;
+    const hasSettings = hasUsableSettings();
     generateBtn.disabled = !hasTranscript || !hasSettings || isGenerating;
 
-    if (!settings?.apiKey) {
+    if (!hasSettings) {
       generateBtn.title = 'Set your API key in the extension popup first';
     }
   }
 
   async function onGenerateClick() {
-    if (isGenerating || !transcript || !settings?.apiKey) return;
+    if (isGenerating || !transcript || !hasUsableSettings()) return;
     isGenerating = true;
 
     generateBtn.disabled = true;
@@ -236,39 +308,71 @@
     generateError.style.display = 'none';
     setStatus('loading', 'Generating guide…');
 
-    // Build the guide prompt inline (duplicated here to avoid cross-origin script issues)
     const systemPrompt = buildGuidePrompt();
+    const payload = {
+      type: 'GENERATE_GUIDE',
+      transcriptText: transcript.text,
+      systemPrompt,
+      provider: settings.provider,
+      model: settings.model || null,
+      apiKey: settings.apiKey,
+      localBase: getLocalBase()
+    };
+
+    console.log('[Copilot] Sending GENERATE_GUIDE', {
+      provider: payload.provider,
+      model: payload.model,
+      transcriptLen: payload.transcriptText?.length,
+      hasApiKey: !!payload.apiKey,
+      localBase: payload.localBase || '(none)'
+    });
 
     try {
-      const response = await apiRequest({
-        type: 'GENERATE_GUIDE',
-        transcriptText: transcript.text,
-        systemPrompt,
-        provider: settings.provider,
-        model: null, // background picks DEFAULT_MODELS[provider]
-        apiKey: settings.apiKey
-      });
+      const response = await apiRequest(payload);
+      console.log('[Copilot] GENERATE_GUIDE response received', { success: response.success });
 
       if (!response.success) throw new Error(response.error);
 
       guide = response.data;
       guide = sanitizeGuide(guide);
 
-      // Store guide for Q&A context
-      chrome.storage?.local?.set({ currentGuide: guide });
+      chrome.storage?.local?.set({ currentGuide: guide, currentLectureUrl: currentLectureUrl });
+      saveToHistory();
 
       setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
       showGuideContent();
 
     } catch (err) {
+      console.error('[Copilot] GENERATE_GUIDE error:', err.message);
       generateError.textContent = err.message;
       generateError.style.display = 'block';
       setStatus('error', 'Guide generation failed');
+      showManualPasteOption();
     } finally {
       isGenerating = false;
       generateBtn.querySelector('.btn-text').textContent = 'Generate Guide';
       generateBtn.querySelector('.btn-spinner').style.display = 'none';
       updateGenerateButton();
+    }
+  }
+
+  function onRegenerateClick() {
+    guide = null;
+    currentBlockIndex = -1;
+    qaMessages = [];
+    guideContent.style.display = 'none';
+    guideEmpty.style.display = '';
+    generateError.style.display = 'none';
+    chrome.storage?.local?.remove(['currentGuide', 'currentQaMessages']);
+    qaMessages_el.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture. I have the full transcript and guide as context.</p></div>';
+    const manualSection = document.getElementById('manual-paste-section');
+    if (manualSection) manualSection.remove();
+
+    updateGenerateButton();
+    if (transcript?.text) {
+      setStatus('ready', `Transcript loaded · ready to generate`);
+    } else {
+      setStatus('loading', 'Waiting for transcript…');
     }
   }
 
@@ -429,7 +533,7 @@ Now process the following transcript:`;
 
   function onQaInputChange() {
     const hasText = qaInput.value.trim().length > 0;
-    const hasSettings = settings?.apiKey;
+    const hasSettings = hasUsableSettings();
     const hasTranscript = transcript?.text;
     qaSend.disabled = !hasText || !hasSettings || !hasTranscript || isChatting;
     // Auto-resize textarea
@@ -439,7 +543,7 @@ Now process the following transcript:`;
 
   async function sendQaMessage() {
     const text = qaInput.value.trim();
-    if (!text || isChatting || !settings?.apiKey || !transcript?.text) return;
+    if (!text || isChatting || !hasUsableSettings() || !transcript?.text) return;
 
     isChatting = true;
     qaSend.disabled = true;
@@ -471,8 +575,9 @@ Now process the following transcript:`;
         messages: qaMessages.map(m => ({ role: m.role, content: m.content, imageBase64: m.imageBase64 })),
         systemPrompt,
         provider: settings.provider,
-        model: null, // background picks DEFAULT_MODELS[provider]
+        model: settings.model || null,
         apiKey: settings.apiKey,
+        localBase: getLocalBase(),
         imageBase64
       });
 
@@ -483,6 +588,7 @@ Now process the following transcript:`;
       const assistantText = response.data;
       qaMessages.push({ role: 'assistant', content: assistantText });
       appendChatMsg('assistant', assistantText, false);
+      persistChat();
 
     } catch (err) {
       typingEl.remove();
@@ -561,11 +667,106 @@ ${guideStr}`;
       .replace(/<p><\/p>/g, '');
   }
 
+  // ─── History Persistence ──────────────────────────────────────────────────
+
+  function persistChat() {
+    chrome.storage?.local?.set({ currentQaMessages: qaMessages });
+    saveToHistory();
+  }
+
+  function saveToHistory() {
+    if (!guide?.guide?.length || !currentLectureUrl) return;
+    chrome.storage?.local?.get(['guideHistory'], saved => {
+      const history = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
+      const idx = history.findIndex(h => h.lectureUrl === currentLectureUrl);
+      const entry = {
+        lectureUrl: currentLectureUrl,
+        lectureTitle: transcript?.lectureTitle || guide?.lecture_title || 'Lecture',
+        date: new Date().toISOString(),
+        guide,
+        qaMessages: qaMessages.length ? qaMessages : (idx >= 0 ? history[idx].qaMessages : [])
+      };
+      if (idx >= 0) {
+        history[idx] = entry;
+      } else {
+        history.unshift(entry);
+      }
+      // Keep last 50 entries
+      if (history.length > 50) history.length = 50;
+      chrome.storage?.local?.set({ guideHistory: history });
+    });
+  }
+
+  function loadHistory() {
+    const container = document.getElementById('history-list');
+    if (!container) return;
+    container.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:14px;">Loading…</p>';
+    chrome.storage?.local?.get(['guideHistory'], saved => {
+      const history = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
+      if (!history.length) {
+        container.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:14px;">No previous guides yet.</p>';
+        return;
+      }
+      container.innerHTML = '';
+      for (const entry of history) {
+        const isActive = entry.lectureUrl === currentLectureUrl;
+        const div = document.createElement('div');
+        div.className = 'history-item' + (isActive ? ' history-active' : '');
+        const dateStr = new Date(entry.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const blockCount = entry.guide?.guide?.length || 0;
+        const chatCount = entry.qaMessages?.length || 0;
+        div.innerHTML = `
+          <div class="history-title">${escHtml(entry.lectureTitle)}</div>
+          <div class="history-meta">
+            <span>${dateStr}</span>
+            <span>${blockCount} blocks</span>
+            ${chatCount ? `<span>${Math.floor(chatCount / 2)} Q&amp;As</span>` : ''}
+          </div>
+          <div class="history-actions">
+            <a class="history-link" href="${escAttr(entry.lectureUrl)}" target="_blank" title="Open lecture">Open lecture</a>
+            <button class="history-load-btn" title="Load this guide">Load guide</button>
+            ${!isActive ? '<button class="history-delete-btn" title="Delete">Delete</button>' : ''}
+          </div>
+        `;
+        div.querySelector('.history-load-btn').addEventListener('click', () => loadHistoryEntry(entry));
+        const delBtn = div.querySelector('.history-delete-btn');
+        if (delBtn) delBtn.addEventListener('click', () => deleteHistoryEntry(entry.lectureUrl));
+        container.appendChild(div);
+      }
+    });
+  }
+
+  function loadHistoryEntry(entry) {
+    guide = entry.guide;
+    qaMessages = Array.isArray(entry.qaMessages) ? entry.qaMessages : [];
+    transcript = transcript || { cues: [], text: '', lectureTitle: entry.lectureTitle, videoDuration: 0 };
+
+    showGuideContent();
+    setStatus('ready', `Guide loaded · ${guide.guide.length} blocks`);
+
+    // Restore chat UI
+    qaMessages_el.innerHTML = '';
+    if (qaMessages.length) {
+      restoreChatUI();
+    } else {
+      qaMessages_el.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture.</p></div>';
+    }
+    switchTab('guide');
+  }
+
+  function deleteHistoryEntry(url) {
+    chrome.storage?.local?.get(['guideHistory'], saved => {
+      const history = (saved.guideHistory || []).filter(h => h.lectureUrl !== url);
+      chrome.storage?.local?.set({ guideHistory: history }, () => loadHistory());
+    });
+  }
+
   // ─── Tab Switching ────────────────────────────────────────────────────────
 
   function switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
+    if (tabName === 'history') loadHistory();
   }
 
   // ─── Theme ────────────────────────────────────────────────────────────────
@@ -606,6 +807,20 @@ ${guideStr}`;
     s = Math.floor(s || 0);
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
     return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  }
+
+  function getLocalBase() {
+    if (!settings?.provider) return null;
+    if (!String(settings.provider).startsWith('local_')) return null;
+    return settings?.localBases?.[settings.provider] || null;
+  }
+
+  function hasUsableSettings() {
+    if (!settings?.provider) return false;
+    if (String(settings.provider).startsWith('local_')) {
+      return !!getLocalBase();
+    }
+    return !!settings?.apiKey;
   }
 
   // ─── Bootstrap ───────────────────────────────────────────────────────────

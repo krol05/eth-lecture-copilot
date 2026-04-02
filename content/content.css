@@ -1,21 +1,70 @@
 /* content.css — styles injected into video.ethz.ch pages */
 
-#eth-copilot-wrapper {
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
-  width: 100%;
-  position: relative;
-}
-
 #eth-copilot-sidebar {
-  flex: 0 0 380px;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: 380px;
   min-width: 380px;
+  height: 100vh;
   border: none;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   background: transparent;
-  transition: width 0.3s ease, opacity 0.3s ease;
+  z-index: 2147483647;
+}
+
+#eth-copilot-resize-handle {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  z-index: 2147483647;
+  transition: background 0.15s ease;
+}
+
+#eth-copilot-resize-handle:hover,
+#eth-copilot-resize-handle:active {
+  background: rgba(124, 161, 253, 0.35);
+}
+
+#eth-copilot-toggle {
+  position: fixed;
+  top: 12px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(15, 17, 23, 0.9);
+  color: #e6edf3;
+  border-radius: 6px 0 0 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2147483647;
+}
+
+/* When in copilot-managed fullscreen: the video's container fills the viewport */
+.eth-copilot-fs-video {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 2147483640 !important;
+  background: #000 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+body.eth-copilot-fs {
+  overflow: hidden !important;
 }
 
 /* Playback speed overlay */
