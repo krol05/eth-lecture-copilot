@@ -1,0 +1,1 @@
+Chrome extension — AI study guides & Q&A for ETH Zürich lectures on video.ethz.ch (transcript sync, KaTeX, optional frame context).
