@@ -26,6 +26,11 @@
   let requestIdCounter = 0;
   const pendingRequests = {};
   let currentLectureUrl = null;
+  let lastVideoTime = 0;
+  /** When true, guide block follows video time (with optional latch after re-enabling). */
+  let autoTimeFollow = localStorage.getItem('eth-copilot-auto-time-follow') !== '0';
+  /** After turning auto-follow back on: stay on manual block until playback leaves this index. */
+  let resumeAutoFollowLatch = null;
 
   // ─── DOM Refs ─────────────────────────────────────────────────────────────
   const statusBar    = document.getElementById('status-bar');
@@ -44,6 +49,10 @@
   const framePreview = document.getElementById('frame-preview-label');
   const themeToggle  = document.getElementById('theme-toggle');
   const regenerateBtn = document.getElementById('regenerate-btn');
+  const blockPrevBtn = document.getElementById('block-prev-btn');
+  const blockNextBtn = document.getElementById('block-next-btn');
+  const jumpCurrentBlockBtn = document.getElementById('jump-current-block-btn');
+  const autoTimeFollowCb = document.getElementById('auto-time-follow-cb');
 
   // ─── Init ─────────────────────────────────────────────────────────────────
 
@@ -60,6 +69,14 @@
 
     generateBtn.addEventListener('click', onGenerateClick);
     regenerateBtn.addEventListener('click', onRegenerateClick);
+
+    if (autoTimeFollowCb) {
+      autoTimeFollowCb.checked = autoTimeFollow;
+      autoTimeFollowCb.addEventListener('change', onAutoTimeFollowChange);
+    }
+    blockPrevBtn?.addEventListener('click', () => navigateBlock(-1));
+    blockNextBtn?.addEventListener('click', () => navigateBlock(1));
+    jumpCurrentBlockBtn?.addEventListener('click', jumpToCurrentTimeBlock);
 
     document.getElementById('manual-paste-link').addEventListener('click', e => {
       e.preventDefault();
@@ -493,15 +510,77 @@ Now process the following transcript:`;
   function showGuideContent() {
     guideEmpty.style.display = 'none';
     guideContent.style.display = 'flex';
-    renderBlock(0);
+    syncAutoFollowCheckbox();
+    let startIdx = 0;
+    if (autoTimeFollow && resumeAutoFollowLatch === null && guide?.guide?.length) {
+      startIdx = findBlockIndex(lastVideoTime);
+    }
+    if (guide?.guide?.length) {
+      startIdx = Math.max(0, Math.min(startIdx, guide.guide.length - 1));
+    }
+    renderBlock(startIdx);
+  }
+
+  function syncAutoFollowCheckbox() {
+    if (autoTimeFollowCb) autoTimeFollowCb.checked = autoTimeFollow;
+  }
+
+  function persistAutoTimeFollow() {
+    localStorage.setItem('eth-copilot-auto-time-follow', autoTimeFollow ? '1' : '0');
+  }
+
+  function onAutoTimeFollowChange() {
+    autoTimeFollow = !!autoTimeFollowCb?.checked;
+    persistAutoTimeFollow();
+    if (autoTimeFollow) {
+      resumeAutoFollowLatch = guide?.guide?.length ? findBlockIndex(lastVideoTime) : null;
+    } else {
+      resumeAutoFollowLatch = null;
+    }
+  }
+
+  function disableAutoFollowForManualNav() {
+    autoTimeFollow = false;
+    resumeAutoFollowLatch = null;
+    syncAutoFollowCheckbox();
+    persistAutoTimeFollow();
+  }
+
+  function navigateBlock(delta) {
+    if (!guide?.guide?.length) return;
+    disableAutoFollowForManualNav();
+    const n = guide.guide.length;
+    let idx = currentBlockIndex >= 0 ? currentBlockIndex : 0;
+    idx = Math.max(0, Math.min(n - 1, idx + delta));
+    renderBlock(idx);
+  }
+
+  function jumpToCurrentTimeBlock() {
+    if (!guide?.guide?.length) return;
+    const idx = findBlockIndex(lastVideoTime);
+    renderBlock(idx);
   }
 
   function handleTimestamp(currentTime) {
-    if (!guide?.guide) return;
-    const idx = findBlockIndex(currentTime);
-    if (idx !== currentBlockIndex) {
-      currentBlockIndex = idx;
-      renderBlock(idx);
+    lastVideoTime = currentTime;
+    if (!guide?.guide?.length) return;
+
+    const liveIdx = findBlockIndex(currentTime);
+
+    if (!autoTimeFollow) return;
+
+    if (resumeAutoFollowLatch !== null) {
+      if (liveIdx !== resumeAutoFollowLatch) {
+        resumeAutoFollowLatch = null;
+        if (liveIdx !== currentBlockIndex) {
+          renderBlock(liveIdx);
+        }
+      }
+      return;
+    }
+
+    if (liveIdx !== currentBlockIndex) {
+      renderBlock(liveIdx);
     }
   }
 
@@ -520,6 +599,8 @@ Now process the following transcript:`;
     const blocks = guide.guide;
     const block = blocks[idx];
     if (!block) return;
+
+    currentBlockIndex = idx;
 
     // Update counter + progress
     blockCounter.textContent = `${idx + 1} / ${blocks.length}`;

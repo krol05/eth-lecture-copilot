@@ -97,6 +97,18 @@
           </svg>
         </button>
       </div>
+      <div class="guide-nav-row">
+        <button type="button" id="block-prev-btn" class="block-nav-btn" title="Previous section" aria-label="Previous section">←</button>
+        <div class="guide-nav-center">
+          <button type="button" id="jump-current-block-btn" class="jump-current-btn" title="Show the guide section that matches playback right now">Current time</button>
+          <label class="auto-follow-toggle" title="When on, the guide follows the video. After you turn it back on, it waits until playback enters a different section before following again.">
+            <input type="checkbox" id="auto-time-follow-cb" checked>
+            <span>Switch to timeframe automatically</span>
+          </label>
+        </div>
+        <button type="button" id="block-next-btn" class="block-nav-btn" title="Next section" aria-label="Next section">→</button>
+      </div>
+      <p class="guide-hints">On the video page: <kbd>↑</kbd> / <kbd>↓</kbd> change playback speed by 0.25×</p>
 
       <div id="guide-block" class="guide-block">
         <!-- Filled dynamically by sidebar.js -->
