@@ -98,30 +98,95 @@
     setStatus('loading', 'Waiting for video page…');
   }
 
+  function normalizeLectureUrl(href) {
+    if (!href) return '';
+    try {
+      const u = new URL(href);
+      u.hash = '';
+      const path = u.pathname.replace(/\/+$/, '') || '/';
+      return `${u.origin}${path}${u.search}`;
+    } catch {
+      return String(href).trim().split('#')[0]?.replace(/\/+$/, '') || '';
+    }
+  }
+
+  function pickLatestHistoryForUrl(history, lectureUrl) {
+    const want = normalizeLectureUrl(lectureUrl);
+    const matches = (history || []).filter(
+      h => h?.guide?.guide?.length && normalizeLectureUrl(h.lectureUrl) === want
+    );
+    if (!matches.length) return null;
+    matches.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    return matches[0];
+  }
+
+  function applyRestoredGuide(guideData, qaFromStorage, persistSession) {
+    guide = guideData;
+    sanitizeGuide(guide);
+    qaMessages = Array.isArray(qaFromStorage) ? qaFromStorage : [];
+    if (persistSession && currentLectureUrl) {
+      chrome.storage?.local?.set({
+        currentGuide: guide,
+        currentLectureUrl: currentLectureUrl,
+        currentQaMessages: qaMessages
+      });
+    }
+    setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
+    showGuideContent();
+    qaMessages_el.innerHTML = '';
+    if (qaMessages.length) {
+      restoreChatUI();
+    } else {
+      qaMessages_el.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture. I have the full transcript and guide as context.</p></div>';
+    }
+    updateGenerateButton();
+  }
+
   function tryRestoreFromCache(lectureUrl) {
     if (!lectureUrl) return;
     currentLectureUrl = lectureUrl;
-    chrome.storage?.local?.get(['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages'], saved => {
-      if (saved.currentLectureUrl !== lectureUrl) {
-        chrome.storage?.local?.remove(['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages']);
-        resetGuideUI();
-        setStatus('loading', 'New lecture detected — waiting for transcript…');
-        return;
+    const normNew = normalizeLectureUrl(lectureUrl);
+
+    chrome.storage?.local?.get(
+      ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages', 'guideHistory'],
+      saved => {
+        const hist = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
+        const normSaved = saved.currentLectureUrl ? normalizeLectureUrl(saved.currentLectureUrl) : '';
+        const sessionMatches = normSaved === normNew;
+
+        if (!sessionMatches) {
+          chrome.storage?.local?.remove(['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages']);
+          resetGuideUI();
+          setStatus('loading', 'New lecture detected — waiting for transcript…');
+        }
+
+        let restoredGuide = false;
+
+        if (sessionMatches && saved.currentGuide?.guide?.length) {
+          applyRestoredGuide(saved.currentGuide, saved.currentQaMessages, false);
+          restoredGuide = true;
+        } else {
+          const latest = pickLatestHistoryForUrl(hist, lectureUrl);
+          if (latest?.guide?.guide?.length) {
+            applyRestoredGuide(latest.guide, latest.qaMessages, true);
+            restoredGuide = true;
+          }
+        }
+
+        if (sessionMatches && saved.currentTranscript) {
+          const tUrl = saved.currentTranscript.lectureUrl;
+          if (!tUrl || normalizeLectureUrl(tUrl) === normNew) {
+            transcript = saved.currentTranscript;
+            updateGenerateButton();
+            if (restoredGuide) {
+              const n = saved.currentTranscript.cues?.length;
+              const cueStr = n != null ? ` · ${n} cues` : '';
+              setStatus('ready', `Guide ready · ${guide.guide.length} blocks${cueStr}`);
+            }
+          }
+        }
       }
-      if (saved.currentGuide?.guide?.length) {
-        guide = saved.currentGuide;
-        setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
-        showGuideContent();
-      }
-      if (saved.currentTranscript) {
-        transcript = saved.currentTranscript;
-        updateGenerateButton();
-      }
-      if (Array.isArray(saved.currentQaMessages) && saved.currentQaMessages.length) {
-        qaMessages = saved.currentQaMessages;
-        restoreChatUI();
-      }
-    });
+    );
   }
 
   function resetGuideUI() {
@@ -272,7 +337,11 @@
       currentTranscript: transcript,
       currentLectureUrl: currentLectureUrl
     });
-    setStatus('ready', `Transcript loaded · ${msg.cues.length} cues`);
+    if (guide?.guide?.length) {
+      setStatus('ready', `Guide ready · ${guide.guide.length} blocks · ${msg.cues.length} cues`);
+    } else {
+      setStatus('ready', `Transcript loaded · ${msg.cues.length} cues`);
+    }
     updateGenerateButton();
   }
 
@@ -849,21 +918,18 @@ ${guideStr}`;
   function saveToHistory() {
     if (!guide?.guide?.length || !currentLectureUrl) return;
     chrome.storage?.local?.get(['guideHistory'], saved => {
-      const history = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
-      const idx = history.findIndex(h => h.lectureUrl === currentLectureUrl);
+      let history = Array.isArray(saved.guideHistory) ? [...saved.guideHistory] : [];
+      const norm = normalizeLectureUrl(currentLectureUrl);
+      const prevSame = history.find(h => normalizeLectureUrl(h.lectureUrl) === norm);
+      history = history.filter(h => normalizeLectureUrl(h.lectureUrl) !== norm);
       const entry = {
         lectureUrl: currentLectureUrl,
         lectureTitle: transcript?.lectureTitle || guide?.lecture_title || 'Lecture',
         date: new Date().toISOString(),
         guide,
-        qaMessages: qaMessages.length ? qaMessages : (idx >= 0 ? history[idx].qaMessages : [])
+        qaMessages: qaMessages.length ? qaMessages : (prevSame?.qaMessages || [])
       };
-      if (idx >= 0) {
-        history[idx] = entry;
-      } else {
-        history.unshift(entry);
-      }
-      // Keep last 50 entries
+      history.unshift(entry);
       if (history.length > 50) history.length = 50;
       chrome.storage?.local?.set({ guideHistory: history });
     });
