@@ -357,7 +357,11 @@ async function handleMessage(msg) {
 
     case 'GENERATE_GUIDE': {
       const { transcriptText, systemPrompt } = msg;
-      const opts = { ...baseOpts, temperature: 0.1, maxTokens: 32768, timeoutMs: 180000, jsonMode: true };
+      // Gemini's Flash-Lite models can return up to ~64K output tokens.
+      // If we keep a smaller maxOutputTokens, Gemini may truncate the JSON early,
+      // which can look like "only 5 short slides".
+      const maxGuideTokens = provider === 'google' ? 64000 : 32768;
+      const opts = { ...baseOpts, temperature: 0.1, maxTokens: maxGuideTokens, timeoutMs: 180000, jsonMode: true };
 
       const raw = await callAI(provider, model, apiKey,
         [{ role: 'user', content: transcriptText }], systemPrompt, opts);
