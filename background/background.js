@@ -309,6 +309,15 @@ function findMatchingBrace(str) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[BG] onMessage:', message?.type);
+
+  if (message?.type === 'CAPTURE_VISIBLE_TAB') {
+    const wid = sender?.tab?.windowId ?? null;
+    chrome.tabs.captureVisibleTab(wid, { format: 'jpeg', quality: 85 })
+      .then(dataUrl => sendResponse({ success: true, data: dataUrl }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   handleMessage(message).then(
     result => sendResponse({ success: true, data: result }),
     err    => sendResponse({ success: false, error: err.message })
@@ -360,10 +369,6 @@ async function handleMessage(msg) {
       const { messages, systemPrompt } = msg;
       return callAI(provider, model, apiKey, messages, systemPrompt,
         { ...baseOpts, temperature: 0.4, timeoutMs: 120000 });
-    }
-
-    case 'CAPTURE_VISIBLE_TAB': {
-      return chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 85 });
     }
 
     case 'FETCH_VTT': {

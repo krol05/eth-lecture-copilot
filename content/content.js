@@ -40,6 +40,7 @@
     // Wait for the video element to appear (Paella loads dynamically)
     waitForVideo().then(video => {
       videoEl = video;
+      enableVideoCORS(video);
       injectSidebar();
       startTimestampSync();
       initKeyboardShortcuts();
@@ -61,8 +62,14 @@
   }
 
   function isLecturePage() {
-    // Must be on a video page — URL contains /v/ or player is present
     return location.hostname === 'video.ethz.ch';
+  }
+
+  function enableVideoCORS(video) {
+    if (!video || video.crossOrigin) return;
+    try {
+      video.crossOrigin = 'anonymous';
+    } catch (_) {}
   }
 
   function waitForVideo(timeout = 15000) {
@@ -563,18 +570,45 @@
     if (!videoEl) return null;
 
     // Strategy 1: direct canvas capture (fast, frame-accurate)
-    try {
+    const canvasCapture = () => {
       const canvas = document.createElement('canvas');
       canvas.width = videoEl.videoWidth || 1280;
       canvas.height = videoEl.videoHeight || 720;
       canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-      const b64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+      return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null;
+    };
+
+    try {
+      const b64 = canvasCapture();
       if (b64) return b64;
     } catch (_) {
-      console.warn('[ETH Copilot] Canvas tainted (cross-origin video), falling back to tab capture');
+      console.warn('[ETH Copilot] Canvas capture failed, trying CORS reload…');
     }
 
-    // Strategy 2: screenshot the visible tab via background, then crop to video
+    // Strategy 2: enable CORS on the video and retry canvas capture
+    if (!videoEl.crossOrigin) {
+      try {
+        const currentTime = videoEl.currentTime;
+        const wasPaused = videoEl.paused;
+        videoEl.crossOrigin = 'anonymous';
+        const src = videoEl.currentSrc || videoEl.src;
+        if (src && !src.startsWith('blob:')) {
+          videoEl.src = src;
+          videoEl.currentTime = currentTime;
+          await new Promise(r => {
+            videoEl.addEventListener('seeked', r, { once: true });
+            setTimeout(r, 3000);
+          });
+          if (!wasPaused) videoEl.play().catch(() => {});
+          const b64 = canvasCapture();
+          if (b64) return b64;
+        }
+      } catch (e) {
+        console.warn('[ETH Copilot] CORS reload capture failed:', e.message);
+      }
+    }
+
+    // Strategy 3: screenshot the visible tab via background, then crop to video
     try {
       const rect = videoEl.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
