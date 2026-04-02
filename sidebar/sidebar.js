@@ -403,6 +403,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown fences, no explanation, no
 
 RULES:
 - Blocks follow the logical flow of the lecture. One coherent topic = one block.
+- Segmentation: prefer **many smaller blocks** over a few huge ones. On a full lecture, detailed guides often have **15–40+** blocks (every major subtopic, example block, or clear topic shift gets its own block). Do **not** merge distant parts of the transcript into one block to keep the JSON short.
+- Each block must be **substantial**: fill key_concepts, formulas, definitions, and notes wherever the transcript supports them — avoid empty or one-line blocks unless the section is truly trivial.
 - formulas: include EVERY formula/theorem/equation. LaTeX must be valid KaTeX. Omit delimiters in the latex field.
 - key_concepts: 2-6 complete sentences/phrases per block.
 - definitions: only formally defined terms.

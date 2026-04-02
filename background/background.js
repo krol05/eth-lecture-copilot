@@ -163,7 +163,13 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
 
   if (!resp.ok) throw new Error(`Google → ${resp.status}: ${await resp.text()}`);
   const d = await resp.json();
-  return d.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  const cand = d.candidates?.[0];
+  const text = cand?.content?.parts?.[0]?.text ?? '';
+  // If output hit the token cap, JSON is often truncated → fewer guide blocks after parse.
+  if (cand?.finishReason === 'MAX_TOKENS') {
+    console.warn('[BG] Gemini finishReason=MAX_TOKENS — guide output may be incomplete');
+  }
+  return text;
 }
 
 // ─── Unified call dispatcher ──────────────────────────────────────────────────
@@ -357,11 +363,11 @@ async function handleMessage(msg) {
 
     case 'GENERATE_GUIDE': {
       const { transcriptText, systemPrompt } = msg;
-      // Gemini's Flash-Lite models can return up to ~64K output tokens.
-      // If we keep a smaller maxOutputTokens, Gemini may truncate the JSON early,
-      // which can look like "only 5 short slides".
+      // Gemini Flash / Flash-Lite: allow large JSON; slightly higher temperature reduces
+      // over-merging sections into a handful of blocks (still JSON-safe for most runs).
       const maxGuideTokens = provider === 'google' ? 64000 : 32768;
-      const opts = { ...baseOpts, temperature: 0.1, maxTokens: maxGuideTokens, timeoutMs: 180000, jsonMode: true };
+      const guideTemp = provider === 'google' ? 0.22 : 0.1;
+      const opts = { ...baseOpts, temperature: guideTemp, maxTokens: maxGuideTokens, timeoutMs: 180000, jsonMode: true };
 
       const raw = await callAI(provider, model, apiKey,
         [{ role: 'user', content: transcriptText }], systemPrompt, opts);
