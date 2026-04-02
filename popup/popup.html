@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ETH Lecture Copilot Settings</title>
+  <title>ETH Lecture Copilot</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -22,13 +22,17 @@
   <main class="popup-body">
 
     <div class="field-group">
-      <label class="field-label" for="provider-select">AI Provider</label>
-      <select id="provider-select" class="field-select">
-        <option value="gemini">Google Gemini</option>
-        <option value="claude">Anthropic Claude</option>
-        <option value="openai">OpenAI</option>
-      </select>
-      <p class="field-hint">Using: <span id="model-badge" class="model-badge"></span></p>
+      <label class="field-label" for="provider-select">Provider</label>
+      <select id="provider-select" class="field-select"></select>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label" for="model-select">Model</label>
+      <!-- Normal model dropdown -->
+      <select id="model-select" class="field-select"></select>
+      <!-- Custom model text input (shown for OpenRouter etc.) -->
+      <input type="text" id="model-custom" class="field-input" placeholder="e.g. anthropic/claude-sonnet-4-6" style="display:none">
+      <p id="provider-note" class="field-hint provider-note" style="display:none"></p>
     </div>
 
     <div class="field-group">
@@ -38,10 +42,9 @@
       </label>
       <div class="key-input-row">
         <input type="password" id="api-key-input" class="field-input" placeholder="Paste your API key…" autocomplete="off">
-        <button id="toggle-key" class="icon-btn" title="Show/hide key">
+        <button id="toggle-key" class="icon-btn" title="Show/hide">
           <svg id="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-            <circle cx="12" cy="12" r="3"/>
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
           </svg>
           <svg id="eye-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
             <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
@@ -49,18 +52,10 @@
           </svg>
         </button>
       </div>
-      <p class="field-hint">Stored locally in your browser. Never sent anywhere except the AI provider.</p>
+      <p class="field-hint">Stored locally. Never leaves your browser except to the selected provider.</p>
     </div>
 
-    <button id="save-btn" class="save-btn">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-        <polyline points="17 21 17 13 7 13 7 21"/>
-        <polyline points="7 3 7 8 15 8"/>
-      </svg>
-      Save Settings
-    </button>
-
+    <button id="save-btn" class="save-btn">Save Settings</button>
     <div id="status-msg" class="status-msg" style="display:none"></div>
 
     <div class="divider"></div>
@@ -80,6 +75,7 @@
     <a href="https://github.com/krol05/eth-lecture-copilot" target="_blank" class="footer-link">GitHub ↗</a>
   </footer>
 
+  <script src="../lib/providers-config.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

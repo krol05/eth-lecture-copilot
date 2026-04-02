@@ -1,16 +1,23 @@
 {
   "manifest_version": 3,
   "name": "ETH Lecture Copilot",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "AI-powered lecture guide & Q&A sidebar for ETH Zürich video.ethz.ch",
 
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
     "https://video.ethz.ch/*",
     "https://dist.tobira.ethz.ch/*",
-    "https://generativelanguage.googleapis.com/*",
     "https://api.anthropic.com/*",
-    "https://api.openai.com/*"
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.openai.com/*",
+    "https://api.x.ai/*",
+    "https://api.deepseek.com/*",
+    "https://api.mistral.ai/*",
+    "https://openrouter.ai/*",
+    "https://api.groq.com/*",
+    "https://api.together.xyz/*",
+    "https://api.cerebras.ai/*"
   ],
 
   "background": {
@@ -42,6 +49,7 @@
         "sidebar/sidebar.html",
         "sidebar/sidebar.css",
         "sidebar/sidebar.js",
+        "lib/providers-config.js",
         "lib/katex/katex.min.js",
         "lib/katex/katex.min.css",
         "lib/katex/auto-render.min.js",
