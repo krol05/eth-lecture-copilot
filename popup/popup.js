@@ -10,9 +10,9 @@ const API_KEY_LINKS = {
 };
 
 const PROVIDER_LABELS = {
-  gemini: 'Gemini 2.5 Flash',
-  claude: 'Claude Sonnet 4.5',
-  openai: 'GPT-4.1 mini'
+  gemini: 'latest Flash model',
+  claude: 'latest Sonnet model',
+  openai: 'gpt-4o (current)'
 };
 
 const providerSelect = document.getElementById('provider-select');
