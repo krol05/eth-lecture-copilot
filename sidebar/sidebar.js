@@ -245,7 +245,7 @@
         transcriptText: transcript.text,
         systemPrompt,
         provider: settings.provider,
-        model: settings.model,
+        model: null, // background picks DEFAULT_MODELS[provider]
         apiKey: settings.apiKey
       });
 
@@ -471,7 +471,7 @@ Now process the following transcript:`;
         messages: qaMessages.map(m => ({ role: m.role, content: m.content, imageBase64: m.imageBase64 })),
         systemPrompt,
         provider: settings.provider,
-        model: settings.model,
+        model: null, // background picks DEFAULT_MODELS[provider]
         apiKey: settings.apiKey,
         imageBase64
       });
