@@ -17,7 +17,9 @@
     "https://openrouter.ai/*",
     "https://api.groq.com/*",
     "https://api.together.xyz/*",
-    "https://api.cerebras.ai/*"
+    "https://api.cerebras.ai/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
 
   "background": {

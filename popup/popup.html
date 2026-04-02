@@ -20,22 +20,49 @@
   </header>
 
   <main class="popup-body">
+    <div id="onboarding-note" class="onboarding-note" style="display:none">
+      <div class="onboarding-text">
+        New here? A good free starter key is the Gemini API key from Google AI Studio.
+      </div>
+      <div class="onboarding-actions">
+        <a href="https://aistudio.google.com/app/apikey" target="_blank" class="onboarding-link">Open AI Studio</a>
+        <button id="onboarding-dismiss" class="onboarding-dismiss">Got it</button>
+      </div>
+    </div>
 
+    <!-- Provider -->
     <div class="field-group">
       <label class="field-label" for="provider-select">Provider</label>
       <select id="provider-select" class="field-select"></select>
     </div>
 
-    <div class="field-group">
-      <label class="field-label" for="model-select">Model</label>
-      <!-- Normal model dropdown -->
-      <select id="model-select" class="field-select"></select>
-      <!-- Custom model text input (shown for OpenRouter etc.) -->
-      <input type="text" id="model-custom" class="field-input" placeholder="e.g. anthropic/claude-sonnet-4-6" style="display:none">
-      <p id="provider-note" class="field-hint provider-note" style="display:none"></p>
+    <!-- Local base URL (local providers only) -->
+    <div id="local-base-group" class="field-group" style="display:none">
+      <label class="field-label" for="local-base-input">Server URL</label>
+      <input type="text" id="local-base-input" class="field-input" placeholder="http://localhost:11434/v1">
+      <p id="local-note" class="field-hint provider-note"></p>
     </div>
 
+    <!-- Model -->
     <div class="field-group">
+      <label class="field-label" for="model-select">
+        Model
+        <!-- Detect button shown for local providers -->
+        <button id="detect-btn" class="label-btn" style="display:none" title="Query local server for installed models">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          Detect
+        </button>
+      </label>
+      <select id="model-select" class="field-select"></select>
+      <input type="text" id="model-custom" class="field-input" placeholder="e.g. anthropic/claude-sonnet-4-6" style="display:none">
+      <p id="provider-note" class="field-hint provider-note" style="display:none"></p>
+      <p id="detect-error" class="field-hint error-hint" style="display:none"></p>
+    </div>
+
+    <!-- API Key (hidden for local providers) -->
+    <div id="apikey-group" class="field-group">
       <label class="field-label" for="api-key-input">
         API Key
         <a id="api-key-link" href="#" class="label-link" target="_blank">Get key ↗</a>

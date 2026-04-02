@@ -16,14 +16,20 @@
 
   // ─── State ──────────────────────────────────────────────────────────────────
   let sidebarIframe = null;
+  let sidebarToggle = null;
+  let sidebarResizeHandle = null;
   let sidebarVisible = false;
+  let sidebarCollapsed = false;
+  let sidebarWidthPx = 380;
   let videoEl = null;
+  let fsVideoTarget = null;
   let timestampInterval = null;
   let lastBlockIndex = -1;
   let speedOverlayTimeout = null;
 
   const SIDEBAR_WIDTH = '380px';
-  const SIDEBAR_WIDTH_FRAC = '380px';
+  const SIDEBAR_MIN_WIDTH = 280;
+  const SIDEBAR_MAX_WIDTH = 560;
 
   // ─── Entry Point ─────────────────────────────────────────────────────────────
 
@@ -38,6 +44,19 @@
       startTimestampSync();
       initKeyboardShortcuts();
       initiateTranscriptExtraction();
+    });
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    window.addEventListener('resize', () => updateSidebarWidths());
+
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (!msg?.type) return;
+      if (msg.type === 'SETTINGS_UPDATED') {
+        chrome.storage.local.get(['provider', 'model', 'apiKey', 'localBases'], settings => {
+          postToSidebar({ type: 'SETTINGS', settings });
+        });
+      }
     });
   }
 
@@ -69,92 +88,129 @@
   function injectSidebar() {
     if (sidebarIframe) return;
 
-    // Create wrapper that holds video + sidebar side by side
-    const wrapper = document.createElement('div');
-    wrapper.id = 'eth-copilot-wrapper';
-    wrapper.style.cssText = `
-      display: flex;
-      flex-direction: row;
-      width: 100%;
-      position: relative;
-    `;
-
-    // Find the player container
-    const playerContainer = findPlayerContainer();
-    if (!playerContainer) {
-      console.warn('[ETH Copilot] Could not find player container');
-      return;
-    }
-
-    const parent = playerContainer.parentElement;
-    parent.insertBefore(wrapper, playerContainer);
-    wrapper.appendChild(playerContainer);
-
-    // Constrain the player
-    playerContainer.style.flex = '1 1 auto';
-    playerContainer.style.minWidth = '0';
-    playerContainer.style.transition = 'all 0.3s ease';
-
     // Create sidebar iframe
     sidebarIframe = document.createElement('iframe');
     sidebarIframe.id = 'eth-copilot-sidebar';
     sidebarIframe.src = chrome.runtime.getURL('sidebar/sidebar.html');
-    sidebarIframe.style.cssText = `
-      width: ${SIDEBAR_WIDTH};
-      min-width: ${SIDEBAR_WIDTH};
-      flex: 0 0 ${SIDEBAR_WIDTH};
-      height: 100%;
-      border: none;
-      border-left: 1px solid rgba(255,255,255,0.08);
-      background: transparent;
-      transition: all 0.3s ease;
-    `;
+    sidebarIframe.style.width = `${sidebarWidthPx}px`;
+    sidebarIframe.style.minWidth = `${sidebarWidthPx}px`;
+    document.body.appendChild(sidebarIframe);
 
-    // Match iframe height to player
-    updateSidebarHeight(playerContainer, sidebarIframe);
-    const resizeObs = new ResizeObserver(() => updateSidebarHeight(playerContainer, sidebarIframe));
-    resizeObs.observe(playerContainer);
+    sidebarResizeHandle = document.createElement('div');
+    sidebarResizeHandle.id = 'eth-copilot-resize-handle';
+    document.body.appendChild(sidebarResizeHandle);
+    initResizeHandle();
 
-    wrapper.appendChild(sidebarIframe);
+    sidebarToggle = document.createElement('button');
+    sidebarToggle.id = 'eth-copilot-toggle';
+    sidebarToggle.type = 'button';
+    sidebarToggle.textContent = '⟨';
+    sidebarToggle.title = 'Collapse sidebar';
+    sidebarToggle.addEventListener('click', toggleSidebarCollapse);
+    document.body.appendChild(sidebarToggle);
+
     sidebarVisible = true;
+    updateSidebarWidths();
 
     // Listen for messages from sidebar
     window.addEventListener('message', onSidebarMessage);
 
     // Send ready state once iframe loads
     sidebarIframe.addEventListener('load', () => {
-      postToSidebar({ type: 'EXTENSION_READY' });
+      postToSidebar({ type: 'EXTENSION_READY', lectureUrl: location.href });
     });
   }
 
-  function findPlayerContainer() {
-    // Try known Tobira/Paella selectors
-    const selectors = [
-      '.player-container',
-      '[class*="player-container"]',
-      '[class*="PlayerContainer"]',
-      '.css-usln0o',  // observed in ETH page HTML
-      'section[aria-label*="player" i]',
-      'section[aria-label*="video" i]'
-    ];
-    for (const sel of selectors) {
-      const el = document.querySelector(sel);
-      if (el) return el;
+  function updateSidebarWidths() {
+    if (!sidebarIframe) return;
+    const w = sidebarCollapsed ? 0 : sidebarWidthPx;
+    sidebarIframe.style.width = `${w}px`;
+    sidebarIframe.style.minWidth = `${w}px`;
+    if (sidebarResizeHandle) {
+      sidebarResizeHandle.style.display = sidebarCollapsed ? 'none' : 'block';
+      sidebarResizeHandle.style.right = `${w}px`;
     }
-    // Fallback: container of the video element
-    const v = document.querySelector('video');
-    if (v) return v.closest('section, div[class*="player"], div[class*="video"]') || v.parentElement;
-    return null;
+    if (sidebarToggle) {
+      sidebarToggle.textContent = sidebarCollapsed ? '⟩' : '⟨';
+      sidebarToggle.title = sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+      sidebarToggle.style.right = `${Math.max(w - 1, 0)}px`;
+    }
+    if (!document.fullscreenElement) {
+      document.body.style.paddingRight = sidebarCollapsed ? '0px' : `${sidebarWidthPx}px`;
+    }
   }
 
-  function updateSidebarHeight(player, iframe) {
-    const h = player.getBoundingClientRect().height;
-    if (h > 0) {
-      iframe.style.height = h + 'px';
-      iframe.style.minHeight = h + 'px';
-    } else {
-      iframe.style.height = '600px';
+  // Redirect sub-element fullscreen to document.documentElement so our
+  // fixed-position sidebar stays visible. Runs in the same user gesture.
+  function patchFullscreen(method) {
+    const orig = Element.prototype[method];
+    if (!orig) return;
+    Element.prototype[method] = function (opts) {
+      if (sidebarIframe && this !== document.documentElement && this !== document.body) {
+        fsVideoTarget = this;
+        return orig.call(document.documentElement, opts);
+      }
+      return orig.call(this, opts);
+    };
+  }
+  patchFullscreen('requestFullscreen');
+  patchFullscreen('webkitRequestFullscreen');
+
+  function handleFullscreenChange() {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+
+    if (fsEl === document.documentElement) {
+      document.body.classList.add('eth-copilot-fs');
+      if (fsVideoTarget) fsVideoTarget.classList.add('eth-copilot-fs-video');
+      updateSidebarWidths();
+      return;
     }
+
+    // Exited fullscreen — restore everything
+    document.body.classList.remove('eth-copilot-fs');
+    if (fsVideoTarget) {
+      fsVideoTarget.classList.remove('eth-copilot-fs-video');
+      fsVideoTarget = null;
+    }
+    updateSidebarWidths();
+  }
+
+  function toggleSidebarCollapse() {
+    sidebarCollapsed = !sidebarCollapsed;
+    updateSidebarWidths();
+  }
+
+  function initResizeHandle() {
+    if (!sidebarResizeHandle) return;
+    let dragging = false;
+
+    sidebarResizeHandle.addEventListener('mousedown', (e) => {
+      if (sidebarCollapsed) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = true;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      sidebarIframe.style.pointerEvents = 'none';
+    });
+
+    document.addEventListener('mousemove', (ev) => {
+      if (!dragging) return;
+      ev.preventDefault();
+      sidebarWidthPx = Math.max(
+        SIDEBAR_MIN_WIDTH,
+        Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - ev.clientX)
+      );
+      updateSidebarWidths();
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      sidebarIframe.style.pointerEvents = '';
+    });
   }
 
   // ─── Timestamp Sync ──────────────────────────────────────────────────────────
@@ -173,49 +229,94 @@
   function initiateTranscriptExtraction() {
     postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'extracting' });
 
-    const eventId = extractEventId();
-    if (!eventId) {
-      postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'no_event_id' });
-      return;
-    }
+    const maxAttempts = 8;
+    const retryDelayMs = 1500;
 
-    // Fetch player data via background to get VTT URL
-    chrome.runtime.sendMessage(
-      { type: 'FETCH_JSON', url: `https://dist.tobira.ethz.ch/mh_default_org/engage-player/${eventId}/data.json` },
-      response => {
-        if (!response.success) {
-          postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'error', error: response.error });
+    const attemptExtraction = (attempt) => {
+      const fallbackVtt = findCaptionsUrlFromPage();
+      if (fallbackVtt) return fetchAndPublishVtt(fallbackVtt, null);
+
+      const eventCandidates = extractCandidateEventIds();
+      if (!eventCandidates.length) {
+        if (attempt < maxAttempts - 1) {
+          setTimeout(() => attemptExtraction(attempt + 1), retryDelayMs);
           return;
         }
+        postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'no_event_id' });
+        return;
+      }
 
-        const vttUrl = findCaptionsUrl(response.data);
-        if (!vttUrl) {
-          postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'no_captions' });
-          return;
-        }
-
-        chrome.runtime.sendMessage({ type: 'FETCH_VTT', url: vttUrl }, vttResp => {
-          if (!vttResp.success) {
-            postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'error', error: vttResp.error });
+      const tryCandidate = (idx) => {
+        if (idx >= eventCandidates.length) {
+          if (attempt < maxAttempts - 1) {
+            setTimeout(() => attemptExtraction(attempt + 1), retryDelayMs);
             return;
           }
+          postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'no_event_id' });
+          return;
+        }
 
-          const cues = parseVtt(vttResp.data);
-          const transcriptText = formatTranscript(cues);
-          const lectureTitle = document.querySelector('h1')?.textContent?.trim() || 'Lecture';
+        const eventId = eventCandidates[idx];
+        chrome.runtime.sendMessage(
+          { type: 'FETCH_JSON', url: `https://dist.tobira.ethz.ch/mh_default_org/engage-player/${eventId}/data.json` },
+          response => {
+            if (!response || !response.success) {
+              tryCandidate(idx + 1);
+              return;
+            }
 
-          postToSidebar({
-            type: 'TRANSCRIPT_READY',
-            cues,
-            transcriptText,
-            lectureTitle,
-            eventId,
-            vttUrl,
-            videoDuration: videoEl?.duration || 0
-          });
-        });
+            const vttUrl = findCaptionsUrl(response.data);
+            if (!vttUrl) {
+              tryCandidate(idx + 1);
+              return;
+            }
+            fetchAndPublishVtt(vttUrl, eventId);
+          }
+        );
+      };
+
+      tryCandidate(0);
+    };
+
+    attemptExtraction(0);
+  }
+
+  function fetchAndPublishVtt(vttUrl, eventId) {
+    chrome.runtime.sendMessage({ type: 'FETCH_VTT', url: vttUrl }, vttResp => {
+      if (!vttResp || !vttResp.success) {
+        postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'error', error: vttResp?.error || 'VTT request failed' });
+        return;
       }
-    );
+
+      const rawVtt = vttResp.data;
+      const cues = parseVtt(rawVtt);
+      if (!cues.length) {
+        postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'no_captions' });
+        return;
+      }
+
+      // Send clean [HH:MM:SS] text lines — same clean format as manual paste
+      const transcriptText = formatTranscript(cues);
+      const lectureTitle = document.querySelector('h1')?.textContent?.trim() || 'Lecture';
+
+      postToSidebar({
+        type: 'TRANSCRIPT_READY',
+        cues,
+        transcriptText,
+        lectureTitle,
+        lectureUrl: location.href,
+        eventId,
+        vttUrl,
+        videoDuration: videoEl?.duration || 0
+      });
+    });
+  }
+
+  function stripVttHeader(vtt) {
+    return vtt
+      .replace(/\r\n/g, '\n')
+      .replace(/^WEBVTT[\s\S]*?\n\n/, '')
+      .trim();
   }
 
   function extractEventId() {
@@ -233,6 +334,91 @@
     for (const img of document.querySelectorAll('img[src*="dist.tobira.ethz.ch"]')) {
       const m = img.src.match(/engage-player\/([0-9a-f-]{36})\//i);
       if (m) return m[1];
+    }
+    return null;
+  }
+
+  function extractCandidateEventIds() {
+    const ids = [];
+    const pushIfValid = (id) => {
+      if (!id) return;
+      if (!/^[0-9a-f-]{36}$/i.test(id)) return;
+      if (!ids.includes(id)) ids.push(id);
+    };
+
+    pushIfValid(extractEventId());
+
+    const html = document.documentElement?.innerHTML || '';
+    const patterns = [
+      /engage-player\/([0-9a-f-]{36})\//ig,
+      /engage-player\\\/([0-9a-f-]{36})\\\//ig
+    ];
+
+    for (const re of patterns) {
+      let m;
+      while ((m = re.exec(html)) !== null) {
+        pushIfValid(m[1]);
+      }
+    }
+
+    // Also scan inline script contents (often where player config is injected)
+    for (const script of document.querySelectorAll('script:not([src])')) {
+      const txt = script.textContent || '';
+      for (const re of patterns) {
+        let m;
+        re.lastIndex = 0;
+        while ((m = re.exec(txt)) !== null) {
+          pushIfValid(m[1]);
+        }
+      }
+    }
+    return ids;
+  }
+
+  function findCaptionsUrlFromPage() {
+    const selectors = [
+      'track[src*=".vtt"]',
+      'source[src*=".vtt"]',
+      'a[href*=".vtt"]'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const candidate = el.getAttribute('src') || el.getAttribute('href');
+      if (candidate && /\.vtt(\?|$)/i.test(candidate)) return candidate;
+    }
+
+    // Resource timing often contains the exact VTT URL once player initialized
+    try {
+      const entries = performance.getEntriesByType('resource') || [];
+      for (const entry of entries) {
+        const name = entry?.name || '';
+        if (/\.vtt(\?|$)/i.test(name)) return name;
+      }
+    } catch (_) {}
+
+    const html = document.documentElement?.innerHTML || '';
+    const direct = html.match(/https:\/\/dist\.tobira\.ethz\.ch\/[^"'\\\s]+\.vtt(?:\?[^"'\\\s]*)?/i);
+    if (direct) return direct[0];
+
+    // Escaped URL inside JSON/script blobs: https:\/\/...\.vtt
+    const escaped = html.match(/https:\\\/\\\/dist\.tobira\.ethz\.ch\\\/[^"'\\\s]+\.vtt(?:\\\?[^"'\\\s]*)?/i);
+    if (escaped) {
+      return escaped[0]
+        .replace(/\\\//g, '/')
+        .replace(/\\\?/g, '?');
+    }
+
+    // Final fallback: scan script text for any .vtt URL and unescape
+    for (const script of document.querySelectorAll('script:not([src])')) {
+      const txt = script.textContent || '';
+      const m = txt.match(/https?:\\\/\\\/[^"'\\\s]+\.vtt(?:\\\?[^"'\\\s]*)?/i)
+             || txt.match(/https?:\/\/[^"'\\\s]+\.vtt(?:\?[^"'\\\s]*)?/i);
+      if (m) {
+        return m[0]
+          .replace(/\\\//g, '/')
+          .replace(/\\\?/g, '?');
+      }
     }
     return null;
   }
@@ -339,13 +525,13 @@
   function postToSidebar(msg) {
     if (!sidebarIframe?.contentWindow) return;
     try {
-      sidebarIframe.contentWindow.postMessage(msg, chrome.runtime.getURL(''));
+      sidebarIframe.contentWindow.postMessage(msg, '*');
     } catch (_) {}
   }
 
   function onSidebarMessage(e) {
-    if (e.source !== sidebarIframe?.contentWindow) return;
     const msg = e.data;
+    if (!msg?._copilot) return;
     if (!msg?.type) return;
 
     switch (msg.type) {
@@ -360,14 +546,11 @@
         break;
 
       case 'API_REQUEST':
-        // Forward AI API requests to background
-        chrome.runtime.sendMessage(msg.payload, response => {
-          postToSidebar({ type: 'API_RESPONSE', requestId: msg.requestId, response });
-        });
+        forwardApiRequest(msg.payload, msg.requestId);
         break;
 
       case 'GET_SETTINGS':
-        chrome.storage.local.get(['provider', 'model', 'apiKey'], settings => {
+        chrome.storage.local.get(['provider', 'model', 'apiKey', 'localBases'], settings => {
           postToSidebar({ type: 'SETTINGS', settings });
         });
         break;
@@ -391,6 +574,28 @@
         console.warn('[ETH Copilot] Frame capture failed:', e.message);
         resolve(null);
       }
+    });
+  }
+
+  function forwardApiRequest(payload, requestId) {
+    console.log('[ETH Copilot] forwardApiRequest →', payload.type, requestId);
+    chrome.runtime.sendMessage(payload, response => {
+      const err = chrome.runtime.lastError?.message;
+      if (err) {
+        console.error('[ETH Copilot] sendMessage error:', err);
+        postToSidebar({
+          type: 'API_RESPONSE',
+          requestId,
+          response: { success: false, error: err }
+        });
+        return;
+      }
+      console.log('[ETH Copilot] Response:', response?.success);
+      postToSidebar({
+        type: 'API_RESPONSE',
+        requestId,
+        response: response || { success: false, error: 'Empty response from background' }
+      });
     });
   }
 

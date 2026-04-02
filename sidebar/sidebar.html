@@ -50,6 +50,13 @@
       </svg>
       Q&amp;A
     </button>
+    <button class="tab-btn" data-tab="history">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+      History
+    </button>
   </nav>
 
   <!-- ── GUIDE TAB ── -->
@@ -70,16 +77,25 @@
         <span class="btn-text">Generate Guide</span>
         <span class="btn-spinner" style="display:none"></span>
       </button>
+      <a id="manual-paste-link" href="#" style="display:inline-block;margin-top:10px;font-size:12px;color:var(--text-secondary);text-decoration:underline;cursor:pointer;">or paste transcript manually</a>
       <p id="generate-error" class="error-msg" style="display:none"></p>
     </div>
 
     <!-- Guide content (shown after generation) -->
     <div id="guide-content" style="display:none">
-      <div class="guide-progress">
-        <span id="block-counter">1 / 1</span>
-        <div class="progress-track">
-          <div id="progress-fill" class="progress-fill"></div>
+      <div class="guide-toolbar">
+        <div class="guide-progress">
+          <span id="block-counter">1 / 1</span>
+          <div class="progress-track">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
         </div>
+        <button id="regenerate-btn" class="icon-btn regen-btn" title="Generate a new guide">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+        </button>
       </div>
 
       <div id="guide-block" class="guide-block">
@@ -120,6 +136,13 @@
           </svg>
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- ── HISTORY TAB ── -->
+  <div id="tab-history" class="tab-content">
+    <div id="history-list" class="history-list">
+      <p style="color:var(--text-muted);font-size:12px;padding:14px;">No previous guides yet.</p>
     </div>
   </div>
 
