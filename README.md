@@ -1,6 +1,8 @@
 # ETH Lecture Copilot
 
-A Chrome extension that turns ETH Zürich lecture recordings into structured study guides using AI. It sits as a sidebar next to the video on [video.ethz.ch](https://video.ethz.ch) and generates a topic-by-topic breakdown of the lecture -synced to the current timestamp as you watch.
+<p align="center"><strong>Chrome extension</strong> — AI study guides &amp; Q&amp;A for ETH Zürich lectures on <a href="https://video.ethz.ch">video.ethz.ch</a> (transcript sync, KaTeX, optional frame context).</p>
+
+A Chrome extension that turns ETH Zürich lecture recordings into structured study guides using AI. It sits as a sidebar next to the video on [video.ethz.ch](https://video.ethz.ch) and generates a topic-by-topic breakdown of the lecture — synced to the current timestamp as you watch.
 
 ## Screenshots
 
@@ -81,6 +83,7 @@ If automatic transcript detection doesn't work for a particular lecture, you can
 ├── lib/               Shared config (providers, KaTeX)
 ├── icons/             Extension icons
 ├── docs/images/       README screenshots
+├── .github/           REPO_DESCRIPTION.txt — one-line blurb for GitHub About
 └── manifest.json
 ```
 
