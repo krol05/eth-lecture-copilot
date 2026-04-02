@@ -31,11 +31,11 @@ A Chrome extension that turns ETH Zürich lecture recordings into structured stu
 ## What it does
 
 - **Auto-extracts the transcript** from ETH lecture pages (or lets you paste one manually)
-- **Generates a study guide** with key concepts, definitions, formulas (rendered with KaTeX), and notes -organized by topic, not fixed time chunks
-- **Syncs to playback** -the guide highlights the section matching where you are in the video
-- **Q&A chat** -ask follow-up questions about the lecture with the full transcript + guide as context; optionally attach the current video frame
-- **History** -keeps track of previously generated guides so you can revisit them
-- **Keyboard shortcuts** -Arrow Up/Down to adjust playback speed
+- **Generates a study guide** with key concepts, definitions, formulas (rendered with KaTeX), and notes - organized by topic, not fixed time chunks
+- **Syncs to playback** - the guide highlights the section matching where you are in the video
+- **Q&A chat** - ask follow-up questions about the lecture with the full transcript + guide as context; optionally attach the current video frame
+- **History** - keeps track of previously generated guides so you can revisit them
+- **Keyboard shortcuts** - Arrow Up/Down to adjust playback speed
 
 ## Supported AI providers
 
@@ -49,10 +49,10 @@ Works with pretty much any major provider. Just pick one in the popup, paste you
 ### Suggested providers and models
 
 - **[Google AI Studio](https://aistudio.google.com/app/apikey)** is a practical default: the free tier includes a **generous daily allowance** of API requests for trying the extension without cost.
-- In our own experiments with this project, **Gemini 2.5 Flash** has performed **best overall** for guide quality, math-heavy lectures, and follow-up Q&A.
-- **[OpenRouter](https://openrouter.ai/)** is another strong option if you want a **broad catalog of models**, including several **free** endpoints -pick a model on their site and paste its ID into the extension.
+- In my own experiments with this project, **Gemini 2.5 Flash** has performed **best overall** for guide quality, math-heavy lectures, and follow-up Q&A.
+- **[OpenRouter](https://openrouter.ai/)** is another strong option if you want a **broad catalog of models**, including several **free** endpoints - pick a model on their site and paste its ID into the extension.
 
-**Multimodal models and “Attach current frame”:** **Not all models are multimodal.** The **Attach current frame** control in Q&A sends an **image** of the current video frame to the model. That only works reliably with **vision-capable** models (many Gemini and other multimodal APIs). If you choose a **text-only** model, frame attachment may be ignored, fail, or behave inconsistently -**frame capture is limited by whichever model you use.**
+**Multimodal models and “Attach current frame”:** **Not all models are multimodal.** The **Attach current frame** control in Q&A sends an **image** of the current video frame to the model. That only works reliably with **vision-capable** models (many Gemini and other multimodal APIs). If you choose a **text-only** model, frame attachment may be ignored, fail, or behave inconsistently - **frame capture is limited by whichever model you use.**
 
 ## Installation
 
