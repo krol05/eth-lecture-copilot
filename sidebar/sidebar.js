@@ -604,6 +604,18 @@ Now process the following transcript:`;
 
   // ─── Q&A Chat ─────────────────────────────────────────────────────────────
 
+  function restoreMainStatus() {
+    if (guide?.guide?.length) {
+      setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
+    } else if (transcript?.text) {
+      const n = Array.isArray(transcript.cues) ? transcript.cues.length : null;
+      const cueStr = n != null ? ` · ${n} cues` : '';
+      setStatus('ready', `Transcript loaded${cueStr}`);
+    } else {
+      setStatus('loading', 'Waiting for transcript…');
+    }
+  }
+
   function onQaInputChange() {
     const hasText = qaInput.value.trim().length > 0;
     const hasSettings = hasUsableSettings();
@@ -632,6 +644,8 @@ Now process the following transcript:`;
         setStatus('warning', 'Frame capture failed — sending without image');
       }
     }
+
+    setStatus('loading', 'Waiting for reply…');
 
     // Add user message to UI
     const userMsg = { role: 'user', content: text, imageBase64 };
@@ -672,6 +686,7 @@ Now process the following transcript:`;
     } finally {
       isChatting = false;
       onQaInputChange();
+      restoreMainStatus();
     }
   }
 
