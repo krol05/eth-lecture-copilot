@@ -559,21 +559,56 @@
 
   // ─── Frame Capture ───────────────────────────────────────────────────────────
 
-  function captureVideoFrame() {
-    return new Promise(resolve => {
-      if (!videoEl) return resolve(null);
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = videoEl.videoWidth || 1280;
-        canvas.height = videoEl.videoHeight || 720;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-        const b64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-        resolve(b64);
-      } catch (e) {
-        console.warn('[ETH Copilot] Frame capture failed:', e.message);
-        resolve(null);
-      }
+  async function captureVideoFrame() {
+    if (!videoEl) return null;
+
+    // Strategy 1: direct canvas capture (fast, frame-accurate)
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoEl.videoWidth || 1280;
+      canvas.height = videoEl.videoHeight || 720;
+      canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+      const b64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+      if (b64) return b64;
+    } catch (_) {
+      console.warn('[ETH Copilot] Canvas tainted (cross-origin video), falling back to tab capture');
+    }
+
+    // Strategy 2: screenshot the visible tab via background, then crop to video
+    try {
+      const rect = videoEl.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+
+      const dataUrl = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: 'CAPTURE_VISIBLE_TAB' }, resp => {
+          if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+          if (!resp?.success) return reject(new Error(resp?.error || 'Tab capture failed'));
+          resolve(resp.data);
+        });
+      });
+
+      const img = await loadImage(dataUrl);
+      const cx = Math.round(rect.left * dpr);
+      const cy = Math.round(rect.top * dpr);
+      const cw = Math.round(rect.width * dpr);
+      const ch = Math.round(rect.height * dpr);
+      const canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      canvas.getContext('2d').drawImage(img, cx, cy, cw, ch, 0, 0, cw, ch);
+      return canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+    } catch (e) {
+      console.warn('[ETH Copilot] Tab capture fallback failed:', e.message);
+      return null;
+    }
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Image decode failed'));
+      img.src = src;
     });
   }
 
