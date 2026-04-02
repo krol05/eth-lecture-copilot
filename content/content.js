@@ -7,7 +7,7 @@
  * 3. Inject sidebar iframe
  * 4. Resize video container to make room for sidebar
  * 5. Poll video timestamp and send updates to sidebar
- * 6. Handle keyboard shortcuts (Arrow Up/Down for playback speed)
+ * 6. Keyboard: Arrow Up/Down on the video page change playback speed by 0.25× (0.25–4.0)
  * 7. Show speed overlay on speed change
  */
 
