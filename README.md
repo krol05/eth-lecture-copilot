@@ -2,6 +2,30 @@
 
 A Chrome extension that turns ETH Zürich lecture recordings into structured study guides using AI. It sits as a sidebar next to the video on [video.ethz.ch](https://video.ethz.ch) and generates a topic-by-topic breakdown of the lecture — synced to the current timestamp as you watch.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <strong>Guide + lecture</strong><br />
+      <sub>Structured guide (concepts, definitions, formulas) stays aligned with playback.</sub><br /><br />
+      <img src="docs/images/readme-01-guide.png" alt="Lecture video with Copilot sidebar showing the Guide tab" width="100%" />
+    </td>
+    <td align="center" width="50%">
+      <strong>Q&amp;A with frame attached</strong><br />
+      <sub>The <strong>second</strong> image is the Q&amp;A tab: the model answered using <strong>Attach current frame</strong> so the slide is included as context.</sub><br /><br />
+      <img src="docs/images/readme-02-qa-frame.png" alt="Q&amp;A chat with Attach current frame enabled and frame attached" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <br /><strong>Settings</strong><br />
+      <sub>Choose provider, model, and API key — everything stays in your browser.</sub><br /><br />
+      <img src="docs/images/readme-03-settings.png" alt="ETH Lecture Copilot extension settings popup" width="85%" style="max-width: 520px;" />
+    </td>
+  </tr>
+</table>
+
 ## What it does
 
 - **Auto-extracts the transcript** from ETH lecture pages (or lets you paste one manually)
@@ -19,6 +43,14 @@ Works with pretty much any major provider. Just pick one in the popup, paste you
 - OpenAI, Anthropic, xAI, DeepSeek, Mistral
 - OpenRouter, Groq, Together AI, Cerebras
 - Local models (Ollama, LM Studio, Jan, or any OpenAI-compatible server)
+
+### Suggested providers and models
+
+- **[Google AI Studio](https://aistudio.google.com/app/apikey)** is a practical default: the free tier includes a **generous daily allowance** of API requests for trying the extension without cost.
+- In our own experiments with this project, **Gemini 2.5 Flash** has performed **best overall** for guide quality, math-heavy lectures, and follow-up Q&A.
+- **[OpenRouter](https://openrouter.ai/)** is another strong option if you want a **broad catalog of models**, including several **free** endpoints — pick a model on their site and paste its ID into the extension.
+
+**Multimodal models and “Attach current frame”:** **Not all models are multimodal.** The **Attach current frame** control in Q&A sends an **image** of the current video frame to the model. That only works reliably with **vision-capable** models (many Gemini and other multimodal APIs). If you choose a **text-only** model, frame attachment may be ignored, fail, or behave inconsistently — **frame capture is limited by whichever model you use.**
 
 ## Installation
 
@@ -48,6 +80,7 @@ If automatic transcript detection doesn't work for a particular lecture, you can
 ├── popup/             Extension popup for settings
 ├── lib/               Shared config (providers, KaTeX)
 ├── icons/             Extension icons
+├── docs/images/       README screenshots
 └── manifest.json
 ```
 
