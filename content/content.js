@@ -9,6 +9,9 @@
  * 5. Poll video timestamp and send updates to sidebar
  * 6. Keyboard: Arrow Up/Down on the video page change playback speed by 0.25× (0.25–4.0)
  * 7. Show speed overlay on speed change
+ *
+ * Note: Do not set video.crossOrigin on init — that can break Paella/HLS until captureVideoFrame()
+ * applies CORS only when canvas capture actually needs it.
  */
 
 (function () {
@@ -44,7 +47,6 @@
     lastKnownHref = location.href;
     waitForVideo().then(video => {
       videoEl = video;
-      enableVideoCORS(video);
       injectSidebar();
       startTimestampSync();
       initKeyboardShortcuts();
@@ -69,13 +71,6 @@
 
   function isLecturePage() {
     return location.hostname === 'video.ethz.ch';
-  }
-
-  function enableVideoCORS(video) {
-    if (!video || video.crossOrigin) return;
-    try {
-      video.crossOrigin = 'anonymous';
-    } catch (_) {}
   }
 
   function installLectureNavigationWatch() {
@@ -114,7 +109,6 @@
       postToSidebar({ type: 'EXTENSION_READY', lectureUrl: location.href });
       waitForVideo(15000).then(video => {
         videoEl = video;
-        if (video) enableVideoCORS(video);
         startTimestampSync();
         initiateTranscriptExtraction();
       });
