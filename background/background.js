@@ -14,10 +14,12 @@
 
 // Default model per provider — best current option as of 2025
 // Users don't select a model; the extension always uses the best one.
+// Rolling "latest" aliases — providers keep these pointed at their current best model.
+// No version strings = no staleness. Never needs updating.
 const DEFAULT_MODELS = {
-  gemini: 'gemini-2.5-flash',        // 1M context, fast, cheap, best for long transcripts
-  claude: 'claude-sonnet-4-5',       // 200k context, excellent instruction following
-  openai: 'gpt-4.1-mini'            // 1M context, fast, cost-efficient
+  gemini: 'gemini-2.0-flash-latest',     // Google's rolling latest Flash alias
+  claude: 'claude-3-5-sonnet-latest',    // Anthropic's official rolling alias
+  openai: 'gpt-4o'                       // OpenAI's stable pointer (they update it silently)
 };
 
 // ─── API Helpers ─────────────────────────────────────────────────────────────
