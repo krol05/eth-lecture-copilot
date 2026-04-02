@@ -49,11 +49,24 @@ const DEFAULT_MODELS = {
 // ─── OpenAI-compatible handler (covers ~80% of providers) ────────────────────
 
 async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts = {}) {
+  const oaiMessages = messages.map(m => {
+    if (m.role === 'user' && m.imageBase64) {
+      return {
+        role: 'user',
+        content: [
+          { type: 'text', text: m.content },
+          { type: 'image_url', url: { url: `data:image/jpeg;base64,${m.imageBase64}` } }
+        ]
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+
   const body = {
     model,
     messages: [
       { role: 'system', content: systemPrompt },
-      ...messages
+      ...oaiMessages
     ],
     temperature: opts.temperature ?? 0.4,
     ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
@@ -306,7 +319,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleMessage(msg) {
   if (msg.type === 'PING') return 'pong';
 
-  const { type, provider, apiKey, imageBase64, localBase } = msg;
+  const { type, provider, apiKey, localBase } = msg;
   const model = msg.model || DEFAULT_MODELS[provider];
   // localBase is passed for 'local' type providers; included in opts so callAI can forward it
   const baseOpts = localBase ? { localBase } : {};
@@ -346,7 +359,11 @@ async function handleMessage(msg) {
     case 'CHAT': {
       const { messages, systemPrompt } = msg;
       return callAI(provider, model, apiKey, messages, systemPrompt,
-        { ...baseOpts, temperature: 0.4, imageBase64, timeoutMs: 120000 });
+        { ...baseOpts, temperature: 0.4, timeoutMs: 120000 });
+    }
+
+    case 'CAPTURE_VISIBLE_TAB': {
+      return chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 85 });
     }
 
     case 'FETCH_VTT': {

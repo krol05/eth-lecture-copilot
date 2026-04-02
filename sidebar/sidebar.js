@@ -208,7 +208,14 @@
   function captureFrame() {
     return new Promise((resolve) => {
       const id = makeRequestId();
-      pendingRequests[id] = resolve;
+      const timer = setTimeout(() => {
+        delete pendingRequests[id];
+        resolve(null);
+      }, 8000);
+      pendingRequests[id] = (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      };
       postToContent({ type: 'CAPTURE_FRAME', requestId: id });
     });
   }
@@ -551,9 +558,13 @@ Now process the following transcript:`;
     // Capture frame if checkbox checked
     let imageBase64 = null;
     if (attachCb.checked) {
+      setStatus('loading', 'Capturing video frame…');
       imageBase64 = await captureFrame();
       attachCb.checked = false;
       framePreview.style.display = 'none';
+      if (!imageBase64) {
+        setStatus('warning', 'Frame capture failed — sending without image');
+      }
     }
 
     // Add user message to UI
@@ -572,13 +583,12 @@ Now process the following transcript:`;
     try {
       const response = await apiRequest({
         type: 'CHAT',
-        messages: qaMessages.map(m => ({ role: m.role, content: m.content, imageBase64: m.imageBase64 })),
+        messages: qaMessages.map(m => ({ role: m.role, content: m.content, ...(m.imageBase64 ? { imageBase64: m.imageBase64 } : {}) })),
         systemPrompt,
         provider: settings.provider,
         model: settings.model || null,
         apiKey: settings.apiKey,
-        localBase: getLocalBase(),
-        imageBase64
+        localBase: getLocalBase()
       });
 
       typingEl.remove();
