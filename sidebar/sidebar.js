@@ -417,11 +417,24 @@ Output: {"lecture_title":"Graph Traversal","total_duration_seconds":180,"guide":
 Now process the following transcript:`;
   }
 
+  function toSeconds(v) {
+    if (typeof v === 'number' && isFinite(v)) return v;
+    if (typeof v === 'string') {
+      const hms = v.match(/^(\d+):(\d+):(\d+)$/);
+      if (hms) return +hms[1] * 3600 + +hms[2] * 60 + +hms[3];
+      const ms = v.match(/^(\d+):(\d+)$/);
+      if (ms) return +ms[1] * 60 + +ms[2];
+      const n = parseFloat(v);
+      if (isFinite(n)) return n;
+    }
+    return 0;
+  }
+
   function sanitizeGuide(g) {
     if (!Array.isArray(g.guide)) return g;
     g.guide = g.guide.map(b => ({
-      start_time: b.start_time ?? 0,
-      end_time: b.end_time ?? 0,
+      start_time: toSeconds(b.start_time),
+      end_time: toSeconds(b.end_time),
       title: b.title ?? 'Untitled Section',
       key_concepts: Array.isArray(b.key_concepts) ? b.key_concepts : [],
       formulas: Array.isArray(b.formulas) ? b.formulas : [],
