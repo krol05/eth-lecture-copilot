@@ -68,6 +68,8 @@
         "lib/pdfjs/pdf.worker.min.mjs",
         "lib/transformers/transformers.min.js",
         "lib/transformers/ort.bundle.min.mjs",
+        "lib/transformers/ort-wasm-simd-threaded.jsep.mjs",
+        "lib/transformers/ort-wasm-simd-threaded.jsep.wasm",
         "ui/ui-settings.html",
         "ui/ui-settings.css",
         "ui/ui-settings.js"

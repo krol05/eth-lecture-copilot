@@ -19,7 +19,15 @@
   const CHUNK_TARGET = 600;
   const CHUNK_OVERLAP = 80;
   const EMBED_MODEL = 'Xenova/all-MiniLM-L6-v2';
+  /** CDN fallback only if chrome.runtime is unavailable (non-extension context). */
   const WASM_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/';
+
+  function getOnnxWasmBaseUrl() {
+    if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+      return chrome.runtime.getURL('lib/transformers/');
+    }
+    return WASM_CDN;
+  }
 
   // ─── IndexedDB helpers ───────────────────────────────────────────────────
 
@@ -275,7 +283,8 @@
       const { pipeline, env } = mod;
 
       env.allowLocalModels = false;
-      env.backends.onnx.wasm.wasmPaths = WASM_CDN;
+      // Extension CSP blocks dynamic import() from CDNs; ship ort-wasm-simd-threaded.jsep.{mjs,wasm} locally.
+      env.backends.onnx.wasm.wasmPaths = getOnnxWasmBaseUrl();
       env.backends.onnx.wasm.proxy = false;
 
       if (onStatus) onStatus('Downloading embedding model (~25 MB, one-time)...');
