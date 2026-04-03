@@ -87,7 +87,7 @@
       <p class="empty-title">No guide yet</p>
       <p class="empty-desc">Generate an AI lecture guide from the transcript.</p>
       <div class="info-banner">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
         <span>Results depend on your model, its context window, and these settings. Some tweaking and trial &amp; error is normal to get the best output for your setup.</span>
       </div>
 
@@ -123,7 +123,7 @@
         </div>
         <div class="gen-setting-row">
           <label class="gen-setting-label" for="gen-detail-select">Block detail
-            <span class="setting-hint" title="How much information per block:&#10;Low = brief bullet points (~1-2 sentences)&#10;Medium = solid explanations (~2-3 sentences)&#10;High = thorough coverage (~3-5 sentences)&#10;Very High = exam-grade depth (~4-8 sentences)&#10;&#10;Higher detail → more tokens per block → may hit context limits on smaller models">?</span>
+            <span class="setting-hint" data-tip="How much information per block:&#10;Low = brief bullet points (~1-2 sentences)&#10;Medium = solid explanations (~2-3 sentences)&#10;High = thorough coverage (~3-5 sentences)&#10;Very High = exam-grade depth (~4-8 sentences)&#10;&#10;Higher detail → more tokens per block → may hit context limits on smaller models">?</span>
           </label>
           <select id="gen-detail-select" class="gen-setting-select">
             <option value="low">Low</option>
@@ -134,7 +134,7 @@
         </div>
         <div class="gen-setting-row">
           <label class="gen-setting-label" for="gen-count-select">Block count
-            <span class="setting-hint" title="How many blocks to split the lecture into:&#10;Low = 5–10 (broad overview)&#10;Medium = 10–20 (one per major topic)&#10;High = 20–35 (subtopics &amp; examples)&#10;Very High = 30–50+ (every shift &amp; proof step)&#10;&#10;More blocks × high detail = larger output.&#10;Stay within your model's output limit (8K–128K tokens).">?</span>
+            <span class="setting-hint" data-tip="How many blocks to split the lecture into:&#10;Low = 5-10 (broad overview)&#10;Medium = 10-20 (one per major topic)&#10;High = 20-35 (subtopics &amp; examples)&#10;Very High = 30-50+ (every shift &amp; proof step)&#10;&#10;More blocks x high detail = larger output.&#10;Stay within your model's output limit (8K-128K tokens).">?</span>
           </label>
           <select id="gen-count-select" class="gen-setting-select">
             <option value="low">Low</option>
@@ -146,7 +146,7 @@
         <p id="gen-token-hint" class="gen-token-hint">~32 000 output tokens</p>
         <div class="gen-setting-row">
           <label class="gen-setting-label" for="gen-temp-slider">Temperature
-            <span class="setting-hint" title="0.10 = strict &amp; safe JSON&#10;0.20–0.30 = richer writing, still reliable (recommended: 0.25)&#10;0.40+ = creative but may break JSON or hallucinate">?</span>
+            <span class="setting-hint" data-tip="0.10 = strict &amp; safe JSON&#10;0.20-0.30 = richer writing, still reliable (recommended: 0.25)&#10;0.40+ = creative but may break JSON or hallucinate">?</span>
           </label>
           <div class="gen-slider-wrap">
             <input type="range" id="gen-temp-slider" min="0" max="100" value="25" step="1">
@@ -155,7 +155,7 @@
         </div>
         <div class="gen-setting-row">
           <label class="gen-setting-label" for="gen-thinking-select">Thinking
-            <span class="setting-hint" title="None = fastest, cheapest&#10;Low = brief reasoning step&#10;Medium = solid reasoning (recommended)&#10;High = deep reasoning, slower &amp; more expensive">?</span>
+            <span class="setting-hint" data-tip="None = fastest, cheapest&#10;Low = brief reasoning step&#10;Medium = solid reasoning (recommended)&#10;High = deep reasoning, slower &amp; more expensive">?</span>
           </label>
           <select id="gen-thinking-select" class="gen-setting-select">
             <option value="none">None</option>
@@ -277,13 +277,13 @@
 
       <div id="script-panel-body" class="script-panel-body" style="display:none">
         <div class="script-info-banner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-          <span>PDFs are chunked &amp; indexed locally in your browser. Only relevant excerpts are sent with each question (via BM25 keyword search). Large scripts can significantly increase token usage per Q&amp;A message.</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+          <span>PDFs are chunked &amp; indexed locally in your browser. Only the most relevant excerpts are sent with each question (via fuzzy text matching). Large scripts can significantly increase token usage per Q&amp;A message.</span>
         </div>
 
         <div class="script-strictness-row">
           <label class="gen-setting-label" for="script-strictness-select">Script reliance
-            <span class="setting-hint" title="How heavily the AI uses the script:&#10;Low = supplementary reference only (4 chunks)&#10;Medium = balanced with lecture (8 chunks)&#10;High = script as primary source (14 chunks)&#10;Strict = answer almost exclusively from script (20 chunks)&#10;&#10;More chunks = more tokens per question">?</span>
+            <span class="setting-hint" data-tip="How heavily the AI uses the script:&#10;Low = supplementary reference only (4 chunks)&#10;Medium = balanced with lecture (8 chunks)&#10;High = script as primary source (14 chunks)&#10;Strict = answer almost exclusively from script (20 chunks)&#10;&#10;More chunks = more tokens per question">?</span>
           </label>
           <select id="script-strictness-select" class="gen-setting-select">
             <option value="low">Low</option>
@@ -309,13 +309,34 @@
           </button>
           <span id="script-upload-status" class="script-upload-status"></span>
         </div>
+
+        <details class="script-help">
+          <summary>How to use scripts effectively</summary>
+          <div class="script-help-body">
+            <p><strong>How it works:</strong> Uploaded PDFs are split into small text chunks and stored locally in your browser. When you ask a Q&amp;A question, the extension finds chunks relevant to your current video position (&#177;3 min) and your question using fuzzy text matching, then includes those excerpts in the AI prompt.</p>
+            <p><strong>Best practices:</strong></p>
+            <ul>
+              <li>Seek to the relevant part of the video before asking a question &mdash; the system uses your current timestamp to find matching script content.</li>
+              <li>Ask specific questions rather than very broad ones for better chunk matching.</li>
+              <li>Start with "Medium" script reliance and increase if answers lack script detail.</li>
+              <li>Upload only the script for the current course; unrelated PDFs dilute results.</li>
+            </ul>
+            <p><strong>Limitations:</strong></p>
+            <ul>
+              <li>No semantic / embedding search &mdash; matching is fuzzy text-based, so unusual phrasing may miss relevant chunks.</li>
+              <li>Each retrieved chunk adds ~500 tokens to the prompt. High reliance (14-20 chunks) can approach context limits on smaller models.</li>
+              <li>Heavily formatted PDFs (tables, diagrams, multi-column layouts) may extract poorly.</li>
+              <li>All processing is local &mdash; only the matched excerpts are sent to the AI, never the full PDF.</li>
+            </ul>
+          </div>
+        </details>
       </div>
     </div>
 
     <div class="qa-input-area">
       <div class="qa-temp-row">
         <label class="qa-temp-label" for="qa-temp-slider">Temp
-          <span class="setting-hint" title="0.20–0.40 = focused, factual answers (recommended: 0.35)&#10;0.50–0.70 = more natural, conversational&#10;0.80+ = creative but may stray from lecture content">?</span>
+          <span class="setting-hint" data-tip="0.20-0.40 = focused, factual answers (recommended: 0.35)&#10;0.50-0.70 = more natural, conversational&#10;0.80+ = creative but may stray from lecture content">?</span>
         </label>
         <input type="range" id="qa-temp-slider" min="0" max="100" value="35" step="1">
         <span id="qa-temp-value" class="gen-slider-value">0.35</span>

@@ -364,6 +364,12 @@ function findMatchingBrace(str) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[BG] onMessage:', message?.type);
 
+  if (message?.type === 'OPEN_OPTIONS') {
+    chrome.runtime.openOptionsPage();
+    sendResponse({ success: true });
+    return;
+  }
+
   if (message?.type === 'CAPTURE_VISIBLE_TAB') {
     const wid = sender?.tab?.windowId ?? null;
     chrome.tabs.captureVisibleTab(wid, { format: 'jpeg', quality: 85 })

@@ -10,8 +10,8 @@
  * 6. Keyboard: Arrow Up/Down on the video page change playback speed by 0.25× (0.25–4.0)
  * 7. Show speed overlay on speed change
  *
- * Note: Do not set video.crossOrigin on init — that can break Paella/HLS until captureVideoFrame()
- * applies CORS only when canvas capture actually needs it.
+ * Note: Never set video.crossOrigin — that permanently breaks Paella/HLS streams.
+ * Frame capture uses direct canvas (if same-origin) or tab screenshot+crop as fallback.
  */
 
 (function () {
@@ -687,33 +687,10 @@
       const b64 = canvasCapture();
       if (b64) return b64;
     } catch (_) {
-      console.warn('[ETH Copilot] Canvas capture failed, trying CORS reload…');
+      console.warn('[ETH Copilot] Canvas capture tainted, falling back to tab screenshot…');
     }
 
-    // Strategy 2: enable CORS on the video and retry canvas capture
-    if (!videoEl.crossOrigin) {
-      try {
-        const currentTime = videoEl.currentTime;
-        const wasPaused = videoEl.paused;
-        videoEl.crossOrigin = 'anonymous';
-        const src = videoEl.currentSrc || videoEl.src;
-        if (src && !src.startsWith('blob:')) {
-          videoEl.src = src;
-          videoEl.currentTime = currentTime;
-          await new Promise(r => {
-            videoEl.addEventListener('seeked', r, { once: true });
-            setTimeout(r, 3000);
-          });
-          if (!wasPaused) videoEl.play().catch(() => {});
-          const b64 = canvasCapture();
-          if (b64) return b64;
-        }
-      } catch (e) {
-        console.warn('[ETH Copilot] CORS reload capture failed:', e.message);
-      }
-    }
-
-    // Strategy 3: screenshot the visible tab via background, then crop to video
+    // Strategy 2: screenshot the visible tab via background, then crop to video
     try {
       const rect = videoEl.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;

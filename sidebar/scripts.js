@@ -1,8 +1,9 @@
 /**
- * scripts.js — PDF Script Manager for ETH Lecture Copilot
+ * scripts.js -- PDF Script Manager for ETH Lecture Copilot
  *
  * Handles: PDF text extraction (via pdf.js), paragraph-aware chunking,
- * BM25 retrieval, and IndexedDB persistence keyed by course ID.
+ * fuzzy retrieval (Dice bigram similarity + substring matching),
+ * and IndexedDB persistence keyed by course ID.
  *
  * Loaded as a regular <script> before sidebar.js.
  * Exposes window.ScriptManager.
@@ -14,7 +15,7 @@
   const DB_NAME = 'eth-copilot-scripts';
   const DB_VERSION = 1;
   const STORE = 'scripts';
-  const CHUNK_TARGET = 600;   // target tokens per chunk (≈ 400 words)
+  const CHUNK_TARGET = 600;   // target tokens per chunk
   const CHUNK_OVERLAP = 80;   // overlap tokens between chunks
 
   // ─── IndexedDB helpers ───────────────────────────────────────────────────
@@ -67,14 +68,11 @@
 
   function extractCourseId(url) {
     if (!url) return null;
-    // ETH pattern: .../252-0027-00L/... or similar course codes
     const m = url.match(/(\d{3}-\d{4}-\d{2}[A-Z])/);
     if (m) return m[1];
-    // Fallback: use the path segment after the semester
     const segments = new URL(url).pathname.split('/').filter(Boolean);
-    const semIdx = segments.findIndex(s => /^(spring|autumn|fall|summer|winter|frühling|herbst)$/i.test(s));
+    const semIdx = segments.findIndex(s => /^(spring|autumn|fall|summer|winter|fr(ü|ue)hling|herbst)$/i.test(s));
     if (semIdx >= 0 && segments[semIdx + 1]) return segments[semIdx + 1];
-    // Last resort: hash the full path minus year
     const noYear = new URL(url).pathname.replace(/\/20\d{2}\//, '/');
     return 'course_' + simpleHash(noYear);
   }
@@ -123,7 +121,6 @@
   }
 
   function chunkPages(pages) {
-    // First, split all pages into paragraphs
     const paragraphs = [];
     for (const p of pages) {
       if (!p.text) continue;
@@ -134,9 +131,7 @@
           paragraphs.push({ text: trimmed, pageNum: p.pageNum });
         }
       }
-      // If no paragraph breaks, treat the whole page as one paragraph
       if (parts.length <= 1 && p.text.trim().length > 10) {
-        // Split long pages by sentences if > 2x target
         const tokens = roughTokenCount(p.text);
         if (tokens > CHUNK_TARGET * 2) {
           const sentences = p.text.match(/[^.!?]+[.!?]+/g) || [p.text];
@@ -144,7 +139,6 @@
           for (const s of sentences) {
             if (roughTokenCount(buf + s) > CHUNK_TARGET && buf.length > 50) {
               paragraphs.push({ text: buf.trim(), pageNum: p.pageNum });
-              // Overlap: keep last portion
               const words = buf.split(/\s+/);
               buf = words.slice(-Math.min(CHUNK_OVERLAP, words.length)).join(' ') + ' ' + s;
             } else {
@@ -156,7 +150,6 @@
       }
     }
 
-    // Now merge small paragraphs and split large ones into chunks
     const chunks = [];
     let buffer = { text: '', pageNum: 0 };
 
@@ -168,7 +161,6 @@
         if (buffer.text) {
           chunks.push({ text: buffer.text, pageNum: buffer.pageNum });
         }
-        // If this paragraph alone is too big, it was already split above
         buffer = { text: para.text, pageNum: para.pageNum };
       }
     }
@@ -179,7 +171,7 @@
     return chunks;
   }
 
-  // ─── BM25 Retrieval ──────────────────────────────────────────────────────
+  // ─── Fuzzy Retrieval (Dice bigram similarity) ─────────────────────────────
 
   const STOP_WORDS = new Set([
     'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
@@ -191,58 +183,123 @@
     'if', 'so', 'than', 'also', 'very', 'just', 'about', 'which', 'what',
     'when', 'where', 'how', 'who', 'all', 'each', 'more', 'some', 'such',
     'into', 'then', 'there', 'here', 'only', 'over', 'after', 'before',
-    'between', 'under', 'above', 'up', 'down', 'out', 'off', 'through'
+    'between', 'under', 'above', 'up', 'down', 'out', 'off', 'through',
+    'der', 'die', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'einer',
+    'und', 'oder', 'aber', 'ist', 'sind', 'war', 'hat', 'haben', 'wird',
+    'mit', 'von', 'auf', 'fur', 'fuer', 'bei', 'nach', 'aus', 'zum', 'zur',
+    'nicht', 'auch', 'noch', 'nur', 'wie', 'dass', 'wenn', 'weil', 'es'
   ]);
 
-  function tokenize(text) {
+  function extractTerms(text) {
     return text.toLowerCase().split(/\W+/).filter(t => t.length > 2 && !STOP_WORDS.has(t));
   }
 
-  function buildIDF(chunks) {
-    const N = chunks.length;
-    const df = {};
-    for (const chunk of chunks) {
-      const seen = new Set(tokenize(chunk.text));
-      for (const term of seen) {
-        df[term] = (df[term] || 0) + 1;
+  /** Character-level bigrams for a string. */
+  function bigrams(str) {
+    const s = str.toLowerCase().replace(/\s+/g, ' ').trim();
+    const bg = new Map();
+    for (let i = 0; i < s.length - 1; i++) {
+      const pair = s.slice(i, i + 2);
+      bg.set(pair, (bg.get(pair) || 0) + 1);
+    }
+    return bg;
+  }
+
+  /** Sorensen-Dice coefficient between two strings (0..1). */
+  function diceCoefficient(a, b) {
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    const bgA = bigrams(a);
+    const bgB = bigrams(b);
+    let intersection = 0;
+    let totalA = 0;
+    let totalB = 0;
+    for (const [pair, count] of bgA) {
+      totalA += count;
+      if (bgB.has(pair)) intersection += Math.min(count, bgB.get(pair));
+    }
+    for (const count of bgB.values()) totalB += count;
+    if (totalA + totalB === 0) return 0;
+    return (2 * intersection) / (totalA + totalB);
+  }
+
+  /**
+   * Score a chunk against a query using combined approach:
+   * 1. Dice similarity on the full text (semantic shape)
+   * 2. Term-level substring containment (exact-ish hits)
+   * 3. Multi-term proximity bonus
+   */
+  function scoreChunk(queryTerms, queryRaw, chunkText) {
+    const chunkLower = chunkText.toLowerCase();
+
+    // Dice similarity between query and chunk (weighted at 40%)
+    const dice = diceCoefficient(queryRaw.toLowerCase(), chunkLower);
+
+    // Term containment: how many query terms appear as substrings in the chunk
+    let termHits = 0;
+    const hitPositions = [];
+    for (const term of queryTerms) {
+      const idx = chunkLower.indexOf(term);
+      if (idx >= 0) {
+        termHits++;
+        hitPositions.push(idx);
       }
     }
-    const idf = {};
-    for (const [term, freq] of Object.entries(df)) {
-      idf[term] = Math.log((N - freq + 0.5) / (freq + 0.5) + 1);
+    const termRatio = queryTerms.length > 0 ? termHits / queryTerms.length : 0;
+
+    // Proximity bonus: if multiple terms appear close together
+    let proximityBonus = 0;
+    if (hitPositions.length >= 2) {
+      hitPositions.sort((a, b) => a - b);
+      let closeCount = 0;
+      for (let i = 1; i < hitPositions.length; i++) {
+        if (hitPositions[i] - hitPositions[i - 1] < 300) closeCount++;
+      }
+      proximityBonus = closeCount / (hitPositions.length - 1);
     }
-    return idf;
+
+    return dice * 0.4 + termRatio * 0.45 + proximityBonus * 0.15;
   }
 
-  function scoreBM25(query, chunkText, idf, avgLen) {
-    const k1 = 1.5, b = 0.75;
-    const qTerms = tokenize(query);
-    const docTerms = tokenize(chunkText);
-    const docLen = docTerms.length;
-    const tf = {};
-    for (const t of docTerms) tf[t] = (tf[t] || 0) + 1;
-
-    let score = 0;
-    for (const term of qTerms) {
-      const termFreq = tf[term] || 0;
-      const termIDF = idf[term] || 0;
-      score += termIDF * (termFreq * (k1 + 1)) / (termFreq + k1 * (1 - b + b * docLen / avgLen));
-    }
-    return score;
-  }
-
-  function retrieveChunks(query, chunks, idf, topK) {
+  /**
+   * Retrieve top-K chunks with guaranteed minimum results.
+   * Falls back to evenly-spaced document chunks if scores are too low.
+   */
+  function retrieveChunks(query, chunks, topK) {
     if (!chunks.length) return [];
-    const avgLen = chunks.reduce((s, c) => s + tokenize(c.text).length, 0) / chunks.length;
+    const queryTerms = extractTerms(query);
     const scored = chunks.map((c, i) => ({
       index: i,
-      score: scoreBM25(query, c.text, idf, avgLen),
+      score: scoreChunk(queryTerms, query, c.text),
       text: c.text,
       pageNum: c.pageNum,
       fileIndex: c.fileIndex
     }));
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, topK).filter(s => s.score > 0);
+
+    const results = scored.slice(0, topK);
+
+    // If best score is very low, supplement with evenly-spaced chunks for coverage
+    const bestScore = results[0]?.score || 0;
+    if (bestScore < 0.05 && chunks.length > topK) {
+      const step = Math.max(1, Math.floor(chunks.length / topK));
+      const seen = new Set(results.map(r => r.index));
+      for (let i = 0; i < chunks.length && results.length < topK; i += step) {
+        if (!seen.has(i)) {
+          results.push({
+            index: i,
+            score: 0.001,
+            text: chunks[i].text,
+            pageNum: chunks[i].pageNum,
+            fileIndex: chunks[i].fileIndex
+          });
+          seen.add(i);
+        }
+      }
+      results.length = Math.min(results.length, topK);
+    }
+
+    return results;
   }
 
   // ─── Strictness configuration ────────────────────────────────────────────
@@ -250,7 +307,7 @@
   const STRICTNESS_PROFILES = {
     low: {
       topK: 4,
-      promptPrefix: 'The following are a few loosely related excerpts from the course script. Use them as supplementary reference only — prioritize the lecture transcript and your general knowledge.'
+      promptPrefix: 'The following are a few loosely related excerpts from the course script. Use them as supplementary reference only -- prioritize the lecture transcript and your general knowledge.'
     },
     medium: {
       topK: 8,
@@ -272,23 +329,19 @@
 
     extractCourseId,
 
-    /** Load stored record for a course, or null. */
     async load(courseId) {
       return dbGet(courseId);
     },
 
-    /** Process a PDF file and add its chunks to the course record. */
     async addPdf(courseId, file, onProgress) {
       const arrayBuffer = await file.arrayBuffer();
       const { pages, totalPages } = await extractTextFromPdf(arrayBuffer, onProgress);
       const chunks = chunkPages(pages);
 
-      // Load existing or create new record
       const existing = await dbGet(courseId) || {
         courseId,
         files: [],
-        chunks: [],
-        idf: {}
+        chunks: []
       };
 
       const fileIndex = existing.files.length;
@@ -300,30 +353,23 @@
         size: file.size
       });
 
-      // Tag chunks with file index
       const taggedChunks = chunks.map(c => ({ ...c, fileIndex }));
       existing.chunks = existing.chunks.concat(taggedChunks);
-
-      // Rebuild IDF
-      existing.idf = buildIDF(existing.chunks);
 
       await dbPut(existing);
       return existing;
     },
 
-    /** Remove a specific file (by index) from the course record. */
     async removeFile(courseId, fileIndex) {
       const record = await dbGet(courseId);
       if (!record) return null;
 
       record.files.splice(fileIndex, 1);
       record.chunks = record.chunks.filter(c => c.fileIndex !== fileIndex);
-      // Re-index remaining chunks
       record.chunks = record.chunks.map(c => ({
         ...c,
         fileIndex: c.fileIndex > fileIndex ? c.fileIndex - 1 : c.fileIndex
       }));
-      record.idf = buildIDF(record.chunks);
 
       if (record.files.length === 0) {
         await dbDelete(courseId);
@@ -334,23 +380,20 @@
       return record;
     },
 
-    /** Remove all scripts for a course. */
     async removeAll(courseId) {
       await dbDelete(courseId);
     },
 
-    /** Retrieve relevant chunks for a query. Returns { promptPrefix, chunks[] }. */
     retrieve(query, record, strictness) {
       if (!record?.chunks?.length) return { promptPrefix: '', chunks: [] };
       const profile = STRICTNESS_PROFILES[strictness] || STRICTNESS_PROFILES.medium;
-      const results = retrieveChunks(query, record.chunks, record.idf || {}, profile.topK);
+      const results = retrieveChunks(query, record.chunks, profile.topK);
       return {
         promptPrefix: profile.promptPrefix,
         chunks: results
       };
     },
 
-    /** Build the script context block for injection into the Q&A system prompt. */
     buildScriptContext(query, record, strictness) {
       const { promptPrefix, chunks } = this.retrieve(query, record, strictness);
       if (!chunks.length) return '';
@@ -358,13 +401,12 @@
       let ctx = `\n\n--- COURSE SCRIPT EXCERPTS ---\n${promptPrefix}\n\n`;
       for (const c of chunks) {
         const fileName = record.files[c.fileIndex]?.name || 'unknown';
-        ctx += `[${fileName}, p.${c.pageNum}] (relevance: ${c.score.toFixed(2)})\n${c.text}\n\n`;
+        ctx += `[${fileName}, p.${c.pageNum}] (relevance: ${c.score.toFixed(3)})\n${c.text}\n\n`;
       }
       ctx += '--- END SCRIPT EXCERPTS ---\n';
       return ctx;
     },
 
-    /** Format a file size for display. */
     formatSize(bytes) {
       if (bytes < 1024) return bytes + ' B';
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
