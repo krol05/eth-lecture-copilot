@@ -20,6 +20,13 @@
       <span class="header-title">Lecture Copilot</span>
     </div>
     <div class="header-right">
+      <button id="focus-toggle" class="icon-btn" title="Focus mode — video + sidebar only">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <line x1="8" y1="21" x2="16" y2="21"/>
+          <line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+      </button>
       <button id="theme-toggle" class="icon-btn" title="Toggle theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="4"/>
@@ -73,6 +80,90 @@
       </div>
       <p class="empty-title">No guide yet</p>
       <p class="empty-desc">Generate an AI lecture guide from the transcript.</p>
+      <div class="info-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <span>Results depend on your model, its context window, and these settings. Some tweaking and trial &amp; error is normal to get the best output for your setup.</span>
+      </div>
+
+      <div id="gen-settings" class="gen-settings">
+        <div class="gen-setting-row">
+          <label class="gen-setting-label" for="gen-lang-select">Language</label>
+          <select id="gen-lang-select" class="gen-setting-select">
+            <option value="">Same as transcript</option>
+            <option value="English">English</option>
+            <option value="German">Deutsch</option>
+            <option value="French">Français</option>
+            <option value="Italian">Italiano</option>
+            <option value="Romansh">Rumantsch</option>
+            <option value="Spanish">Español</option>
+            <option value="Portuguese">Português</option>
+            <option value="Turkish">Türkçe</option>
+            <option value="Serbian">Srpski</option>
+            <option value="Croatian">Hrvatski</option>
+            <option value="Albanian">Shqip</option>
+            <option value="Arabic">العربية</option>
+            <option value="Tamil">தமிழ்</option>
+            <option value="Chinese">中文</option>
+            <option value="Japanese">日本語</option>
+            <option value="Korean">한국어</option>
+            <option value="Hindi">हिन्दी</option>
+            <option value="Russian">Русский</option>
+            <option value="other">Other…</option>
+          </select>
+        </div>
+        <div id="gen-lang-custom-row" class="gen-setting-row" style="display:none">
+          <label class="gen-setting-label" for="gen-lang-custom">Custom</label>
+          <input type="text" id="gen-lang-custom" class="gen-setting-input" placeholder="e.g. Swahili, Polish…">
+        </div>
+        <div class="gen-setting-row">
+          <label class="gen-setting-label" for="gen-detail-select">Block detail
+            <span class="setting-hint" title="How much information per block:&#10;Low = brief bullet points (~1-2 sentences)&#10;Medium = solid explanations (~2-3 sentences)&#10;High = thorough coverage (~3-5 sentences)&#10;Very High = exam-grade depth (~4-8 sentences)&#10;&#10;Higher detail → more tokens per block → may hit context limits on smaller models">?</span>
+          </label>
+          <select id="gen-detail-select" class="gen-setting-select">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="very_high" selected>Very High</option>
+          </select>
+        </div>
+        <div class="gen-setting-row">
+          <label class="gen-setting-label" for="gen-count-select">Block count
+            <span class="setting-hint" title="How many blocks to split the lecture into:&#10;Low = 5–10 (broad overview)&#10;Medium = 10–20 (one per major topic)&#10;High = 20–35 (subtopics &amp; examples)&#10;Very High = 30–50+ (every shift &amp; proof step)&#10;&#10;More blocks × high detail = larger output.&#10;Stay within your model's output limit (8K–128K tokens).">?</span>
+          </label>
+          <select id="gen-count-select" class="gen-setting-select">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="very_high" selected>Very High</option>
+          </select>
+        </div>
+        <p id="gen-token-hint" class="gen-token-hint">~32 000 output tokens</p>
+        <div class="gen-setting-row">
+          <label class="gen-setting-label" for="gen-temp-slider">Temperature
+            <span class="setting-hint" title="0.10 = strict &amp; safe JSON&#10;0.20–0.30 = richer writing, still reliable (recommended: 0.25)&#10;0.40+ = creative but may break JSON or hallucinate">?</span>
+          </label>
+          <div class="gen-slider-wrap">
+            <input type="range" id="gen-temp-slider" min="0" max="100" value="25" step="1">
+            <span id="gen-temp-value" class="gen-slider-value">0.25</span>
+          </div>
+        </div>
+        <div class="gen-setting-row">
+          <label class="gen-setting-label" for="gen-thinking-select">Thinking
+            <span class="setting-hint" title="None = fastest, cheapest&#10;Low = brief reasoning step&#10;Medium = solid reasoning (recommended)&#10;High = deep reasoning, slower &amp; more expensive">?</span>
+          </label>
+          <select id="gen-thinking-select" class="gen-setting-select">
+            <option value="none">None</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+        <label class="gen-fallback-toggle">
+          <input type="checkbox" id="gen-fallback-cb">
+          <span>Use safe defaults (ignore above)</span>
+        </label>
+      </div>
+
       <button id="generate-btn" class="primary-btn" disabled>
         <span class="btn-text">Generate Guide</span>
         <span class="btn-spinner" style="display:none"></span>
@@ -90,6 +181,15 @@
             <div id="progress-fill" class="progress-fill"></div>
           </div>
         </div>
+        <button id="export-pdf-btn" class="icon-btn export-pdf-btn" type="button" title="Export full guide as PDF (opens print — choose Save as PDF)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+        </button>
         <button id="regenerate-btn" class="icon-btn regen-btn" title="Generate a new guide">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="23 4 23 10 17 10"/>
@@ -101,10 +201,11 @@
         <button type="button" id="block-prev-btn" class="block-nav-btn" title="Previous section" aria-label="Previous section">←</button>
         <div class="guide-nav-center">
           <button type="button" id="jump-current-block-btn" class="jump-current-btn" title="Show the guide section that matches playback right now">Current time</button>
-          <label class="auto-follow-toggle" title="When on, the guide follows the video. After you turn it back on, it waits until playback enters a different section before following again.">
+          <label class="auto-follow-toggle" title="When on, the guide follows the video playback time.">
             <input type="checkbox" id="auto-time-follow-cb" checked>
             <span>Switch to timeframe automatically</span>
           </label>
+          <p id="auto-follow-pause-hint" class="auto-follow-pause-hint" style="display:none">Temporarily paused — click <strong>Current time</strong> to resume</p>
         </div>
         <button type="button" id="block-next-btn" class="block-nav-btn" title="Next section" aria-label="Next section">→</button>
       </div>
@@ -126,7 +227,69 @@
       </div>
     </div>
 
+    <!-- Script panel (collapsible) -->
+    <div id="script-panel" class="script-panel">
+      <button id="script-panel-toggle" class="script-panel-header" type="button">
+        <div class="script-panel-header-left">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+          </svg>
+          <span>Course Scripts</span>
+          <span id="script-badge" class="script-badge" style="display:none">0</span>
+        </div>
+        <svg class="script-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+
+      <div id="script-panel-body" class="script-panel-body" style="display:none">
+        <div class="script-info-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <span>PDFs are chunked &amp; indexed locally in your browser. Only relevant excerpts are sent with each question (via BM25 keyword search). Large scripts can significantly increase token usage per Q&amp;A message.</span>
+        </div>
+
+        <div class="script-strictness-row">
+          <label class="gen-setting-label" for="script-strictness-select">Script reliance
+            <span class="setting-hint" title="How heavily the AI uses the script:&#10;Low = supplementary reference only (4 chunks)&#10;Medium = balanced with lecture (8 chunks)&#10;High = script as primary source (14 chunks)&#10;Strict = answer almost exclusively from script (20 chunks)&#10;&#10;More chunks = more tokens per question">?</span>
+          </label>
+          <select id="script-strictness-select" class="gen-setting-select">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+            <option value="strict">Strict</option>
+          </select>
+        </div>
+
+        <div id="script-file-list" class="script-file-list">
+          <p class="script-empty-msg">No scripts uploaded for this course.</p>
+        </div>
+
+        <div class="script-upload-row">
+          <input type="file" id="script-file-input" accept=".pdf" multiple style="display:none">
+          <button id="script-upload-btn" class="script-upload-btn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Upload PDF
+          </button>
+          <span id="script-upload-status" class="script-upload-status"></span>
+        </div>
+      </div>
+    </div>
+
     <div class="qa-input-area">
+      <div class="qa-temp-row">
+        <label class="qa-temp-label" for="qa-temp-slider">Temp
+          <span class="setting-hint" title="0.20–0.40 = focused, factual answers (recommended: 0.35)&#10;0.50–0.70 = more natural, conversational&#10;0.80+ = creative but may stray from lecture content">?</span>
+        </label>
+        <input type="range" id="qa-temp-slider" min="0" max="100" value="35" step="1">
+        <span id="qa-temp-value" class="gen-slider-value">0.35</span>
+      </div>
       <div class="qa-attach-row">
         <label class="attach-label">
           <input type="checkbox" id="attach-frame-cb">
@@ -139,6 +302,7 @@
         </label>
         <span id="frame-preview-label" class="frame-preview-label" style="display:none">📸 Frame attached</span>
       </div>
+      <p class="attach-hint">Only works with vision models (e.g. GPT-4o, Gemini, Claude 3). Check your provider's docs.</p>
       <div class="qa-textarea-row">
         <textarea id="qa-input" placeholder="Ask a question about the lecture…" rows="2"></textarea>
         <button id="qa-send" class="send-btn" disabled>
@@ -161,6 +325,7 @@
   <!-- Scripts -->
   <script src="../lib/katex/katex.min.js"></script>
   <script src="../lib/katex/auto-render.min.js"></script>
+  <script src="scripts.js"></script>
   <script src="sidebar.js"></script>
 </body>
 </html>

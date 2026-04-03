@@ -1,0 +1,172 @@
+/* Print / PDF export page — light theme for readable PDFs */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #1f2328;
+  background: #fff;
+}
+
+.print-header {
+  border-bottom: 2px solid #215caf;
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+}
+
+.print-header h1 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin: 0 0 6px;
+  line-height: 1.3;
+}
+
+.print-header .print-meta {
+  font-size: 12px;
+  color: #57606a;
+}
+
+.export-root {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 20px 24px 40px;
+}
+
+.export-block {
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #e8ecf0;
+  page-break-inside: avoid;
+}
+
+.export-block:last-child {
+  border-bottom: none;
+}
+
+.block-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f2328;
+  line-height: 1.35;
+}
+
+.block-timestamp {
+  font-size: 11px;
+  color: #57606a;
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  margin-top: 4px;
+}
+
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #57606a;
+  margin: 14px 0 8px;
+}
+
+.concepts-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.concepts-list li {
+  font-size: 13.5px;
+  line-height: 1.5;
+  padding-left: 14px;
+  position: relative;
+}
+
+.concepts-list li::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  color: #215caf;
+  font-size: 11px;
+}
+
+.formula-card {
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: 12px 14px;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.formula-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #57606a;
+  margin-bottom: 8px;
+  text-align: left;
+}
+
+.formula-render-wrap {
+  overflow-x: auto;
+}
+
+.definition-item {
+  background: rgba(33, 92, 175, 0.06);
+  border-left: 3px solid rgba(33, 92, 175, 0.35);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 12px;
+  margin-top: 8px;
+}
+
+.definition-term {
+  font-size: 13px;
+  font-weight: 700;
+  color: #215caf;
+  margin-bottom: 4px;
+}
+
+.definition-text {
+  font-size: 13px;
+  color: #424a53;
+  line-height: 1.5;
+}
+
+.notes-box {
+  background: rgba(210, 153, 34, 0.08);
+  border: 1px solid rgba(210, 153, 34, 0.35);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+
+.notes-icon-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #9a6700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.notes-text {
+  font-size: 13px;
+  color: #424a53;
+  line-height: 1.5;
+}
+
+.print-footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid #e8ecf0;
+  font-size: 10px;
+  color: #8c959f;
+  text-align: center;
+}
+
+@media print {
+  .export-root { padding: 0; max-width: none; }
+  .export-block { page-break-inside: avoid; }
+}

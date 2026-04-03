@@ -27,10 +27,10 @@
   const pendingRequests = {};
   let currentLectureUrl = null;
   let lastVideoTime = 0;
-  /** When true, guide block follows video time (with optional latch after re-enabling). */
+  /** When true, guide block follows video time. */
   let autoTimeFollow = localStorage.getItem('eth-copilot-auto-time-follow') !== '0';
-  /** After turning auto-follow back on: stay on manual block until playback leaves this index. */
-  let resumeAutoFollowLatch = null;
+  /** True when the user is manually browsing blocks (arrows); auto-follow stays "checked" but paused. */
+  let autoFollowPaused = false;
 
   // ─── DOM Refs ─────────────────────────────────────────────────────────────
   const statusBar    = document.getElementById('status-bar');
@@ -48,11 +48,41 @@
   const attachCb     = document.getElementById('attach-frame-cb');
   const framePreview = document.getElementById('frame-preview-label');
   const themeToggle  = document.getElementById('theme-toggle');
+  const focusToggle  = document.getElementById('focus-toggle');
+  const exportPdfBtn = document.getElementById('export-pdf-btn');
   const regenerateBtn = document.getElementById('regenerate-btn');
   const blockPrevBtn = document.getElementById('block-prev-btn');
   const blockNextBtn = document.getElementById('block-next-btn');
   const jumpCurrentBlockBtn = document.getElementById('jump-current-block-btn');
   const autoTimeFollowCb = document.getElementById('auto-time-follow-cb');
+  const autoFollowPauseHint = document.getElementById('auto-follow-pause-hint');
+  const genSettings    = document.getElementById('gen-settings');
+  const genLangSel     = document.getElementById('gen-lang-select');
+  const genLangCustomRow = document.getElementById('gen-lang-custom-row');
+  const genLangCustom  = document.getElementById('gen-lang-custom');
+  const genDetailSel   = document.getElementById('gen-detail-select');
+  const genCountSel    = document.getElementById('gen-count-select');
+  const genTokenHint   = document.getElementById('gen-token-hint');
+  const genTempSlider  = document.getElementById('gen-temp-slider');
+  const genTempValue   = document.getElementById('gen-temp-value');
+  const genThinkingSel = document.getElementById('gen-thinking-select');
+  const genFallbackCb  = document.getElementById('gen-fallback-cb');
+  const qaTempSlider   = document.getElementById('qa-temp-slider');
+  const qaTempValue    = document.getElementById('qa-temp-value');
+
+  // Script panel refs
+  const scriptPanel       = document.getElementById('script-panel');
+  const scriptPanelToggle = document.getElementById('script-panel-toggle');
+  const scriptPanelBody   = document.getElementById('script-panel-body');
+  const scriptBadge       = document.getElementById('script-badge');
+  const scriptFileList    = document.getElementById('script-file-list');
+  const scriptUploadBtn   = document.getElementById('script-upload-btn');
+  const scriptFileInput   = document.getElementById('script-file-input');
+  const scriptUploadStatus = document.getElementById('script-upload-status');
+  const scriptStrictnessSel = document.getElementById('script-strictness-select');
+
+  let scriptRecord = null;  // current course's script data
+  let scriptCourseId = null;
 
   // ─── Init ─────────────────────────────────────────────────────────────────
 
@@ -65,9 +95,17 @@
     });
 
     themeToggle.addEventListener('click', toggleTheme);
+    focusToggle?.addEventListener('click', () => {
+      postToContent({ type: 'TOGGLE_FOCUS' });
+    });
     applyStoredTheme();
 
     generateBtn.addEventListener('click', onGenerateClick);
+    exportPdfBtn?.addEventListener('click', () => {
+      if (guide?.guide?.length) {
+        openGuidePrintWindow(guide, transcript?.lectureTitle || guide?.lecture_title);
+      }
+    });
     regenerateBtn.addEventListener('click', onRegenerateClick);
 
     if (autoTimeFollowCb) {
@@ -77,6 +115,26 @@
     blockPrevBtn?.addEventListener('click', () => navigateBlock(-1));
     blockNextBtn?.addEventListener('click', () => navigateBlock(1));
     jumpCurrentBlockBtn?.addEventListener('click', jumpToCurrentTimeBlock);
+
+    genLangSel?.addEventListener('change', () => {
+      if (genLangCustomRow) {
+        genLangCustomRow.style.display = genLangSel.value === 'other' ? '' : 'none';
+      }
+    });
+
+    genDetailSel?.addEventListener('change', updateTokenHint);
+    genCountSel?.addEventListener('change', updateTokenHint);
+    updateTokenHint();
+
+    genTempSlider?.addEventListener('input', () => {
+      genTempValue.textContent = (genTempSlider.value / 100).toFixed(2);
+    });
+    qaTempSlider?.addEventListener('input', () => {
+      qaTempValue.textContent = (qaTempSlider.value / 100).toFixed(2);
+    });
+    genFallbackCb?.addEventListener('change', () => {
+      genSettings?.classList.toggle('disabled-controls', genFallbackCb.checked);
+    });
 
     document.getElementById('manual-paste-link').addEventListener('click', e => {
       e.preventDefault();
@@ -92,6 +150,14 @@
     attachCb.addEventListener('change', () => {
       framePreview.style.display = attachCb.checked ? 'inline' : 'none';
     });
+
+    // Script panel
+    scriptPanelToggle?.addEventListener('click', () => {
+      const isOpen = scriptPanel.classList.toggle('open');
+      scriptPanelBody.style.display = isOpen ? '' : 'none';
+    });
+    scriptUploadBtn?.addEventListener('click', () => scriptFileInput?.click());
+    scriptFileInput?.addEventListener('change', handleScriptUpload);
 
     window.addEventListener('message', onContentMessage);
 
@@ -145,6 +211,7 @@
   function tryRestoreFromCache(lectureUrl) {
     if (!lectureUrl) return;
     currentLectureUrl = lectureUrl;
+    initScriptsForCourse(lectureUrl);
     const normNew = normalizeLectureUrl(lectureUrl);
 
     chrome.storage?.local?.get(
@@ -244,6 +311,15 @@
         handleTimestamp(msg.currentTime);
         break;
 
+      case 'FOCUS_MODE_CHANGED':
+        if (focusToggle) {
+          focusToggle.classList.toggle('active-toggle', !!msg.active);
+          focusToggle.title = msg.active
+            ? 'Exit focus mode'
+            : 'Focus mode — video + sidebar only';
+        }
+        break;
+
       case 'FRAME_CAPTURED':
         if (pendingRequests[msg.requestId]) {
           pendingRequests[msg.requestId](msg.imageBase64);
@@ -337,6 +413,9 @@
       currentTranscript: transcript,
       currentLectureUrl: currentLectureUrl
     });
+    if (currentLectureUrl && !scriptCourseId) {
+      initScriptsForCourse(currentLectureUrl);
+    }
     if (guide?.guide?.length) {
       setStatus('ready', `Guide ready · ${guide.guide.length} blocks · ${msg.cues.length} cues`);
     } else {
@@ -408,7 +487,16 @@
     generateError.style.display = 'none';
     setStatus('loading', 'Generating guide…');
 
-    const systemPrompt = buildGuidePrompt();
+    const useFallback = !!genFallbackCb?.checked;
+    const guideTemperature = useFallback ? null : (genTempSlider ? genTempSlider.value / 100 : null);
+    const guideThinking = useFallback ? 'none' : (genThinkingSel?.value || 'none');
+    const guideDetail = genDetailSel?.value || 'very_high';
+    const guideCount = genCountSel?.value || 'very_high';
+    const isGoogle = settings.provider === 'google';
+    const maxTokens = guideMaxTokens(guideDetail, guideCount, isGoogle);
+
+    const guideLang = getSelectedLanguage();
+    const systemPrompt = buildGuidePrompt(guideDetail, guideCount, guideLang);
     const payload = {
       type: 'GENERATE_GUIDE',
       transcriptText: transcript.text,
@@ -416,7 +504,11 @@
       provider: settings.provider,
       model: settings.model || null,
       apiKey: settings.apiKey,
-      localBase: getLocalBase()
+      localBase: getLocalBase(),
+      guideFallback: useFallback,
+      guideTemperature,
+      guideThinking,
+      guideMaxTokens: maxTokens
     };
 
     console.log('[Copilot] Sending GENERATE_GUIDE', {
@@ -424,7 +516,10 @@
       model: payload.model,
       transcriptLen: payload.transcriptText?.length,
       hasApiKey: !!payload.apiKey,
-      localBase: payload.localBase || '(none)'
+      localBase: payload.localBase || '(none)',
+      fallback: useFallback,
+      temperature: guideTemperature,
+      thinking: guideThinking
     });
 
     try {
@@ -478,29 +573,106 @@
     }
   }
 
-  function buildGuidePrompt() {
+  // ─── Guide Profile Definitions ──────────────────────────────────────────
+
+  const GUIDE_DETAIL_PROFILES = {
+    low: {
+      label: 'Low',
+      concepts: '1–2 brief sentences per bullet — just the core fact, no elaboration.',
+      formulas: 'Only include the most important formulas (skip minor or intermediate steps). LaTeX must be valid KaTeX, no dollar-sign delimiters.',
+      definitions: '1 sentence per definition — term and its meaning, nothing more.',
+      notes: 'Only include explicit exam hints or professor warnings. Leave empty otherwise.'
+    },
+    medium: {
+      label: 'Medium',
+      concepts: '2–3 solid sentences per bullet. State the idea, give brief intuition or a short example.',
+      formulas: 'Include main formulas and key theorems. Skip intermediate derivation steps unless they are a main teaching point. LaTeX must be valid KaTeX, no dollar-sign delimiters.',
+      definitions: '1–2 sentences — term, meaning, and one condition/caveat if relevant.',
+      notes: 'Professor warnings, exam hints, and notable connections. Keep concise.'
+    },
+    high: {
+      label: 'High',
+      concepts: '3–5 sentences per bullet. Explain the idea, the intuition, why it matters, and give at least one concrete example or comparison from the lecture.',
+      formulas: 'Capture all formulas, theorems, and key equations. Include derivation steps when the professor works through them. LaTeX must be valid KaTeX, no dollar-sign delimiters.',
+      definitions: '2–3 sentences — term, formal definition, conditions/domain, and one caveat or remark.',
+      notes: 'Professor warnings, exam hints, common mistakes, connections to other topics. Be thorough.'
+    },
+    very_high: {
+      label: 'Very High',
+      concepts: '4–8 detailed sentences per bullet. Explain the idea, the intuition behind it, why it matters, and how it connects to the rest of the lecture. Write them so a student who missed class can follow along. Include concrete examples the professor gave, comparisons, and step-by-step reasoning.',
+      formulas: 'Capture EVERY formula, theorem, equation, inequality, and key expression. Include intermediate derivation steps when the professor works through them. LaTeX must be valid KaTeX, no dollar-sign delimiters.',
+      definitions: 'Formally defined terms WITH full context — include the conditions, domain, and any caveats the professor mentions. Write 2–4 sentences per definition.',
+      notes: 'Professor warnings, exam hints, common mistakes students make, connections to other topics, "this will come back later" remarks, practical tips. Be generous — if the professor said something useful beyond the core material, capture it here.'
+    }
+  };
+
+  const GUIDE_COUNT_PROFILES = {
+    low:       { label: 'Low',       range: '5–10',  rule: 'Merge related subtopics into broad chunks. One block per major lecture section.' },
+    medium:    { label: 'Medium',    range: '10–20', rule: 'One block per clear topic shift. Group small asides with the surrounding topic.' },
+    high:      { label: 'High',      range: '20–35', rule: 'Split on subtopics, worked examples, and proof steps. Keep blocks focused.' },
+    very_high: { label: 'Very High', range: '30–50+', rule: 'Every subtopic, worked example, proof step, or clear topic shift gets its own block. Do NOT merge distant parts of the transcript.' }
+  };
+
+  const LEVEL_SCORES = { low: 1, medium: 2, high: 3, very_high: 4 };
+
+  function guideMaxTokens(detail, count, isGoogle) {
+    const score = (LEVEL_SCORES[detail] || 4) + (LEVEL_SCORES[count] || 4);
+    const cap = isGoogle ? 64000 : 32768;
+    if (score <= 3) return Math.round(cap * 0.25);
+    if (score <= 5) return Math.round(cap * 0.5);
+    if (score <= 7) return Math.round(cap * 0.75);
+    return cap;
+  }
+
+  function updateTokenHint() {
+    if (!genTokenHint) return;
+    const detail = genDetailSel?.value || 'very_high';
+    const count = genCountSel?.value || 'very_high';
+    const tokens = guideMaxTokens(detail, count, false);
+    const fmt = n => (n / 1000).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    genTokenHint.textContent = `~${fmt(tokens)} 000 max output tokens`;
+  }
+
+  function getSelectedLanguage() {
+    const val = genLangSel?.value || '';
+    if (!val) return '';
+    if (val === 'other') return genLangCustom?.value?.trim() || '';
+    return val;
+  }
+
+  function buildGuidePrompt(detail, count, lang) {
+    const d = GUIDE_DETAIL_PROFILES[detail] || GUIDE_DETAIL_PROFILES.very_high;
+    const c = GUIDE_COUNT_PROFILES[count] || GUIDE_COUNT_PROFILES.very_high;
+    const langInstruction = lang
+      ? `\n\nLANGUAGE: Write ALL text content (titles, key_concepts, definitions, notes) in ${lang}. Keep JSON keys, LaTeX, and technical notation unchanged.`
+      : '';
+
     return `You are an expert academic assistant that converts lecture transcripts into structured study guides.
 
-Your task: Read the provided lecture transcript and produce a JSON lecture guide. The guide divides the lecture into logical topic blocks (not fixed time intervals). Each block covers one coherent topic or subtopic.
+Your task: Read the provided lecture transcript and produce a JSON lecture guide. The guide divides the lecture into logical topic blocks (not fixed time intervals). Each block covers one coherent topic or subtopic.${langInstruction}
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown fences, no explanation, no preamble:
 
 {"lecture_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string"}]}
 
-RULES:
+BLOCK COUNT (${c.label} — target ${c.range} blocks):
+- ${c.rule}
+
+BLOCK DETAIL (${d.label}):
+- key_concepts: ${d.concepts}
+- formulas: ${d.formulas}
+- definitions: ${d.definitions}
+- notes: ${d.notes}
+
+GENERAL RULES:
 - Blocks follow the logical flow of the lecture. One coherent topic = one block.
-- Segmentation: prefer **many smaller blocks** over a few huge ones. On a full lecture, detailed guides often have **15–40+** blocks (every major subtopic, example block, or clear topic shift gets its own block). Do **not** merge distant parts of the transcript into one block to keep the JSON short.
-- Each block must be **substantial**: fill key_concepts, formulas, definitions, and notes wherever the transcript supports them — avoid empty or one-line blocks unless the section is truly trivial.
-- formulas: include EVERY formula/theorem/equation. LaTeX must be valid KaTeX. Omit delimiters in the latex field.
-- key_concepts: 2-6 complete sentences/phrases per block.
-- definitions: only formally defined terms.
-- notes: professor warnings, exam hints, cross-references to other blocks, common mistakes.
 - Do NOT hallucinate. Only extract content actually in the transcript.
+- Do NOT produce shallow one-liners unless the detail level is set to Low.
 - total_duration_seconds: use the last timestamp in the transcript.
 
 EXAMPLE:
 Input: "[00:00:00] BFS visits nodes level by level using a queue. [00:01:00] Time complexity is O(V+E). [00:02:00] DFS uses a stack. [00:03:00] Also O(V+E)."
-Output: {"lecture_title":"Graph Traversal","total_duration_seconds":180,"guide":[{"start_time":0,"end_time":90,"title":"Breadth-First Search","key_concepts":["BFS explores level by level","Uses a queue data structure"],"formulas":[{"label":"BFS Complexity","latex":"O(V+E)"}],"definitions":[{"term":"BFS","definition":"Graph traversal visiting all neighbours before going deeper"}],"notes":""},{"start_time":90,"end_time":180,"title":"Depth-First Search","key_concepts":["DFS explores deep before backtracking","Implemented with stack or recursion"],"formulas":[{"label":"DFS Complexity","latex":"O(V+E)"}],"definitions":[{"term":"DFS","definition":"Graph traversal going deep along each path first"}],"notes":"Both BFS and DFS share the same O(V+E) complexity."}]}
+Output: {"lecture_title":"Graph Traversal","total_duration_seconds":180,"guide":[{"start_time":0,"end_time":90,"title":"Breadth-First Search","key_concepts":["BFS explores a graph level by level, starting from a source node and visiting all its direct neighbours before moving to nodes two edges away","The algorithm uses a FIFO queue: enqueue the start node, then repeatedly dequeue the front, enqueue all unvisited neighbours, and mark them visited","BFS naturally finds shortest paths in unweighted graphs because it visits nodes in order of increasing distance from the source","Time complexity is O(V+E) because every vertex is enqueued/dequeued once and every edge is inspected once"],"formulas":[{"label":"BFS Time Complexity","latex":"O(V + E)"}],"definitions":[{"term":"BFS","definition":"Breadth-First Search: a graph traversal that visits all neighbours of a node before going deeper, guaranteeing shortest-path discovery in unweighted graphs"}],"notes":""},{"start_time":90,"end_time":180,"title":"Depth-First Search","key_concepts":["DFS explores as deep as possible along each branch before backtracking, making it suitable for detecting cycles and topological sorting","Can be implemented with an explicit stack or via recursion (the call stack acts as the implicit stack)","Like BFS, DFS runs in O(V+E) time, but it does NOT guarantee shortest paths","DFS is the foundation for many advanced algorithms: topological sort, strongly connected components, and cycle detection"],"formulas":[{"label":"DFS Time Complexity","latex":"O(V + E)"}],"definitions":[{"term":"DFS","definition":"Depth-First Search: a graph traversal that goes deep along each path first, backtracking only when a dead end is reached"}],"notes":"Both BFS and DFS share O(V+E) complexity but have very different properties — BFS gives shortest paths, DFS is better for structural analysis like cycle detection."}]}
 
 Now process the following transcript:`;
   }
@@ -581,7 +753,7 @@ Now process the following transcript:`;
     guideContent.style.display = 'flex';
     syncAutoFollowCheckbox();
     let startIdx = 0;
-    if (autoTimeFollow && resumeAutoFollowLatch === null && guide?.guide?.length) {
+    if (autoTimeFollow && !autoFollowPaused && guide?.guide?.length) {
       startIdx = findBlockIndex(lastVideoTime);
     }
     if (guide?.guide?.length) {
@@ -592,6 +764,9 @@ Now process the following transcript:`;
 
   function syncAutoFollowCheckbox() {
     if (autoTimeFollowCb) autoTimeFollowCb.checked = autoTimeFollow;
+    if (autoFollowPauseHint) {
+      autoFollowPauseHint.style.display = (autoTimeFollow && autoFollowPaused) ? '' : 'none';
+    }
   }
 
   function persistAutoTimeFollow() {
@@ -600,32 +775,27 @@ Now process the following transcript:`;
 
   function onAutoTimeFollowChange() {
     autoTimeFollow = !!autoTimeFollowCb?.checked;
+    autoFollowPaused = false;
     persistAutoTimeFollow();
-    if (autoTimeFollow) {
-      resumeAutoFollowLatch = guide?.guide?.length ? findBlockIndex(lastVideoTime) : null;
-    } else {
-      resumeAutoFollowLatch = null;
-    }
-  }
-
-  function disableAutoFollowForManualNav() {
-    autoTimeFollow = false;
-    resumeAutoFollowLatch = null;
     syncAutoFollowCheckbox();
-    persistAutoTimeFollow();
   }
 
   function navigateBlock(delta) {
     if (!guide?.guide?.length) return;
-    disableAutoFollowForManualNav();
     const n = guide.guide.length;
     let idx = currentBlockIndex >= 0 ? currentBlockIndex : 0;
     idx = Math.max(0, Math.min(n - 1, idx + delta));
+    if (autoTimeFollow) {
+      autoFollowPaused = true;
+      syncAutoFollowCheckbox();
+    }
     renderBlock(idx);
   }
 
   function jumpToCurrentTimeBlock() {
     if (!guide?.guide?.length) return;
+    autoFollowPaused = false;
+    syncAutoFollowCheckbox();
     const idx = findBlockIndex(lastVideoTime);
     renderBlock(idx);
   }
@@ -633,21 +803,9 @@ Now process the following transcript:`;
   function handleTimestamp(currentTime) {
     lastVideoTime = currentTime;
     if (!guide?.guide?.length) return;
+    if (!autoTimeFollow || autoFollowPaused) return;
 
     const liveIdx = findBlockIndex(currentTime);
-
-    if (!autoTimeFollow) return;
-
-    if (resumeAutoFollowLatch !== null) {
-      if (liveIdx !== resumeAutoFollowLatch) {
-        resumeAutoFollowLatch = null;
-        if (liveIdx !== currentBlockIndex) {
-          renderBlock(liveIdx);
-        }
-      }
-      return;
-    }
-
     if (liveIdx !== currentBlockIndex) {
       renderBlock(liveIdx);
     }
@@ -752,6 +910,97 @@ Now process the following transcript:`;
     });
   }
 
+  // ─── Script Management ───────────────────────────────────────────────────
+
+  async function initScriptsForCourse(lectureUrl) {
+    if (!window.ScriptManager) return;
+    const courseId = ScriptManager.extractCourseId(lectureUrl);
+    if (!courseId) return;
+    scriptCourseId = courseId;
+    try {
+      scriptRecord = await ScriptManager.load(courseId);
+    } catch (e) {
+      console.warn('[Copilot] Failed to load scripts:', e);
+      scriptRecord = null;
+    }
+    renderScriptFileList();
+  }
+
+  function renderScriptFileList() {
+    if (!scriptFileList) return;
+    const files = scriptRecord?.files || [];
+    const totalChunks = scriptRecord?.chunks?.length || 0;
+
+    if (scriptBadge) {
+      scriptBadge.textContent = files.length;
+      scriptBadge.style.display = files.length > 0 ? '' : 'none';
+    }
+
+    if (!files.length) {
+      scriptFileList.innerHTML = '<p class="script-empty-msg">No scripts uploaded for this course.</p>';
+      return;
+    }
+
+    scriptFileList.innerHTML = files.map((f, i) => `
+      <div class="script-file-item" data-file-index="${i}">
+        <div class="script-file-info">
+          <span class="script-file-name" title="${f.name}">${f.name}</span>
+          <span class="script-file-meta">${f.pageCount} pages · ${f.chunkCount} chunks · ${ScriptManager.formatSize(f.size)}</span>
+        </div>
+        <button class="script-file-remove" title="Remove this file" data-remove-index="${i}">×</button>
+      </div>
+    `).join('');
+
+    scriptFileList.querySelectorAll('.script-file-remove').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const idx = parseInt(btn.dataset.removeIndex);
+        scriptUploadStatus.textContent = 'Removing…';
+        try {
+          scriptRecord = await ScriptManager.removeFile(scriptCourseId, idx);
+          renderScriptFileList();
+          scriptUploadStatus.textContent = '';
+        } catch (e) {
+          scriptUploadStatus.textContent = 'Error: ' + e.message;
+        }
+      });
+    });
+
+    const totalTokensEst = totalChunks * CHUNK_TARGET_DISPLAY;
+    scriptFileList.insertAdjacentHTML('beforeend',
+      `<p class="script-file-meta" style="padding:2px 0 0;font-style:italic">Total: ${totalChunks} chunks (~${Math.round(totalTokensEst / 1000)}K tokens indexed)</p>`
+    );
+  }
+
+  const CHUNK_TARGET_DISPLAY = 500;
+
+  async function handleScriptUpload() {
+    if (!scriptFileInput?.files?.length || !scriptCourseId) return;
+    const files = Array.from(scriptFileInput.files);
+    scriptFileInput.value = '';
+
+    for (const file of files) {
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        scriptUploadStatus.textContent = `Skipped ${file.name} — only PDFs are supported`;
+        continue;
+      }
+
+      scriptUploadStatus.innerHTML = `<span class="script-upload-progress">Processing ${file.name}…</span>`;
+
+      try {
+        scriptRecord = await ScriptManager.addPdf(scriptCourseId, file, (page, total) => {
+          scriptUploadStatus.innerHTML = `<span class="script-upload-progress">${file.name}: page ${page}/${total}</span>`;
+        });
+        renderScriptFileList();
+        scriptUploadStatus.textContent = `${file.name} added`;
+      } catch (e) {
+        console.error('[Copilot] PDF processing failed:', e);
+        scriptUploadStatus.textContent = `Failed: ${e.message}`;
+      }
+    }
+
+    setTimeout(() => { if (scriptUploadStatus) scriptUploadStatus.textContent = ''; }, 5000);
+  }
+
   // ─── Q&A Chat ─────────────────────────────────────────────────────────────
 
   function restoreMainStatus() {
@@ -807,10 +1056,12 @@ Now process the following transcript:`;
     // Show typing indicator
     const typingEl = appendTypingIndicator();
 
-    // Build system prompt with context
-    const systemPrompt = buildQAPrompt();
+    // Build system prompt with context (including script chunks if available)
+    const systemPrompt = buildQAPrompt(text);
 
     try {
+      const qaTemp = qaTempSlider ? qaTempSlider.value / 100 : 0.35;
+
       const response = await apiRequest({
         type: 'CHAT',
         messages: qaMessages.map(m => ({ role: m.role, content: m.content, ...(m.imageBase64 ? { imageBase64: m.imageBase64 } : {}) })),
@@ -818,7 +1069,8 @@ Now process the following transcript:`;
         provider: settings.provider,
         model: settings.model || null,
         apiKey: settings.apiKey,
-        localBase: getLocalBase()
+        localBase: getLocalBase(),
+        chatTemperature: qaTemp
       });
 
       typingEl.remove();
@@ -840,18 +1092,25 @@ Now process the following transcript:`;
     }
   }
 
-  function buildQAPrompt() {
+  function buildQAPrompt(userQuery) {
     const title = transcript?.lectureTitle || 'Lecture';
     const guideStr = guide ? JSON.stringify(guide, null, 2) : '(guide not yet generated)';
+
+    let scriptContext = '';
+    if (userQuery && scriptRecord?.chunks?.length && window.ScriptManager) {
+      const strictness = scriptStrictnessSel?.value || 'medium';
+      scriptContext = ScriptManager.buildScriptContext(userQuery, scriptRecord, strictness);
+    }
+
     return `You are a helpful study assistant for the ETH Zürich lecture: "${title}".
 
-Answer questions based ONLY on the lecture content below. Reference specific timestamps [HH:MM:SS] when relevant. Keep answers concise and student-friendly. Use LaTeX for math (wrap in $...$ inline or $$...$$ for display). If something is not covered in the lecture, say so clearly.
+Answer questions based on the lecture content below${scriptContext ? ' and the course script excerpts provided' : ''}. Reference specific timestamps [HH:MM:SS] when relevant. Keep answers concise and student-friendly. Use LaTeX for math (wrap in $...$ inline or $$...$$ for display). If something is not covered in the available material, say so clearly.
 
 --- TRANSCRIPT ---
 ${transcript?.text || '(no transcript)'}
 
 --- GUIDE ---
-${guideStr}`;
+${guideStr}${scriptContext}`;
   }
 
   function appendChatMsg(role, content, hasFrame) {
@@ -963,10 +1222,16 @@ ${guideStr}`;
           <div class="history-actions">
             <a class="history-link" href="${escAttr(entry.lectureUrl)}" target="_blank" title="Open lecture">Open lecture</a>
             <button class="history-load-btn" title="Load this guide">Load guide</button>
+            <button class="history-pdf-btn" type="button" title="Export guide as PDF">PDF</button>
             ${!isActive ? '<button class="history-delete-btn" title="Delete">Delete</button>' : ''}
           </div>
         `;
         div.querySelector('.history-load-btn').addEventListener('click', () => loadHistoryEntry(entry));
+        div.querySelector('.history-pdf-btn').addEventListener('click', () => {
+          if (entry.guide?.guide?.length) {
+            openGuidePrintWindow(entry.guide, entry.lectureTitle);
+          }
+        });
         const delBtn = div.querySelector('.history-delete-btn');
         if (delBtn) delBtn.addEventListener('click', () => deleteHistoryEntry(entry.lectureUrl));
         container.appendChild(div);
@@ -1045,6 +1310,99 @@ ${guideStr}`;
     s = Math.floor(s || 0);
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
     return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  }
+
+  function renderFormulaLatexForExport(latex) {
+    try {
+      return katex.renderToString(String(latex || ''), { displayMode: true, throwOnError: false, trust: false });
+    } catch (e) {
+      return `<span class="formula-fallback">${escHtml(latex)}</span>`;
+    }
+  }
+
+  function buildExportBlockHtml(block) {
+    let html = `
+      <div class="export-block">
+        <div>
+          <div class="block-title">${escHtml(block.title)}</div>
+          <div class="block-timestamp">${fmtSec(block.start_time)} – ${fmtSec(block.end_time)}</div>
+        </div>
+    `;
+
+    if (block.key_concepts?.length) {
+      html += `<div>
+        <div class="section-label">Key Concepts</div>
+        <ul class="concepts-list">
+          ${block.key_concepts.map(c => `<li>${escHtml(c)}</li>`).join('')}
+        </ul>
+      </div>`;
+    }
+
+    if (block.formulas?.length) {
+      html += `<div>
+        <div class="section-label">Formulas</div>
+        ${block.formulas.map(f => `
+          <div class="formula-card">
+            <div class="formula-label">${escHtml(f.label)}</div>
+            <div class="formula-render-wrap">${renderFormulaLatexForExport(f.latex)}</div>
+          </div>
+        `).join('')}
+      </div>`;
+    }
+
+    if (block.definitions?.length) {
+      html += `<div>
+        <div class="section-label">Definitions</div>
+        ${block.definitions.map(d => `
+          <div class="definition-item">
+            <div class="definition-term">${escHtml(d.term)}</div>
+            <div class="definition-text">${escHtml(d.definition)}</div>
+          </div>
+        `).join('')}
+      </div>`;
+    }
+
+    if (block.notes?.trim()) {
+      html += `
+        <div class="notes-box">
+          <div class="notes-icon-label">Note</div>
+          <div class="notes-text">${escHtml(block.notes)}</div>
+        </div>
+      `;
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function buildGuideExportBodyHtml(guideObj) {
+    if (!guideObj?.guide?.length) return '';
+    return guideObj.guide.map(b => buildExportBlockHtml(b)).join('');
+  }
+
+  function openGuidePrintWindow(guideObj, lectureTitle) {
+    if (!guideObj?.guide?.length) {
+      setStatus('warning', 'No guide to export');
+      return;
+    }
+    if (typeof chrome === 'undefined' || !chrome.runtime?.getURL) {
+      setStatus('error', 'Export unavailable in this context');
+      return;
+    }
+    const bodyHtml = buildGuideExportBodyHtml(guideObj);
+    const title = lectureTitle || guideObj.lecture_title || 'Lecture guide';
+    const n = guideObj.guide.length;
+    const dur = guideObj.total_duration_seconds;
+    const subtitle = `${n} section${n === 1 ? '' : 's'} · ${fmtSec(dur || 0)} total`;
+    const payload = { title, subtitle, bodyHtml };
+    try {
+      sessionStorage.setItem('eth-copilot-print-guide', JSON.stringify(payload));
+      window.open(chrome.runtime.getURL('sidebar/print-guide.html'), '_blank', 'noopener');
+      setStatus('ready', 'Print view opened — use “Save as PDF” in the print dialog');
+    } catch (e) {
+      console.error('[Copilot] export PDF', e);
+      setStatus('error', 'Export failed: ' + (e.message || String(e)));
+    }
   }
 
   function getLocalBase() {
