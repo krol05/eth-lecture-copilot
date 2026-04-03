@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot UI Settings</title>
+  <link rel="stylesheet" href="ui-settings.css">
+</head>
+<body>
+  <main class="wrap">
+    <h1>UI Settings</h1>
+    <p class="sub">Adjust sidebar size and color schemes. Defaults stay unchanged unless you save.</p>
+
+    <div class="warn">
+      <strong>Note:</strong> extreme values can make parts of the UI harder to use and may cause layout breakage on small screens.
+    </div>
+
+    <section class="card">
+      <h2>Sidebar Scale</h2>
+      <label class="row" for="sidebar-scale">
+        <span>Scale</span>
+        <input id="sidebar-scale" type="range" min="80" max="130" step="1">
+        <span id="sidebar-scale-value">100%</span>
+      </label>
+      <div class="actions">
+        <button id="restore-scale" type="button">Restore default scale</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Dark Theme Colors</h2>
+      <div id="dark-color-grid" class="grid"></div>
+      <div class="actions">
+        <button id="restore-dark" type="button">Restore dark defaults</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Light Theme Colors</h2>
+      <div id="light-color-grid" class="grid"></div>
+      <div class="actions">
+        <button id="restore-light" type="button">Restore light defaults</button>
+      </div>
+    </section>
+
+    <div class="actions sticky">
+      <button id="restore-all" type="button">Restore everything</button>
+      <button id="save" type="button" class="primary">Save UI settings</button>
+    </div>
+    <p id="status" class="status"></p>
+  </main>
+
+  <script src="../lib/ui-settings.js"></script>
+  <script src="ui-settings.js"></script>
+</body>
+</html>
+

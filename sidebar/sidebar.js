@@ -48,6 +48,7 @@
   const attachCb     = document.getElementById('attach-frame-cb');
   const framePreview = document.getElementById('frame-preview-label');
   const themeToggle  = document.getElementById('theme-toggle');
+  const uiSettingsBtn = document.getElementById('ui-settings-btn');
   const focusToggle  = document.getElementById('focus-toggle');
   const exportPdfBtn = document.getElementById('export-pdf-btn');
   const regenerateBtn = document.getElementById('regenerate-btn');
@@ -95,10 +96,19 @@
     });
 
     themeToggle.addEventListener('click', toggleTheme);
+    uiSettingsBtn?.addEventListener('click', () => {
+      chrome.runtime.openOptionsPage();
+    });
     focusToggle?.addEventListener('click', () => {
       postToContent({ type: 'TOGGLE_FOCUS' });
     });
     applyStoredTheme();
+    applyUISettings();
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes[window.UISettings?.STORAGE_KEY || 'uiSettings']) {
+        applyUISettings();
+      }
+    });
 
     generateBtn.addEventListener('click', onGenerateClick);
     exportPdfBtn?.addEventListener('click', () => {
@@ -1280,11 +1290,19 @@ ${guideStr}${scriptContext}`;
     const next = current === 'dark' ? 'light' : 'dark';
     html.dataset.theme = next;
     localStorage.setItem('eth-copilot-theme', next);
+    applyUISettings();
   }
 
   function applyStoredTheme() {
     const saved = localStorage.getItem('eth-copilot-theme');
     if (saved) document.documentElement.dataset.theme = saved;
+  }
+
+  async function applyUISettings() {
+    if (!window.UISettings) return;
+    const ui = await UISettings.load();
+    UISettings.applyColorsToDocument(document, ui);
+    UISettings.applySidebarScale(document, ui);
   }
 
   // ─── Status Bar ───────────────────────────────────────────────────────────

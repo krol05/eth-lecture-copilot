@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ETH Lecture Copilot",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "AI-powered lecture guide & Q&A sidebar for ETH Zürich video.ethz.ch",
 
   "permissions": ["storage", "unlimitedStorage", "activeTab", "scripting"],
@@ -44,6 +44,7 @@
     },
     "default_title": "ETH Lecture Copilot"
   },
+  "options_page": "ui/ui-settings.html",
 
   "web_accessible_resources": [
     {
@@ -55,13 +56,17 @@
         "sidebar/print-guide.html",
         "sidebar/print-guide.css",
         "sidebar/print-guide.js",
+        "lib/ui-settings.js",
         "lib/providers-config.js",
         "lib/katex/katex.min.js",
         "lib/katex/katex.min.css",
         "lib/katex/auto-render.min.js",
         "lib/katex/fonts/*",
         "lib/pdfjs/pdf.min.mjs",
-        "lib/pdfjs/pdf.worker.min.mjs"
+        "lib/pdfjs/pdf.worker.min.mjs",
+        "ui/ui-settings.html",
+        "ui/ui-settings.css",
+        "ui/ui-settings.js"
       ],
       "matches": ["https://video.ethz.ch/*"]
     }
