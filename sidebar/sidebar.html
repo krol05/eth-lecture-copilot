@@ -283,7 +283,7 @@
 
         <div class="script-strictness-row">
           <label class="gen-setting-label" for="script-search-method">Search method
-            <span class="setting-hint" data-tip="Fuzzy (fast): Text-based matching using character similarity. Works instantly, no download needed. May miss results when phrasing differs from the script.&#10;&#10;Semantic (AI): Uses a local AI model to understand meaning. Much more accurate, finds relevant content even with different wording. Requires a one-time ~25 MB download and takes 20-60 sec to index a new PDF.">?</span>
+            <span class="setting-hint" data-tip="Fuzzy (fast): Text-based matching using character similarity. Works instantly, no download needed. May miss results when phrasing differs from the script.&#10;&#10;Semantic (AI): Uses a local AI model to understand meaning. Much more accurate, finds relevant content even with different wording. The extension includes ~25 MB of ONNX/WebAssembly; the embedding model may download once (~25 MB) and is then cached. Expect ~20–60 sec to index a new PDF.">?</span>
           </label>
           <select id="script-search-method" class="gen-setting-select">
             <option value="fuzzy">Fuzzy (fast)</option>
@@ -293,8 +293,8 @@
         <div id="script-semantic-info" class="script-semantic-info" style="display:none">
           <p class="script-semantic-note">Semantic search runs a small AI model entirely in your browser. Nothing leaves your device.</p>
           <ul class="script-semantic-details">
-            <li><strong>First use:</strong> downloads a ~25 MB model (cached after)</li>
-            <li><strong>WASM engine:</strong> downloads ~20 MB runtime (cached after)</li>
+            <li><strong>Extension footprint:</strong> ~25 MB ONNX/WebAssembly bundled with the install</li>
+            <li><strong>Embedding model:</strong> may download once (~25 MB from Hugging Face, then cached)</li>
             <li><strong>Indexing speed:</strong> ~20-60 sec per PDF (depends on length &amp; device)</li>
             <li><strong>Query speed:</strong> instant after indexing</li>
           </ul>
@@ -338,12 +338,12 @@
             <p><strong>Fuzzy vs. Semantic search:</strong></p>
             <ul>
               <li><strong>Fuzzy</strong> matches based on character/word overlap. Fast and free, but struggles when your question uses different words than the script (e.g., asking about "convergence" won't find a section titled "limits").</li>
-              <li><strong>Semantic</strong> uses a local AI model (all-MiniLM-L6-v2, ~25 MB) to understand meaning. It can match "convergence" to "limits" because it understands they're related. The model runs 100% in your browser &mdash; nothing is sent to any server.</li>
+              <li><strong>Semantic</strong> uses a local AI model (all-MiniLM-L6-v2) to understand meaning. The extension bundles ~25 MB of ONNX/WebAssembly; the model file may download once (~25 MB) and is cached. It can match "convergence" to "limits" because it understands they're related. Inference runs 100% in your browser &mdash; nothing is sent to any server.</li>
             </ul>
             <p><strong>Best practices:</strong></p>
             <ul>
               <li>Seek to the relevant part of the video before asking &mdash; the system uses your current timestamp to find matching content.</li>
-              <li>Use Semantic search for best results; use Fuzzy if you want zero downloads or maximum speed.</li>
+              <li>Use Semantic search for best results; use Fuzzy for maximum speed and the smallest footprint (no embedding model).</li>
               <li>Start with "Medium" script reliance and increase if answers lack script detail.</li>
               <li>Upload only the script for the current course; unrelated PDFs dilute results.</li>
             </ul>
