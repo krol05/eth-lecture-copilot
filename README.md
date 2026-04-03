@@ -47,6 +47,7 @@ A Chrome extension that turns ETH Zürich lecture recordings into structured stu
 - **Time sync**: the guide can follow the video. **Arrow keys** on the previous or next section temporarily pause auto-follow while the checkbox stays on; use **Current time** to resume following playback.
 - **Focus mode**: header button to show only the video area and the sidebar (useful when the normal layout feels cramped).
 - **Keyboard**: **Arrow Up / Down** on the video page (when not typing in an input) changes playback speed by 0.25x. A short on-screen overlay shows the current speed.
+- **UI settings page**: open via the settings cog in popup and sidebar. Customize sidebar scale and full dark or light color schemes, with restore defaults buttons and a warning that extreme values can cause layout issues.
 
 ### Q&amp;A
 

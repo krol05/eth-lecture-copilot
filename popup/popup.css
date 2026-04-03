@@ -46,10 +46,21 @@ body {
 .popup-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
   padding: 16px 16px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-1);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
 }
 
 .logo {

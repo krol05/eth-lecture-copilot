@@ -23,6 +23,7 @@ const saveBtn         = document.getElementById('save-btn');
 const statusMsg       = document.getElementById('status-msg');
 const statusDot       = document.getElementById('status-dot');
 const statusLabel     = document.getElementById('status-label');
+const uiSettingsBtn   = document.getElementById('ui-settings-btn');
 
 function init() {
   // Build provider dropdown — split into two optgroups
@@ -92,8 +93,18 @@ function init() {
 
   saveBtn.addEventListener('click', save);
 
+  uiSettingsBtn?.addEventListener('click', () => {
+    chrome.runtime.openOptionsPage();
+  });
+
   document.documentElement.dataset.theme =
     localStorage.getItem('eth-copilot-theme') || 'dark';
+  applyUISettings();
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[UISettings.STORAGE_KEY]) {
+      applyUISettings();
+    }
+  });
 }
 
 // ─── Provider UI rendering ────────────────────────────────────────────────────
@@ -263,6 +274,12 @@ function flash(type, text) {
 function updateStatus(ready) {
   statusDot.className = `status-dot ${ready ? 'ready' : 'missing'}`;
   statusLabel.textContent = ready ? 'Ready' : 'Not configured';
+}
+
+async function applyUISettings() {
+  if (!window.UISettings) return;
+  const ui = await UISettings.load();
+  UISettings.applyColorsToDocument(document, ui);
 }
 
 init();
