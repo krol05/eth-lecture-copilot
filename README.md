@@ -155,7 +155,7 @@ Works with most major providers. Configure the popup or options page:
 ├── popup/                Quick provider or model entry
 ├── ui/                   Options and UI settings pages
 ├── lib/                  Providers config, KaTeX, pdf.js, fuzzy retrieval, guide-parse, Transformers + ONNX
-├── __tests__/            Jest unit tests (pure logic)
+├── tests/                Jest unit tests (pure logic; not __tests__ — Chrome blocks _ prefixes)
 ├── icons/
 ├── docs/images/          README screenshots
 ├── .github/workflows/    CI: run tests on push
