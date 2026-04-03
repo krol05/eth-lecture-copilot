@@ -1302,7 +1302,7 @@ ${guideStr}${scriptContext}`;
     if (!window.UISettings) return;
     const ui = await UISettings.load();
     UISettings.applyColorsToDocument(document, ui);
-    UISettings.applySidebarScale(document, ui);
+    UISettings.applySidebarTextSizes(document, ui);
   }
 
   // ─── Status Bar ───────────────────────────────────────────────────────────

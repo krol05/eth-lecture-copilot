@@ -9,7 +9,7 @@
 <body>
   <main class="wrap">
     <h1>UI Settings</h1>
-    <p class="sub">Adjust sidebar size and color schemes. Defaults stay unchanged unless you save.</p>
+    <p class="sub">Adjust sidebar text sizes and color schemes. Defaults stay unchanged unless you save.</p>
 
     <div class="warn">
       <strong>Note:</strong> extreme values can make parts of the UI harder to use and may cause layout breakage on small screens.
@@ -44,14 +44,34 @@
     </section>
 
     <section class="card">
-      <h2>Sidebar Scale</h2>
-      <label class="row" for="sidebar-scale">
-        <span>Scale</span>
-        <input id="sidebar-scale" type="range" min="80" max="130" step="1">
-        <span id="sidebar-scale-value">100%</span>
+      <h2>Sidebar Text Sizes</h2>
+      <label class="row" for="text-base">
+        <span>Base UI</span>
+        <input id="text-base" type="range" min="11" max="18" step="0.5">
+        <span id="text-base-value">13px</span>
+      </label>
+      <label class="row" for="text-title">
+        <span>Titles</span>
+        <input id="text-title" type="range" min="13" max="24" step="0.5">
+        <span id="text-title-value">16px</span>
+      </label>
+      <label class="row" for="text-section">
+        <span>Section labels</span>
+        <input id="text-section" type="range" min="9" max="16" step="0.5">
+        <span id="text-section-value">11px</span>
+      </label>
+      <label class="row" for="text-content">
+        <span>Guide text</span>
+        <input id="text-content" type="range" min="11" max="20" step="0.5">
+        <span id="text-content-value">13.5px</span>
+      </label>
+      <label class="row" for="text-meta">
+        <span>Meta text</span>
+        <input id="text-meta" type="range" min="9" max="16" step="0.5">
+        <span id="text-meta-value">11px</span>
       </label>
       <div class="actions">
-        <button id="restore-scale" type="button">Restore default scale</button>
+        <button id="restore-text" type="button">Restore default text sizes</button>
       </div>
     </section>
 
