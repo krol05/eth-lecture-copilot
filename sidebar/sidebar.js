@@ -82,6 +82,10 @@
   const scriptFileInput   = document.getElementById('script-file-input');
   const scriptUploadStatus = document.getElementById('script-upload-status');
   const scriptStrictnessSel = document.getElementById('script-strictness-select');
+  const scriptSearchMethod = document.getElementById('script-search-method');
+  const scriptSemanticInfo = document.getElementById('script-semantic-info');
+  const scriptEmbedBtn     = document.getElementById('script-embed-btn');
+  const scriptEmbedStatus  = document.getElementById('script-embed-status');
   const latexSelectModal = document.getElementById('latex-select-modal');
   const latexModalClose = document.getElementById('latex-modal-close');
   const latexSelectAllBtn = document.getElementById('latex-select-all-btn');
@@ -176,6 +180,8 @@
     });
     scriptUploadBtn?.addEventListener('click', () => scriptFileInput?.click());
     scriptFileInput?.addEventListener('change', handleScriptUpload);
+    scriptSearchMethod?.addEventListener('change', onSearchMethodChange);
+    scriptEmbedBtn?.addEventListener('click', onEmbedExistingClick);
 
     latexModalClose?.addEventListener('click', closeLatexSelectModal);
     latexSelectAllBtn?.addEventListener('click', () => setAllLatexSelections(true));
@@ -1097,6 +1103,46 @@ Now process the following transcript:`;
     renderScriptFileList();
   }
 
+  function getScriptSearchMethod() {
+    return scriptSearchMethod?.value || 'fuzzy';
+  }
+
+  function onSearchMethodChange() {
+    const method = getScriptSearchMethod();
+    if (scriptSemanticInfo) scriptSemanticInfo.style.display = method === 'semantic' ? '' : 'none';
+    updateEmbedBtnVisibility();
+  }
+
+  function updateEmbedBtnVisibility() {
+    if (!scriptEmbedBtn) return;
+    const method = getScriptSearchMethod();
+    const hasChunks = scriptRecord?.chunks?.length > 0;
+    const hasEmbeds = window.ScriptManager?.hasEmbeddings(scriptRecord);
+    scriptEmbedBtn.style.display = (method === 'semantic' && hasChunks && !hasEmbeds) ? '' : 'none';
+    if (scriptEmbedStatus && hasEmbeds && method === 'semantic') {
+      scriptEmbedStatus.textContent = 'Semantic index ready';
+    }
+  }
+
+  async function onEmbedExistingClick() {
+    if (!scriptCourseId || !scriptRecord?.chunks?.length) return;
+    scriptEmbedBtn.disabled = true;
+    scriptEmbedBtn.textContent = 'Building index...';
+    try {
+      scriptRecord = await ScriptManager.computeEmbeddings(scriptCourseId, (status) => {
+        if (scriptEmbedStatus) scriptEmbedStatus.textContent = status;
+      });
+      if (scriptEmbedStatus) scriptEmbedStatus.textContent = 'Semantic index ready';
+    } catch (e) {
+      console.error('[Copilot] Embedding failed:', e);
+      if (scriptEmbedStatus) scriptEmbedStatus.textContent = 'Indexing failed: ' + e.message;
+    } finally {
+      scriptEmbedBtn.disabled = false;
+      scriptEmbedBtn.textContent = 'Build semantic index for existing scripts';
+      updateEmbedBtnVisibility();
+    }
+  }
+
   function renderScriptFileList() {
     if (!scriptFileList) return;
     const files = scriptRecord?.files || [];
@@ -1109,8 +1155,12 @@ Now process the following transcript:`;
 
     if (!files.length) {
       scriptFileList.innerHTML = '<p class="script-empty-msg">No scripts uploaded for this course.</p>';
+      updateEmbedBtnVisibility();
       return;
     }
+
+    const hasEmbeds = window.ScriptManager?.hasEmbeddings(scriptRecord);
+    const embedLabel = hasEmbeds ? ' · semantic indexed' : '';
 
     scriptFileList.innerHTML = files.map((f, i) => `
       <div class="script-file-item" data-file-index="${i}">
@@ -1138,8 +1188,9 @@ Now process the following transcript:`;
 
     const totalTokensEst = totalChunks * CHUNK_TARGET_DISPLAY;
     scriptFileList.insertAdjacentHTML('beforeend',
-      `<p class="script-file-meta" style="padding:2px 0 0;font-style:italic">Total: ${totalChunks} chunks (~${Math.round(totalTokensEst / 1000)}K tokens indexed)</p>`
+      `<p class="script-file-meta" style="padding:2px 0 0;font-style:italic">Total: ${totalChunks} chunks (~${Math.round(totalTokensEst / 1000)}K tokens)${embedLabel}</p>`
     );
+    updateEmbedBtnVisibility();
   }
 
   const CHUNK_TARGET_DISPLAY = 500;
@@ -1148,6 +1199,7 @@ Now process the following transcript:`;
     if (!scriptFileInput?.files?.length || !scriptCourseId) return;
     const files = Array.from(scriptFileInput.files);
     scriptFileInput.value = '';
+    const method = getScriptSearchMethod();
 
     for (const file of files) {
       if (!file.name.toLowerCase().endsWith('.pdf')) {
@@ -1158,11 +1210,11 @@ Now process the following transcript:`;
       scriptUploadStatus.innerHTML = `<span class="script-upload-progress">Processing ${file.name}…</span>`;
 
       try {
-        scriptRecord = await ScriptManager.addPdf(scriptCourseId, file, (page, total) => {
-          scriptUploadStatus.innerHTML = `<span class="script-upload-progress">${file.name}: page ${page}/${total}</span>`;
-        });
+        scriptRecord = await ScriptManager.addPdf(scriptCourseId, file, (status) => {
+          scriptUploadStatus.innerHTML = `<span class="script-upload-progress">${status}</span>`;
+        }, method);
         renderScriptFileList();
-        scriptUploadStatus.textContent = `${file.name} added`;
+        scriptUploadStatus.textContent = `${file.name} added` + (method === 'semantic' ? ' (with embeddings)' : '');
       } catch (e) {
         console.error('[Copilot] PDF processing failed:', e);
         scriptUploadStatus.textContent = `Failed: ${e.message}`;
@@ -1228,7 +1280,7 @@ Now process the following transcript:`;
     const typingEl = appendTypingIndicator();
 
     // Build system prompt with context (including script chunks if available)
-    const systemPrompt = buildQAPrompt(text);
+    const systemPrompt = await buildQAPrompt(text);
 
     try {
       const qaTemp = qaTempSlider ? qaTempSlider.value / 100 : 0.35;
@@ -1270,7 +1322,7 @@ Now process the following transcript:`;
    * - Uses the transcript window content + user query for script retrieval
    * - Includes a compact lecture overview (block titles) for structural awareness
    */
-  function buildQAPrompt(userQuery) {
+  async function buildQAPrompt(userQuery) {
     const title = transcript?.lectureTitle || 'Lecture';
     const currentTime = lastVideoTime || 0;
     const WINDOW_SEC = 180; // ±3 minutes
@@ -1315,12 +1367,17 @@ Now process the following transcript:`;
     let scriptContext = '';
     if (scriptRecord?.chunks?.length && window.ScriptManager) {
       const strictness = scriptStrictnessSel?.value || 'medium';
-      // Combine nearby transcript text with the user's question for better matching
+      const method = getScriptSearchMethod();
       const transcriptSnippet = windowCues.length > 0
         ? windowCues.map(c => c.text).join(' ').slice(0, 600)
         : '';
       const searchQuery = (transcriptSnippet + ' ' + userQuery).trim();
-      scriptContext = ScriptManager.buildScriptContext(searchQuery, scriptRecord, strictness);
+
+      if (method === 'semantic' && ScriptManager.hasEmbeddings(scriptRecord)) {
+        scriptContext = await ScriptManager.buildScriptContextSemantic(searchQuery, scriptRecord, strictness);
+      } else {
+        scriptContext = ScriptManager.buildScriptContext(searchQuery, scriptRecord, strictness);
+      }
     }
 
     const hasScript = !!scriptContext;
@@ -1650,6 +1707,59 @@ ${guideBlocksStr}${scriptContext}`;
     }
     return !!settings?.apiKey;
   }
+
+  // ─── Tooltip system (body-level, immune to overflow clipping) ────────────
+  (function initTooltips() {
+    const tip = document.getElementById('global-tip');
+    if (!tip) return;
+    let activeHint = null;
+
+    function show(hint) {
+      const text = hint.getAttribute('data-tip');
+      if (!text) return;
+      activeHint = hint;
+      tip.textContent = text;
+      tip.classList.add('visible');
+      position(hint);
+    }
+
+    function hide() {
+      activeHint = null;
+      tip.classList.remove('visible');
+    }
+
+    function position(hint) {
+      const r = hint.getBoundingClientRect();
+      const vw = document.documentElement.clientWidth;
+      const vh = document.documentElement.clientHeight;
+
+      tip.style.left = '0';
+      tip.style.top = '0';
+      tip.style.maxWidth = (vw - 16) + 'px';
+
+      const tw = tip.offsetWidth;
+      const th = tip.offsetHeight;
+
+      let left = r.right - tw;
+      if (left < 8) left = 8;
+      if (left + tw > vw - 8) left = vw - 8 - tw;
+
+      let top = r.top - th - 6;
+      if (top < 4) top = r.bottom + 6;
+
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    }
+
+    document.addEventListener('mouseover', function (e) {
+      const hint = e.target.closest('.setting-hint[data-tip]');
+      if (hint) show(hint); else if (activeHint) hide();
+    });
+    document.addEventListener('mouseout', function (e) {
+      const hint = e.target.closest('.setting-hint[data-tip]');
+      if (hint && hint === activeHint) hide();
+    });
+  })();
 
   // ─── Bootstrap ───────────────────────────────────────────────────────────
   init();

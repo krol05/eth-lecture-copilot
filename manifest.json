@@ -19,7 +19,9 @@
     "https://api.together.xyz/*",
     "https://api.cerebras.ai/*",
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "https://cdn.jsdelivr.net/*",
+    "https://huggingface.co/*"
   ],
 
   "background": {
@@ -64,6 +66,8 @@
         "lib/katex/fonts/*",
         "lib/pdfjs/pdf.min.mjs",
         "lib/pdfjs/pdf.worker.min.mjs",
+        "lib/transformers/transformers.min.js",
+        "lib/transformers/ort.bundle.min.mjs",
         "ui/ui-settings.html",
         "ui/ui-settings.css",
         "ui/ui-settings.js"

@@ -278,7 +278,28 @@
       <div id="script-panel-body" class="script-panel-body" style="display:none">
         <div class="script-info-banner">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
-          <span>PDFs are chunked &amp; indexed locally in your browser. Only the most relevant excerpts are sent with each question (via fuzzy text matching). Large scripts can significantly increase token usage per Q&amp;A message.</span>
+          <span>PDFs are chunked &amp; indexed locally in your browser. Only the most relevant excerpts are sent with each question. Large scripts can significantly increase token usage per Q&amp;A message.</span>
+        </div>
+
+        <div class="script-strictness-row">
+          <label class="gen-setting-label" for="script-search-method">Search method
+            <span class="setting-hint" data-tip="Fuzzy (fast): Text-based matching using character similarity. Works instantly, no download needed. May miss results when phrasing differs from the script.&#10;&#10;Semantic (AI): Uses a local AI model to understand meaning. Much more accurate, finds relevant content even with different wording. Requires a one-time ~25 MB download and takes 20-60 sec to index a new PDF.">?</span>
+          </label>
+          <select id="script-search-method" class="gen-setting-select">
+            <option value="fuzzy">Fuzzy (fast)</option>
+            <option value="semantic">Semantic AI (accurate)</option>
+          </select>
+        </div>
+        <div id="script-semantic-info" class="script-semantic-info" style="display:none">
+          <p class="script-semantic-note">Semantic search runs a small AI model entirely in your browser. Nothing leaves your device.</p>
+          <ul class="script-semantic-details">
+            <li><strong>First use:</strong> downloads a ~25 MB model (cached after)</li>
+            <li><strong>WASM engine:</strong> downloads ~20 MB runtime (cached after)</li>
+            <li><strong>Indexing speed:</strong> ~20-60 sec per PDF (depends on length &amp; device)</li>
+            <li><strong>Query speed:</strong> instant after indexing</li>
+          </ul>
+          <button id="script-embed-btn" class="script-embed-btn" type="button" style="display:none">Build semantic index for existing scripts</button>
+          <span id="script-embed-status" class="script-embed-status"></span>
         </div>
 
         <div class="script-strictness-row">
@@ -313,20 +334,25 @@
         <details class="script-help">
           <summary>How to use scripts effectively</summary>
           <div class="script-help-body">
-            <p><strong>How it works:</strong> Uploaded PDFs are split into small text chunks and stored locally in your browser. When you ask a Q&amp;A question, the extension finds chunks relevant to your current video position (&#177;3 min) and your question using fuzzy text matching, then includes those excerpts in the AI prompt.</p>
+            <p><strong>How it works:</strong> Uploaded PDFs are split into small text chunks and stored locally in your browser. When you ask a Q&amp;A question, the extension finds chunks relevant to your current video position (&plusmn;3 min) and your question, then includes those excerpts in the AI prompt.</p>
+            <p><strong>Fuzzy vs. Semantic search:</strong></p>
+            <ul>
+              <li><strong>Fuzzy</strong> matches based on character/word overlap. Fast and free, but struggles when your question uses different words than the script (e.g., asking about "convergence" won't find a section titled "limits").</li>
+              <li><strong>Semantic</strong> uses a local AI model (all-MiniLM-L6-v2, ~25 MB) to understand meaning. It can match "convergence" to "limits" because it understands they're related. The model runs 100% in your browser &mdash; nothing is sent to any server.</li>
+            </ul>
             <p><strong>Best practices:</strong></p>
             <ul>
-              <li>Seek to the relevant part of the video before asking a question &mdash; the system uses your current timestamp to find matching script content.</li>
-              <li>Ask specific questions rather than very broad ones for better chunk matching.</li>
+              <li>Seek to the relevant part of the video before asking &mdash; the system uses your current timestamp to find matching content.</li>
+              <li>Use Semantic search for best results; use Fuzzy if you want zero downloads or maximum speed.</li>
               <li>Start with "Medium" script reliance and increase if answers lack script detail.</li>
               <li>Upload only the script for the current course; unrelated PDFs dilute results.</li>
             </ul>
             <p><strong>Limitations:</strong></p>
             <ul>
-              <li>No semantic / embedding search &mdash; matching is fuzzy text-based, so unusual phrasing may miss relevant chunks.</li>
-              <li>Each retrieved chunk adds ~500 tokens to the prompt. High reliance (14-20 chunks) can approach context limits on smaller models.</li>
+              <li>Each retrieved chunk adds ~500 tokens. High reliance (14-20 chunks) can approach context limits on smaller models.</li>
               <li>Heavily formatted PDFs (tables, diagrams, multi-column layouts) may extract poorly.</li>
-              <li>All processing is local &mdash; only the matched excerpts are sent to the AI, never the full PDF.</li>
+              <li>Semantic indexing takes 20-60 seconds per PDF on first upload (device-dependent). Subsequent queries are instant.</li>
+              <li>All processing is local &mdash; only matched excerpts are sent to the AI, never the full PDF.</li>
             </ul>
           </div>
         </details>
@@ -372,6 +398,9 @@
       <p style="color:var(--text-muted);font-size:12px;padding:14px;">No previous guides yet.</p>
     </div>
   </div>
+
+  <!-- Global tooltip (body-level so overflow can't clip it) -->
+  <div id="global-tip" class="global-tip"></div>
 
   <!-- Scripts -->
   <script src="../lib/katex/katex.min.js"></script>
