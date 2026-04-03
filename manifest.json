@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ETH Lecture Copilot",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "AI-powered lecture guide & Q&A sidebar for ETH Zürich video.ethz.ch",
 
   "content_security_policy": {
@@ -63,6 +63,7 @@
         "sidebar/print-guide.css",
         "sidebar/print-guide.js",
         "lib/ui-settings.js",
+        "lib/fuzzy-retrieval.js",
         "lib/providers-config.js",
         "lib/katex/katex.min.js",
         "lib/katex/katex.min.css",

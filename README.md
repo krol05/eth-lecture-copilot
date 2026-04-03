@@ -14,8 +14,10 @@
 6. [Supported providers and models](#supported-providers-and-models)
 7. [Installation](#installation)
 8. [Project structure](#project-structure)
-9. [Privacy and notes](#privacy-and-notes)
-10. [UI showcase](#ui-showcase)
+9. [Development and tests](#development-and-tests)
+10. [License](#license)
+11. [Privacy and notes](#privacy-and-notes)
+12. [UI showcase](#ui-showcase)
 
 ---
 
@@ -147,17 +149,38 @@ Works with most major providers. Configure the popup or options page:
 ## Project structure
 
 ```
-├── background/           Service worker: AI calls, guide JSON parsing
+├── background/           Service worker: AI calls, guide JSON parsing (loads lib/guide-parse.js)
 ├── content/              Injects sidebar, video layout, transcript hooks
 ├── sidebar/              Guide UI, Q&A, scripts (PDF, fuzzy + semantic), print export
 ├── popup/                Quick provider or model entry
 ├── ui/                   Options and UI settings pages
-├── lib/                  Providers config, KaTeX, pdf.js, Transformers.js + ONNX assets
+├── lib/                  Providers config, KaTeX, pdf.js, fuzzy retrieval, guide-parse, Transformers + ONNX
+├── __tests__/            Jest unit tests (pure logic)
 ├── icons/
 ├── docs/images/          README screenshots
-├── .github/
+├── .github/workflows/    CI: run tests on push
+├── package.json          Dev-only: npm test (Jest)
 └── manifest.json
 ```
+
+---
+
+## Development and tests
+
+The extension has **no build step** for Chrome. **Jest** is optional and only used for automated checks.
+
+1. `npm install` (once, in the repo root)
+2. `npm test`
+
+Tests cover **pure functions** shared or mirrored from runtime code: **guide JSON** repair and parse (`lib/guide-parse.js`), **WebVTT** parsing and **captions URL** discovery (`lib/transcript.js`), **fuzzy chunk retrieval** (`lib/fuzzy-retrieval.js`), and **guide block index** for a timestamp (`lib/block-index.js`). They do **not** call Chrome APIs or the network.
+
+`lib/guide-parse.js` is loaded by the service worker with `importScripts`. `lib/fuzzy-retrieval.js` is loaded in the sidebar before `scripts.js` so script chunking uses the same implementation as the tests.
+
+---
+
+## License
+
+[MIT](LICENSE). You may use, modify, and distribute the extension with attribution; there is no warranty.
 
 ---
 
