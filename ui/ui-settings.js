@@ -1,15 +1,23 @@
 (async function () {
   'use strict';
 
-  const scaleInput = document.getElementById('sidebar-scale');
-  const scaleValue = document.getElementById('sidebar-scale-value');
+  const textBaseInput = document.getElementById('text-base');
+  const textBaseValue = document.getElementById('text-base-value');
+  const textTitleInput = document.getElementById('text-title');
+  const textTitleValue = document.getElementById('text-title-value');
+  const textSectionInput = document.getElementById('text-section');
+  const textSectionValue = document.getElementById('text-section-value');
+  const textContentInput = document.getElementById('text-content');
+  const textContentValue = document.getElementById('text-content-value');
+  const textMetaInput = document.getElementById('text-meta');
+  const textMetaValue = document.getElementById('text-meta-value');
   const darkGrid = document.getElementById('dark-color-grid');
   const lightGrid = document.getElementById('light-color-grid');
   const statusEl = document.getElementById('status');
   const previewSidebar = document.getElementById('preview-sidebar');
   const previewDarkBtn = document.getElementById('preview-dark');
   const previewLightBtn = document.getElementById('preview-light');
-  const restoreScaleBtn = document.getElementById('restore-scale');
+  const restoreTextBtn = document.getElementById('restore-text');
   const restoreDarkBtn = document.getElementById('restore-dark');
   const restoreLightBtn = document.getElementById('restore-light');
   const restoreAllBtn = document.getElementById('restore-all');
@@ -68,8 +76,16 @@
   }
 
   function renderAll() {
-    scaleInput.value = String(working.sidebarScale);
-    scaleValue.textContent = `${working.sidebarScale}%`;
+    textBaseInput.value = String(working.textSizes.base);
+    textBaseValue.textContent = `${working.textSizes.base}px`;
+    textTitleInput.value = String(working.textSizes.title);
+    textTitleValue.textContent = `${working.textSizes.title}px`;
+    textSectionInput.value = String(working.textSizes.sectionLabel);
+    textSectionValue.textContent = `${working.textSizes.sectionLabel}px`;
+    textContentInput.value = String(working.textSizes.content);
+    textContentValue.textContent = `${working.textSizes.content}px`;
+    textMetaInput.value = String(working.textSizes.meta);
+    textMetaValue.textContent = `${working.textSizes.meta}px`;
     renderModeGrid('dark', darkGrid);
     renderModeGrid('light', lightGrid);
     applyPreview();
@@ -84,14 +100,26 @@
     style.setProperty('--text', c.textPrimary);
     style.setProperty('--muted', c.textMuted);
     style.setProperty('--accent', c.accent);
-    previewSidebar.style.transform = `scale(${(working.sidebarScale || 100) / 100})`;
+    const s = working.textSizes || {};
+    style.setProperty('--preview-base-size', `${s.base || 13}px`);
+    style.setProperty('--preview-title-size', `${s.title || 16}px`);
+    style.setProperty('--preview-section-size', `${s.sectionLabel || 11}px`);
+    style.setProperty('--preview-content-size', `${s.content || 13.5}px`);
+    style.setProperty('--preview-meta-size', `${s.meta || 11}px`);
   }
 
-  scaleInput.addEventListener('input', () => {
-    working.sidebarScale = parseInt(scaleInput.value, 10) || 100;
-    scaleValue.textContent = `${working.sidebarScale}%`;
-    applyPreview();
-  });
+  function bindTextSize(input, output, key) {
+    input.addEventListener('input', () => {
+      working.textSizes[key] = parseFloat(input.value) || UISettings.DEFAULT_UI_SETTINGS.textSizes[key];
+      output.textContent = `${working.textSizes[key]}px`;
+      applyPreview();
+    });
+  }
+  bindTextSize(textBaseInput, textBaseValue, 'base');
+  bindTextSize(textTitleInput, textTitleValue, 'title');
+  bindTextSize(textSectionInput, textSectionValue, 'sectionLabel');
+  bindTextSize(textContentInput, textContentValue, 'content');
+  bindTextSize(textMetaInput, textMetaValue, 'meta');
 
   previewDarkBtn?.addEventListener('click', () => {
     previewTheme = 'dark';
@@ -104,10 +132,10 @@
     setStatus('Previewing light theme');
   });
 
-  restoreScaleBtn.addEventListener('click', () => {
-    working.sidebarScale = UISettings.DEFAULT_UI_SETTINGS.sidebarScale;
+  restoreTextBtn.addEventListener('click', () => {
+    working.textSizes = UISettings.deepClone(UISettings.DEFAULT_UI_SETTINGS.textSizes);
     renderAll();
-    setStatus('Scale restored to default');
+    setStatus('Text sizes restored to defaults');
   });
 
   restoreDarkBtn.addEventListener('click', () => {
