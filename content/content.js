@@ -29,6 +29,7 @@
   let timestampInterval = null;
   let lastBlockIndex = -1;
   let speedOverlayTimeout = null;
+  /** Bumped on SPA navigation so in-flight FETCH_JSON/VTT callbacks cannot complete with a stale generation. */
   let extractionGen = 0;
   let lastKnownHref = '';
   let lectureNavDebounce = null;
@@ -52,6 +53,8 @@
       injectSidebar();
       startTimestampSync();
       initKeyboardShortcuts();
+      return waitForTranscriptDomReady();
+    }).then(() => {
       initiateTranscriptExtraction();
     });
 
@@ -108,13 +111,35 @@
     clearTimeout(lectureNavDebounce);
     lectureNavDebounce = setTimeout(() => {
       if (!isLecturePage()) return;
+      // Invalidate any extraction still running for the previous lecture (callbacks may otherwise
+      // never post a terminal status after the next initiateTranscriptExtraction bumps the gen).
+      extractionGen++;
       postToSidebar({ type: 'EXTENSION_READY', lectureUrl: location.href });
       waitForVideo(15000).then(video => {
         videoEl = video;
         startTimestampSync();
+        return waitForTranscriptDomReady();
+      }).then(() => {
         initiateTranscriptExtraction();
       });
     }, 400);
+  }
+
+  /**
+   * After SPA navigation, Tobira/Paella may still expose the previous lecture's video node or HTML
+   * for a short time. Poll until we see caption signals for the new page or time out.
+   */
+  function waitForTranscriptDomReady(timeoutMs = 20000, stepMs = 150) {
+    return new Promise(resolve => {
+      const t0 = Date.now();
+      const tick = () => {
+        if (findCaptionsUrlFromPage()) return resolve();
+        if (extractCandidateEventIds().length) return resolve();
+        if (Date.now() - t0 >= timeoutMs) return resolve();
+        setTimeout(tick, stepMs);
+      };
+      tick();
+    });
   }
 
   function waitForVideo(timeout = 15000) {
@@ -328,6 +353,8 @@
   // ─── Transcript Extraction ───────────────────────────────────────────────────
 
   function initiateTranscriptExtraction() {
+    // New run id. scheduleLectureSoftReload also increments extractionGen so in-flight callbacks
+    // from the previous lecture are invalidated before this run starts.
     const gen = ++extractionGen;
     postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'extracting' });
 
@@ -336,8 +363,10 @@
 
     const attemptExtraction = (attempt) => {
       if (gen !== extractionGen) return;
+      const urlEventId = extractEventIdFromLocation();
       const fallbackVtt = findCaptionsUrlFromPage();
-      if (fallbackVtt) return fetchAndPublishVtt(fallbackVtt, null, gen);
+      // Without a URL UUID, a .vtt from resource timing can still be the previous lecture's track.
+      if (!urlEventId && fallbackVtt) return fetchAndPublishVtt(fallbackVtt, null, gen);
 
       const eventCandidates = extractCandidateEventIds();
       if (!eventCandidates.length) {
@@ -367,6 +396,10 @@
           { type: 'FETCH_JSON', url: `https://dist.tobira.ethz.ch/mh_default_org/engage-player/${eventId}/data.json` },
           response => {
             if (gen !== extractionGen) return;
+            if (chrome.runtime.lastError) {
+              tryCandidate(idx + 1);
+              return;
+            }
             if (!response || !response.success) {
               tryCandidate(idx + 1);
               return;
@@ -391,6 +424,14 @@
   function fetchAndPublishVtt(vttUrl, eventId, gen) {
     chrome.runtime.sendMessage({ type: 'FETCH_VTT', url: vttUrl }, vttResp => {
       if (gen !== extractionGen) return;
+      if (chrome.runtime.lastError) {
+        postToSidebar({
+          type: 'TRANSCRIPT_STATUS',
+          status: 'error',
+          error: chrome.runtime.lastError.message || 'VTT request failed'
+        });
+        return;
+      }
       if (!vttResp || !vttResp.success) {
         postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'error', error: vttResp?.error || 'VTT request failed' });
         return;
@@ -446,6 +487,11 @@
     return null;
   }
 
+  function extractEventIdFromLocation() {
+    const m = location.href.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    return m ? m[0] : null;
+  }
+
   function extractCandidateEventIds() {
     const ids = [];
     const pushIfValid = (id) => {
@@ -454,6 +500,8 @@
       if (!ids.includes(id)) ids.push(id);
     };
 
+    // Prefer UUID from the visible URL so SPA navigations don't pick a stale ID from leftover HTML.
+    pushIfValid(extractEventIdFromLocation());
     pushIfValid(extractEventId());
 
     const html = document.documentElement?.innerHTML || '';

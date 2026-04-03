@@ -8,7 +8,7 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "testMatch": ["**/__tests__/**/*.test.js"],
+    "testMatch": ["**/tests/**/*.test.js"],
     "collectCoverageFrom": ["lib/**/*.js"],
     "coveragePathIgnorePatterns": ["/node_modules/", "/lib/transformers/", "/lib/katex/", "/lib/pdfjs/"]
   },

@@ -336,13 +336,13 @@ async function handleMessage(msg) {
     }
 
     case 'FETCH_VTT': {
-      const resp = await fetch(msg.url);
+      const resp = await fetch(msg.url, { signal: AbortSignal.timeout(45000) });
       if (!resp.ok) throw new Error(`VTT fetch failed: ${resp.status}`);
       return resp.text();
     }
 
     case 'FETCH_JSON': {
-      const resp = await fetch(msg.url);
+      const resp = await fetch(msg.url, { signal: AbortSignal.timeout(45000) });
       if (!resp.ok) throw new Error(`JSON fetch failed: ${resp.status}`);
       return resp.json();
     }
