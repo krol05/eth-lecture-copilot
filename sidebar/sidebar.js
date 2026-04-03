@@ -51,6 +51,7 @@
   const uiSettingsBtn = document.getElementById('ui-settings-btn');
   const focusToggle  = document.getElementById('focus-toggle');
   const exportPdfBtn = document.getElementById('export-pdf-btn');
+  const copyLatexMultiBtn = document.getElementById('copy-latex-multi-btn');
   const regenerateBtn = document.getElementById('regenerate-btn');
   const blockPrevBtn = document.getElementById('block-prev-btn');
   const blockNextBtn = document.getElementById('block-next-btn');
@@ -81,6 +82,12 @@
   const scriptFileInput   = document.getElementById('script-file-input');
   const scriptUploadStatus = document.getElementById('script-upload-status');
   const scriptStrictnessSel = document.getElementById('script-strictness-select');
+  const latexSelectModal = document.getElementById('latex-select-modal');
+  const latexModalClose = document.getElementById('latex-modal-close');
+  const latexSelectAllBtn = document.getElementById('latex-select-all-btn');
+  const latexDeselectAllBtn = document.getElementById('latex-deselect-all-btn');
+  const latexCopySelectedBtn = document.getElementById('latex-copy-selected-btn');
+  const latexBlockList = document.getElementById('latex-block-list');
 
   let scriptRecord = null;  // current course's script data
   let scriptCourseId = null;
@@ -116,6 +123,7 @@
         openGuidePrintWindow(guide, transcript?.lectureTitle || guide?.lecture_title);
       }
     });
+    copyLatexMultiBtn?.addEventListener('click', openLatexSelectModal);
     regenerateBtn.addEventListener('click', onRegenerateClick);
 
     if (autoTimeFollowCb) {
@@ -168,6 +176,14 @@
     });
     scriptUploadBtn?.addEventListener('click', () => scriptFileInput?.click());
     scriptFileInput?.addEventListener('change', handleScriptUpload);
+
+    latexModalClose?.addEventListener('click', closeLatexSelectModal);
+    latexSelectAllBtn?.addEventListener('click', () => setAllLatexSelections(true));
+    latexDeselectAllBtn?.addEventListener('click', () => setAllLatexSelections(false));
+    latexCopySelectedBtn?.addEventListener('click', copyLatexFromSelectedBlocks);
+    latexSelectModal?.addEventListener('click', (e) => {
+      if (e.target === latexSelectModal) closeLatexSelectModal();
+    });
 
     window.addEventListener('message', onContentMessage);
 
@@ -845,9 +861,12 @@ Now process the following transcript:`;
 
     // Build block HTML
     let html = `
-      <div>
-        <div class="block-title">${escHtml(block.title)}</div>
-        <div class="block-timestamp">${fmtSec(block.start_time)} – ${fmtSec(block.end_time)}</div>
+      <div class="block-head-row">
+        <div>
+          <div class="block-title">${escHtml(block.title)}</div>
+          <div class="block-timestamp">${fmtSec(block.start_time)} – ${fmtSec(block.end_time)}</div>
+        </div>
+        <button type="button" class="latex-copy-btn" data-block-index="${idx}" title="Copy this full block (including LaTeX)">Copy block</button>
       </div>
     `;
 
@@ -918,6 +937,148 @@ Now process the following transcript:`;
         el.textContent = latex;
       }
     });
+
+    guideBlock.querySelectorAll('.latex-copy-btn[data-block-index]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const i = parseInt(btn.dataset.blockIndex, 10);
+        await copyLatexFromSingleBlock(i);
+      });
+    });
+  }
+
+  function formatBlockForCopy(block, idx) {
+    if (!block) return '';
+    const out = [];
+    out.push(`## Block ${idx + 1}: ${block.title || 'Untitled block'}`);
+    out.push(`Time: ${fmtSec(block.start_time)} - ${fmtSec(block.end_time)}`);
+    out.push('');
+
+    if (Array.isArray(block.key_concepts) && block.key_concepts.length) {
+      out.push('Key Concepts:');
+      for (const c of block.key_concepts) out.push(`- ${String(c || '').trim()}`);
+      out.push('');
+    }
+
+    if (Array.isArray(block.formulas) && block.formulas.length) {
+      out.push('Formulas (LaTeX):');
+      for (const f of block.formulas) {
+        const label = String(f?.label || 'Formula').trim();
+        const latex = String(f?.latex || '').trim();
+        if (!latex) continue;
+        out.push(`- ${label}: ${latex}`);
+      }
+      out.push('');
+    }
+
+    if (Array.isArray(block.definitions) && block.definitions.length) {
+      out.push('Definitions:');
+      for (const d of block.definitions) {
+        out.push(`- ${String(d?.term || 'Term').trim()}: ${String(d?.definition || '').trim()}`);
+      }
+      out.push('');
+    }
+
+    if (String(block.notes || '').trim()) {
+      out.push('Notes:');
+      out.push(String(block.notes).trim());
+      out.push('');
+    }
+
+    return out.join('\n').trim();
+  }
+
+  async function copyTextToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return !!ok;
+    }
+  }
+
+  async function copyLatexFromSingleBlock(idx) {
+    if (!guide?.guide?.[idx]) return;
+    const block = guide.guide[idx];
+    const text = formatBlockForCopy(block, idx);
+    if (!text) {
+      setStatus('warning', 'Block is empty');
+      return;
+    }
+    const ok = await copyTextToClipboard(text);
+    setStatus(ok ? 'ready' : 'error', ok
+      ? 'Copied full block content'
+      : 'Could not copy block content');
+  }
+
+  function openLatexSelectModal() {
+    if (!guide?.guide?.length) {
+      setStatus('warning', 'No guide blocks available');
+      return;
+    }
+    const blocks = guide.guide;
+    latexBlockList.innerHTML = blocks.map((b, i) => `
+      <label class="latex-block-item">
+        <input type="checkbox" data-latex-block="${i}">
+        <span class="latex-block-title">${i + 1}. ${escHtml(b.title || 'Untitled block')}</span>
+      </label>
+    `).join('');
+    setAllLatexSelections(false);
+    latexSelectModal.style.display = '';
+  }
+
+  function closeLatexSelectModal() {
+    if (latexSelectModal) latexSelectModal.style.display = 'none';
+  }
+
+  function setAllLatexSelections(selected) {
+    latexBlockList?.querySelectorAll('input[type="checkbox"][data-latex-block]').forEach(cb => {
+      cb.checked = selected;
+    });
+  }
+
+  async function copyLatexFromSelectedBlocks() {
+    const selectedIdx = Array.from(
+      latexBlockList?.querySelectorAll('input[type="checkbox"][data-latex-block]:checked') || []
+    ).map(cb => parseInt(cb.dataset.latexBlock, 10));
+
+    if (!selectedIdx.length) {
+      setStatus('warning', 'Select at least one block first');
+      return;
+    }
+
+    const collected = [];
+    for (const i of selectedIdx) {
+      const block = guide?.guide?.[i];
+      if (!block) continue;
+      const blockText = formatBlockForCopy(block, i);
+      if (!blockText) continue;
+      collected.push(blockText);
+      collected.push('');
+      collected.push('---');
+      collected.push('');
+    }
+
+    if (!collected.length) {
+      setStatus('warning', 'No content found in selected blocks');
+      return;
+    }
+
+    const ok = await copyTextToClipboard(collected.join('\n'));
+    if (ok) {
+      closeLatexSelectModal();
+      setStatus('ready', `Copied ${selectedIdx.length} selected full block${selectedIdx.length === 1 ? '' : 's'}`);
+    } else {
+      setStatus('error', 'Could not copy selected blocks');
+    }
   }
 
   // ─── Script Management ───────────────────────────────────────────────────

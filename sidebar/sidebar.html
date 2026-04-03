@@ -187,6 +187,12 @@
             <div id="progress-fill" class="progress-fill"></div>
           </div>
         </div>
+        <button id="copy-latex-multi-btn" class="icon-btn" type="button" title="Copy full selected blocks (including LaTeX)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2"/>
+            <rect x="2" y="2" width="13" height="13" rx="2"/>
+          </svg>
+        </button>
         <button id="export-pdf-btn" class="icon-btn export-pdf-btn" type="button" title="Export full guide as PDF (opens print — choose Save as PDF)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
@@ -219,6 +225,24 @@
 
       <div id="guide-block" class="guide-block">
         <!-- Filled dynamically by sidebar.js -->
+      </div>
+
+      <div id="latex-select-modal" class="latex-modal-backdrop" style="display:none">
+        <div class="latex-modal">
+          <div class="latex-modal-header">
+            <strong>Copy full blocks</strong>
+            <button id="latex-modal-close" class="icon-btn" type="button" title="Close">×</button>
+          </div>
+          <p class="latex-modal-hint">Select one or more blocks. The copied text includes title, timestamp, key concepts, formulas (LaTeX), definitions, and notes.</p>
+          <div class="latex-modal-actions">
+            <button id="latex-select-all-btn" type="button" class="history-load-btn">Select all</button>
+            <button id="latex-deselect-all-btn" type="button" class="history-load-btn">Deselect all</button>
+          </div>
+          <div id="latex-block-list" class="latex-block-list"></div>
+          <div class="latex-modal-actions">
+            <button id="latex-copy-selected-btn" type="button" class="primary-btn">Copy selected blocks</button>
+          </div>
+        </div>
       </div>
     </div>
 
