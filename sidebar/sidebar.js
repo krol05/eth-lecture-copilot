@@ -818,7 +818,8 @@ Now process the following transcript:`;
     let idx = currentBlockIndex >= 0 ? currentBlockIndex : 0;
     idx = Math.max(0, Math.min(n - 1, idx + delta));
     if (autoTimeFollow) {
-      autoFollowPaused = true;
+      const liveIdx = findBlockIndex(lastVideoTime);
+      autoFollowPaused = idx !== liveIdx;
       syncAutoFollowCheckbox();
     }
     renderBlock(idx);
@@ -835,9 +836,18 @@ Now process the following transcript:`;
   function handleTimestamp(currentTime) {
     lastVideoTime = currentTime;
     if (!guide?.guide?.length) return;
-    if (!autoTimeFollow || autoFollowPaused) return;
+    if (!autoTimeFollow) return;
 
     const liveIdx = findBlockIndex(currentTime);
+
+    if (autoFollowPaused) {
+      if (liveIdx === currentBlockIndex) {
+        autoFollowPaused = false;
+        syncAutoFollowCheckbox();
+      }
+      return;
+    }
+
     if (liveIdx !== currentBlockIndex) {
       renderBlock(liveIdx);
     }
