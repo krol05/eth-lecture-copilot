@@ -68,6 +68,7 @@
   const genTempSlider  = document.getElementById('gen-temp-slider');
   const genTempValue   = document.getElementById('gen-temp-value');
   const genThinkingSel = document.getElementById('gen-thinking-select');
+  const genThinkingHint = document.getElementById('gen-thinking-hint');
   const genFallbackCb  = document.getElementById('gen-fallback-cb');
   const qaTempSlider   = document.getElementById('qa-temp-slider');
   const qaTempValue    = document.getElementById('qa-temp-value');
@@ -186,6 +187,8 @@
     });
 
     window.addEventListener('message', onContentMessage);
+
+    updateThinkingHint();
 
     setStatus('loading', 'Waiting for video page…');
   }
@@ -307,6 +310,73 @@
     }
   }
 
+  /**
+   * Thinking option behavior matches background.js: Anthropic extended thinking,
+   * Gemini thinking budget, OpenAI-compat only o-series gets reasoning_effort.
+   */
+  function buildThinkingTooltipText() {
+    const levels =
+      'None = fastest, cheapest (no extra reasoning).\n' +
+      'Low / Medium / High = extra reasoning step when your provider and model support it (slower, more tokens).\n\n';
+
+    if (!settings?.provider) {
+      return (
+        levels +
+        'Pick a provider and model in Options (cog). This tooltip updates to show whether thinking applies to your setup.'
+      );
+    }
+
+    const model = String(settings.model || '').trim() || '(no model selected)';
+    const prov = String(settings.provider);
+    const isLocal = prov.startsWith('local_');
+    const isOSeries = /^o[0-9]/.test(model);
+
+    if (prov === 'anthropic') {
+      return (
+        levels +
+        'Your setup: Anthropic.\n' +
+        'Low/Medium/High sends extended thinking (token budget) to the API. It works on Claude models that support extended thinking (e.g. Sonnet 4, Opus). If you get an error, set Thinking to None or choose another model in Options.'
+      );
+    }
+
+    if (prov === 'google') {
+      return (
+        levels +
+        'Your setup: Google Gemini.\n' +
+        'Low/Medium/High sends a thinking budget. Use a Gemini model that supports thinking (see Google’s model docs). If the API errors or ignores it, try None or another model.'
+      );
+    }
+
+    if (isOSeries) {
+      return (
+        levels +
+        'Your setup: OpenAI-compatible API with an o-series model (' +
+        model +
+        ').\n' +
+        'Low/Medium/High is sent as reasoning effort — this should work. If the server rejects it, try None or a different model.'
+      );
+    }
+
+    const apiLabel = isLocal ? 'your local endpoint' : 'this API';
+    return (
+      levels +
+      'Your setup: OpenAI-compatible (' +
+      prov +
+      '), model: “' +
+      model +
+      '”.\n' +
+      'The extension only sends thinking for models whose id starts with “o” + a digit (e.g. o1, o3-mini). Your current model does not match — Low/Medium/High are not sent; only temperature is used. Generation still works; you just do not get extra reasoning from this control.\n' +
+      'To use reasoning: pick an o-series model in Options (if ' +
+      apiLabel +
+      ' offers one), or leave Thinking on None.'
+    );
+  }
+
+  function updateThinkingHint() {
+    if (!genThinkingHint) return;
+    genThinkingHint.setAttribute('data-tip', buildThinkingTooltipText());
+  }
+
   // ─── Message Handling ─────────────────────────────────────────────────────
 
   function onContentMessage(e) {
@@ -323,6 +393,7 @@
       case 'SETTINGS':
         settings = msg.settings;
         updateGenerateButton();
+        updateThinkingHint();
         break;
 
       case 'TRANSCRIPT_STATUS':
