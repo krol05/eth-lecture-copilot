@@ -1,0 +1,18 @@
+{
+  "name": "eth-lecture-copilot",
+  "private": true,
+  "description": "Chrome extension tests (Jest); extension itself has no build step",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/__tests__/**/*.test.js"],
+    "collectCoverageFrom": ["lib/**/*.js"],
+    "coveragePathIgnorePatterns": ["/node_modules/", "/lib/transformers/", "/lib/katex/", "/lib/pdfjs/"]
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}

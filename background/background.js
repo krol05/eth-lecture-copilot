@@ -9,6 +9,8 @@
  *                      OpenRouter, Groq, Together, Cerebras, and any other OAI-compat provider
  */
 
+importScripts(chrome.runtime.getURL('lib/guide-parse.js'));
+
 // ─── Provider config (must match lib/providers-config.js) ────────────────────
 // Inlined here because service workers can't import arbitrary files in MV3.
 
@@ -236,126 +238,7 @@ async function callAI(provider, model, apiKey, messages, systemPrompt, opts = {}
   }
 }
 
-// ─── Guide JSON parser ────────────────────────────────────────────────────────
-// Multi-strategy: try simplest approach first, progressively more aggressive.
-
-function parseGuideResponse(raw) {
-  let text = String(raw || '').trim();
-
-  // Strip markdown fences
-  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
-
-  // Find the JSON object
-  const start = text.indexOf('{');
-  if (start === -1) throw new Error('No JSON object found in response');
-  text = text.slice(start);
-
-  // Strip non-printable chars (keep newlines/tabs — they're valid in JSON)
-  text = text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
-
-  // Strategy 1: direct parse (works if model output valid JSON)
-  try { return JSON.parse(text); } catch (_) {}
-
-  // Strategy 2: trim to complete JSON object, then parse
-  const end = findMatchingBrace(text);
-  if (end !== -1) {
-    const complete = text.slice(0, end + 1);
-    try { return JSON.parse(complete); } catch (_) {}
-    // 2b: remove trailing commas and retry
-    const cleaned = complete.replace(/,\s*([}\]])/g, '$1');
-    try { return JSON.parse(cleaned); } catch (_) {}
-  }
-
-  // Strategy 3: fix escape issues (LaTeX backslashes, raw newlines in strings)
-  const fixed = fixEscapes(text);
-  try { return JSON.parse(fixed); } catch (_) {}
-
-  // Strategy 4: truncated response — close open structures
-  const salvaged = salvageTruncated(fixed);
-  if (salvaged) return salvaged;
-
-  // Strategy 5: last resort — salvage the unfixed text
-  const salvaged2 = salvageTruncated(text);
-  if (salvaged2) return salvaged2;
-
-  throw new Error('Could not parse the guide. Try a different model or paste the transcript manually.');
-}
-
-function fixEscapes(text) {
-  // Fix invalid escape sequences and raw control chars inside JSON strings.
-  // Tracks string state carefully.
-  const VALID_ESC = '"\\\/bfnrtu';
-  let out = '';
-  let inStr = false;
-  let i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    if (!inStr) {
-      if (c === '"') inStr = true;
-      out += c; i++; continue;
-    }
-    // Inside string
-    if (c === '\\') {
-      const nx = text[i + 1];
-      if (nx === undefined) { out += '\\\\'; i++; continue; }
-      if (VALID_ESC.includes(nx)) { out += c + nx; i += 2; continue; }
-      // Invalid escape like \frac → \\frac
-      out += '\\\\'; i++; continue;
-    }
-    if (c === '"')  { inStr = false; out += c; i++; continue; }
-    if (c === '\n') { out += '\\n'; i++; continue; }
-    if (c === '\r') { i++; continue; }
-    if (c === '\t') { out += '\\t'; i++; continue; }
-    out += c; i++;
-  }
-  out = out.replace(/,\s*([}\]])/g, '$1');
-  return out;
-}
-
-function salvageTruncated(text) {
-  // Close all open JSON structures so a truncated response can still parse.
-  try {
-    let s = text;
-    // Walk to find open/close balance
-    let inStr = false, esc = false, braces = 0, brackets = 0;
-    for (let i = 0; i < s.length; i++) {
-      const c = s[i];
-      if (esc) { esc = false; continue; }
-      if (c === '\\' && inStr) { esc = true; continue; }
-      if (c === '"') { inStr = !inStr; continue; }
-      if (inStr) continue;
-      if (c === '{') braces++;
-      else if (c === '}') braces--;
-      else if (c === '[') brackets++;
-      else if (c === ']') brackets--;
-    }
-    // If still inside a string, close it
-    if (inStr) s += '"';
-    // Strip trailing partial value (comma, colon, key without value)
-    s = s.replace(/,\s*"[^"]*"?\s*$/, '');
-    s = s.replace(/,\s*$/, '');
-    s = s.replace(/:\s*$/, ': null');
-    while (brackets > 0) { s += ']'; brackets--; }
-    while (braces > 0) { s += '}'; braces--; }
-    return JSON.parse(s);
-  } catch (_) {
-    return null;
-  }
-}
-
-function findMatchingBrace(str) {
-  let depth = 0, inStr = false, esc = false;
-  for (let i = 0; i < str.length; i++) {
-    const c = str[i];
-    if (esc) { esc = false; continue; }
-    if (c === '\\' && inStr) { esc = true; continue; }
-    if (c === '"') { inStr = !inStr; continue; }
-    if (inStr) continue;
-    if (c === '{') depth++;
-    if (c === '}' && --depth === 0) return i;
-  }
-  return -1;
-}
+// parseGuideResponse loaded from lib/guide-parse.js (shared with Jest tests).
 
 // ─── Single message handler for ALL operations ──────────────────────────────
 // sendMessage + return true keeps the service worker alive until sendResponse
