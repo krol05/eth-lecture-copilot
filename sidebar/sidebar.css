@@ -1153,6 +1153,11 @@ body {
   line-height: 1.5;
   color: var(--text-secondary);
   padding: 4px 0 2px;
+  max-height: min(280px, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 .script-help-body p {
   margin: 4px 0;
