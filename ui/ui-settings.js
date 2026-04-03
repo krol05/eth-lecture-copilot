@@ -6,6 +6,9 @@
   const darkGrid = document.getElementById('dark-color-grid');
   const lightGrid = document.getElementById('light-color-grid');
   const statusEl = document.getElementById('status');
+  const previewSidebar = document.getElementById('preview-sidebar');
+  const previewDarkBtn = document.getElementById('preview-dark');
+  const previewLightBtn = document.getElementById('preview-light');
   const restoreScaleBtn = document.getElementById('restore-scale');
   const restoreDarkBtn = document.getElementById('restore-dark');
   const restoreLightBtn = document.getElementById('restore-light');
@@ -27,6 +30,7 @@
   ];
 
   let working = await UISettings.load();
+  let previewTheme = 'dark';
 
   function setStatus(msg) {
     statusEl.textContent = msg || '';
@@ -56,6 +60,7 @@
         : (working.colors[mode][key] || '');
       input.addEventListener('input', () => {
         working.colors[mode][key] = input.value.trim();
+        applyPreview();
       });
       row.appendChild(input);
       target.appendChild(row);
@@ -67,11 +72,36 @@
     scaleValue.textContent = `${working.sidebarScale}%`;
     renderModeGrid('dark', darkGrid);
     renderModeGrid('light', lightGrid);
+    applyPreview();
+  }
+
+  function applyPreview() {
+    if (!previewSidebar) return;
+    const c = working.colors[previewTheme];
+    const style = previewSidebar.style;
+    style.setProperty('--card', c.bg1);
+    style.setProperty('--border', c.border);
+    style.setProperty('--text', c.textPrimary);
+    style.setProperty('--muted', c.textMuted);
+    style.setProperty('--accent', c.accent);
+    previewSidebar.style.transform = `scale(${(working.sidebarScale || 100) / 100})`;
   }
 
   scaleInput.addEventListener('input', () => {
     working.sidebarScale = parseInt(scaleInput.value, 10) || 100;
     scaleValue.textContent = `${working.sidebarScale}%`;
+    applyPreview();
+  });
+
+  previewDarkBtn?.addEventListener('click', () => {
+    previewTheme = 'dark';
+    applyPreview();
+    setStatus('Previewing dark theme');
+  });
+  previewLightBtn?.addEventListener('click', () => {
+    previewTheme = 'light';
+    applyPreview();
+    setStatus('Previewing light theme');
   });
 
   restoreScaleBtn.addEventListener('click', () => {
