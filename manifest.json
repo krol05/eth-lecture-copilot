@@ -1,8 +1,12 @@
 {
   "manifest_version": 3,
   "name": "ETH Lecture Copilot",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "AI-powered lecture guide & Q&A sidebar for ETH Zürich video.ethz.ch",
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-eval'; object-src 'self';"
+  },
 
   "permissions": ["storage", "unlimitedStorage", "activeTab", "scripting"],
   "host_permissions": [
