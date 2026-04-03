@@ -104,7 +104,7 @@
 
     themeToggle.addEventListener('click', toggleTheme);
     uiSettingsBtn?.addEventListener('click', () => {
-      chrome.runtime.openOptionsPage();
+      chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' });
     });
     focusToggle?.addEventListener('click', () => {
       postToContent({ type: 'TOGGLE_FOCUS' });
@@ -1263,25 +1263,78 @@ Now process the following transcript:`;
     }
   }
 
+  /**
+   * Build a token-efficient Q&A system prompt:
+   * - Only sends a ±3 min transcript window around the current video time
+   * - Only sends relevant guide blocks for that window
+   * - Uses the transcript window content + user query for script retrieval
+   * - Includes a compact lecture overview (block titles) for structural awareness
+   */
   function buildQAPrompt(userQuery) {
     const title = transcript?.lectureTitle || 'Lecture';
-    const guideStr = guide ? JSON.stringify(guide, null, 2) : '(guide not yet generated)';
+    const currentTime = lastVideoTime || 0;
+    const WINDOW_SEC = 180; // ±3 minutes
 
-    let scriptContext = '';
-    if (userQuery && scriptRecord?.chunks?.length && window.ScriptManager) {
-      const strictness = scriptStrictnessSel?.value || 'medium';
-      scriptContext = ScriptManager.buildScriptContext(userQuery, scriptRecord, strictness);
+    // 1. Extract ±3 min transcript window from cues
+    const windowStart = Math.max(0, currentTime - WINDOW_SEC);
+    const windowEnd = currentTime + WINDOW_SEC;
+    let windowCues = [];
+    if (transcript?.cues?.length) {
+      windowCues = transcript.cues.filter(c =>
+        c.start_time >= windowStart && c.start_time <= windowEnd
+      );
+    }
+    const windowText = windowCues.length > 0
+      ? windowCues.map(c => `[${fmtSec(c.start_time)}] ${c.text}`).join('\n')
+      : (transcript?.text?.slice(0, 4000) || '(no transcript)');
+
+    // 2. Extract relevant guide blocks for the time window
+    let guideBlocksStr = '(guide not yet generated)';
+    if (guide?.guide?.length) {
+      const relevant = guide.guide.filter(b =>
+        b.end_time >= windowStart && b.start_time <= windowEnd
+      );
+      if (relevant.length) {
+        guideBlocksStr = JSON.stringify(relevant, null, 2);
+      } else {
+        const idx = findBlockIndex(currentTime);
+        guideBlocksStr = JSON.stringify([guide.guide[idx]], null, 2);
+      }
     }
 
+    // 3. Compact lecture overview (title + time range per block, ~few tokens)
+    let lectureOverview = '';
+    if (guide?.guide?.length) {
+      lectureOverview = '\n--- LECTURE STRUCTURE ---\n' +
+        guide.guide.map((b, i) =>
+          `${i + 1}. [${fmtSec(b.start_time)}-${fmtSec(b.end_time)}] ${b.title}`
+        ).join('\n') + '\n';
+    }
+
+    // 4. Script retrieval using transcript context + user query
+    let scriptContext = '';
+    if (scriptRecord?.chunks?.length && window.ScriptManager) {
+      const strictness = scriptStrictnessSel?.value || 'medium';
+      // Combine nearby transcript text with the user's question for better matching
+      const transcriptSnippet = windowCues.length > 0
+        ? windowCues.map(c => c.text).join(' ').slice(0, 600)
+        : '';
+      const searchQuery = (transcriptSnippet + ' ' + userQuery).trim();
+      scriptContext = ScriptManager.buildScriptContext(searchQuery, scriptRecord, strictness);
+    }
+
+    const hasScript = !!scriptContext;
+
     return `You are a helpful study assistant for the ETH Zürich lecture: "${title}".
+The student is currently at [${fmtSec(currentTime)}] in the video.
 
-Answer questions based on the lecture content below${scriptContext ? ' and the course script excerpts provided' : ''}. Reference specific timestamps [HH:MM:SS] when relevant. Keep answers concise and student-friendly. Use LaTeX for math (wrap in $...$ inline or $$...$$ for display). If something is not covered in the available material, say so clearly.
+Answer based on the transcript excerpt and guide blocks below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display). If the question is about a different part of the lecture, reference the lecture structure to guide the student.
+${lectureOverview}
+--- TRANSCRIPT (${fmtSec(windowStart)} to ${fmtSec(windowEnd)}) ---
+${windowText}
 
---- TRANSCRIPT ---
-${transcript?.text || '(no transcript)'}
-
---- GUIDE ---
-${guideStr}${scriptContext}`;
+--- GUIDE BLOCKS (current section) ---
+${guideBlocksStr}${scriptContext}`;
   }
 
   function appendChatMsg(role, content, hasFrame) {
@@ -1575,8 +1628,8 @@ ${guideStr}${scriptContext}`;
     const subtitle = `${n} section${n === 1 ? '' : 's'} · ${fmtSec(dur || 0)} total`;
     const payload = { title, subtitle, bodyHtml };
     try {
-      sessionStorage.setItem('eth-copilot-print-guide', JSON.stringify(payload));
-      window.open(chrome.runtime.getURL('sidebar/print-guide.html'), '_blank', 'noopener');
+      localStorage.setItem('eth-copilot-print-guide', JSON.stringify(payload));
+      window.open(chrome.runtime.getURL('sidebar/print-guide.html'), '_blank');
       setStatus('ready', 'Print view opened — use “Save as PDF” in the print dialog');
     } catch (e) {
       console.error('[Copilot] export PDF', e);

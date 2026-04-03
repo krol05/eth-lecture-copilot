@@ -1,5 +1,5 @@
 /**
- * Opens from sidebar with guide HTML in sessionStorage (set by sidebar.js).
+ * Opens from sidebar with guide HTML in localStorage (set by sidebar.js).
  * Triggers the browser print dialog (Save as PDF).
  */
 (function () {
@@ -9,8 +9,8 @@
 
   function run() {
     const root = document.getElementById('print-root');
-    const raw = sessionStorage.getItem(KEY);
-    sessionStorage.removeItem(KEY);
+    const raw = localStorage.getItem(KEY);
+    localStorage.removeItem(KEY);
 
     if (!raw) {
       root.innerHTML = '<p style="color:#d1242f">Nothing to export. Close this tab and try again from the sidebar.</p>';
