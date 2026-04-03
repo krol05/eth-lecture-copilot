@@ -812,7 +812,8 @@ Now process the following transcript:`;
     let idx = currentBlockIndex >= 0 ? currentBlockIndex : 0;
     idx = Math.max(0, Math.min(n - 1, idx + delta));
     if (autoTimeFollow) {
-      autoFollowPaused = true;
+      const liveIdx = findBlockIndex(lastVideoTime);
+      autoFollowPaused = idx !== liveIdx;
       syncAutoFollowCheckbox();
     }
     renderBlock(idx);
@@ -829,9 +830,18 @@ Now process the following transcript:`;
   function handleTimestamp(currentTime) {
     lastVideoTime = currentTime;
     if (!guide?.guide?.length) return;
-    if (!autoTimeFollow || autoFollowPaused) return;
+    if (!autoTimeFollow) return;
 
     const liveIdx = findBlockIndex(currentTime);
+
+    if (autoFollowPaused) {
+      if (liveIdx === currentBlockIndex) {
+        autoFollowPaused = false;
+        syncAutoFollowCheckbox();
+      }
+      return;
+    }
+
     if (liveIdx !== currentBlockIndex) {
       renderBlock(liveIdx);
     }
@@ -1650,6 +1660,59 @@ ${guideBlocksStr}${scriptContext}`;
     }
     return !!settings?.apiKey;
   }
+
+  // ─── Tooltip system (body-level, immune to overflow clipping) ────────────
+  (function initTooltips() {
+    const tip = document.getElementById('global-tip');
+    if (!tip) return;
+    let activeHint = null;
+
+    function show(hint) {
+      const text = hint.getAttribute('data-tip');
+      if (!text) return;
+      activeHint = hint;
+      tip.textContent = text;
+      tip.classList.add('visible');
+      position(hint);
+    }
+
+    function hide() {
+      activeHint = null;
+      tip.classList.remove('visible');
+    }
+
+    function position(hint) {
+      const r = hint.getBoundingClientRect();
+      const vw = document.documentElement.clientWidth;
+      const vh = document.documentElement.clientHeight;
+
+      tip.style.left = '0';
+      tip.style.top = '0';
+      tip.style.maxWidth = (vw - 16) + 'px';
+
+      const tw = tip.offsetWidth;
+      const th = tip.offsetHeight;
+
+      let left = r.right - tw;
+      if (left < 8) left = 8;
+      if (left + tw > vw - 8) left = vw - 8 - tw;
+
+      let top = r.top - th - 6;
+      if (top < 4) top = r.bottom + 6;
+
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    }
+
+    document.addEventListener('mouseover', function (e) {
+      const hint = e.target.closest('.setting-hint[data-tip]');
+      if (hint) show(hint); else if (activeHint) hide();
+    });
+    document.addEventListener('mouseout', function (e) {
+      const hint = e.target.closest('.setting-hint[data-tip]');
+      if (hint && hint === activeHint) hide();
+    });
+  })();
 
   // ─── Bootstrap ───────────────────────────────────────────────────────────
   init();
