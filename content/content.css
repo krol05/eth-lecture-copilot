@@ -67,6 +67,45 @@ body.eth-copilot-fs {
   overflow: hidden !important;
 }
 
+/* ─── Focus Mode (theater / split view) ───────────────────────────────── */
+body.eth-copilot-focus {
+  overflow: hidden !important;
+  margin: 0 !important;
+}
+
+body.eth-copilot-focus::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 2147483630;
+  pointer-events: none;
+}
+
+.eth-copilot-focus-video {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  bottom: 0 !important;
+  z-index: 2147483640 !important;
+  background: #000 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  overflow: hidden !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.eth-copilot-focus-video video {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain !important;
+}
+
 /* Playback speed overlay */
 #eth-copilot-speed-overlay {
   position: fixed;

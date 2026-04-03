@@ -25,6 +25,7 @@ const PROVIDER_MAP = {
   cerebras:        { type: 'openai_compat',base: 'https://api.cerebras.ai/v1' },
   // Local providers — base URL comes from message payload (user-configurable)
   local_ollama:    { type: 'local' },
+  local_litellm:   { type: 'local' },
   local_lmstudio:  { type: 'local' },
   local_jan:       { type: 'local' },
   local_localai:   { type: 'local' },
@@ -48,19 +49,28 @@ const DEFAULT_MODELS = {
 
 // ─── OpenAI-compatible handler (covers ~80% of providers) ────────────────────
 
+function normalizeOAIBase(base) {
+  const raw = String(base || '').trim();
+  if (!raw) throw new Error('Missing OpenAI-compatible base URL');
+  return raw.replace(/\/+$/, '');
+}
+
 async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts = {}) {
+  const normalizedBase = normalizeOAIBase(base);
   const oaiMessages = messages.map(m => {
     if (m.role === 'user' && m.imageBase64) {
       return {
         role: 'user',
         content: [
           { type: 'text', text: m.content },
-          { type: 'image_url', url: { url: `data:image/jpeg;base64,${m.imageBase64}` } }
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${m.imageBase64}` } }
         ]
       };
     }
     return { role: m.role, content: m.content };
   });
+
+  const isOSeries = /^o[0-9]/.test(model);
 
   const body = {
     model,
@@ -68,15 +78,22 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
       { role: 'system', content: systemPrompt },
       ...oaiMessages
     ],
-    temperature: opts.temperature ?? 0.4,
     ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
     ...(opts.jsonMode ? { response_format: { type: 'json_object' } } : {})
   };
 
-  // apiKey is optional — local providers don't need one
+  if (isOSeries) {
+    const thinking = opts.thinking || 'none';
+    if (thinking !== 'none') {
+      body.reasoning_effort = thinking;
+    }
+  } else {
+    body.temperature = opts.temperature ?? 0.4;
+  }
+
   const authHeader = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};
 
-  const resp = await fetch(`${base}/chat/completions`, {
+  const resp = await fetch(`${normalizedBase}/chat/completions`, {
     method: 'POST',
     signal: AbortSignal.timeout(opts.timeoutMs ?? 120000),
     headers: {
@@ -87,7 +104,7 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
     body: JSON.stringify(body)
   });
 
-  if (!resp.ok) throw new Error(`${base} → ${resp.status}: ${await resp.text()}`);
+  if (!resp.ok) throw new Error(`${normalizedBase} → ${resp.status}: ${await resp.text()}`);
   const d = await resp.json();
   return d.choices?.[0]?.message?.content ?? '';
 }
@@ -95,7 +112,6 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
 // ─── Anthropic handler ────────────────────────────────────────────────────────
 
 async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
-  // Convert messages: image attachments handled inline
   const anthropicMessages = messages.map(m => {
     if (m.role === 'user' && m.imageBase64) {
       return {
@@ -109,6 +125,26 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
     return { role: m.role, content: m.content };
   });
 
+  const thinking = opts.thinking || 'none';
+  const thinkingBudgets = { low: 2048, medium: 10000, high: 32768 };
+  const useThinking = thinking !== 'none' && thinkingBudgets[thinking];
+
+  const body = {
+    model,
+    max_tokens: opts.maxTokens ?? 8192,
+    system: systemPrompt,
+    messages: anthropicMessages
+  };
+
+  if (useThinking) {
+    const budgetTokens = thinkingBudgets[thinking];
+    body.thinking = { type: 'enabled', budget_tokens: budgetTokens };
+    body.max_tokens = Math.max(body.max_tokens, budgetTokens + 16000);
+    body.temperature = 1;
+  } else {
+    body.temperature = opts.temperature ?? 0.4;
+  }
+
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     signal: AbortSignal.timeout(opts.timeoutMs ?? 120000),
@@ -117,17 +153,15 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01'
     },
-    body: JSON.stringify({
-      model,
-      max_tokens: opts.maxTokens ?? 8192,
-      temperature: opts.temperature ?? 0.4,
-      system: systemPrompt,
-      messages: anthropicMessages
-    })
+    body: JSON.stringify(body)
   });
 
   if (!resp.ok) throw new Error(`Anthropic → ${resp.status}: ${await resp.text()}`);
   const d = await resp.json();
+  if (useThinking) {
+    const textBlock = d.content?.find(b => b.type === 'text');
+    return textBlock?.text ?? '';
+  }
   return d.content?.[0]?.text ?? '';
 }
 
@@ -144,14 +178,25 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
     return { role: m.role === 'assistant' ? 'model' : 'user', parts };
   });
 
+  const thinking = opts.thinking || 'none';
+  const thinkingBudgets = { low: 1024, medium: 8192, high: 24576 };
+
+  const generationConfig = {
+    temperature: opts.temperature ?? 0.4,
+    ...(opts.maxTokens ? { maxOutputTokens: opts.maxTokens } : {}),
+    ...(opts.jsonMode ? { responseMimeType: 'application/json' } : {})
+  };
+
+  if (thinking !== 'none' && thinkingBudgets[thinking]) {
+    generationConfig.thinkingConfig = {
+      thinkingBudget: thinkingBudgets[thinking]
+    };
+  }
+
   const body = {
     systemInstruction: { parts: [{ text: systemPrompt }] },
     contents,
-    generationConfig: {
-      temperature: opts.temperature ?? 0.4,
-      ...(opts.maxTokens ? { maxOutputTokens: opts.maxTokens } : {}),
-      ...(opts.jsonMode ? { responseMimeType: 'application/json' } : {})
-    }
+    generationConfig
   };
 
   const resp = await fetch(url, {
@@ -165,7 +210,6 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
   const d = await resp.json();
   const cand = d.candidates?.[0];
   const text = cand?.content?.parts?.[0]?.text ?? '';
-  // If output hit the token cap, JSON is often truncated → fewer guide blocks after parse.
   if (cand?.finishReason === 'MAX_TOKENS') {
     console.warn('[BG] Gemini finishReason=MAX_TOKENS — guide output may be incomplete');
   }
@@ -175,7 +219,11 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
 // ─── Unified call dispatcher ──────────────────────────────────────────────────
 
 async function callAI(provider, model, apiKey, messages, systemPrompt, opts = {}) {
-  const cfg = PROVIDER_MAP[provider];
+  let cfg = PROVIDER_MAP[provider];
+  // Forward-compatible fallback: treat any local_* provider as OpenAI-compatible local.
+  if (!cfg && String(provider || '').startsWith('local_')) {
+    cfg = { type: 'local' };
+  }
   if (!cfg) throw new Error(`Unknown provider: ${provider}`);
 
   switch (cfg.type) {
@@ -344,7 +392,7 @@ async function handleMessage(msg) {
     case 'DISCOVER_LOCAL_MODELS': {
       // Universal model discovery — all OAI-compat runtimes expose GET /v1/models
       // Works for: Ollama, LM Studio, Jan, LocalAI, llamafile, oobabooga, GPT4All, etc.
-      const base = msg.localBase;
+      const base = normalizeOAIBase(msg.localBase);
       if (!base) throw new Error('localBase required for model discovery');
 
       const resp = await fetch(`${base}/models`, {
@@ -363,11 +411,27 @@ async function handleMessage(msg) {
 
     case 'GENERATE_GUIDE': {
       const { transcriptText, systemPrompt } = msg;
-      // Gemini Flash / Flash-Lite: allow large JSON; slightly higher temperature reduces
-      // over-merging sections into a handful of blocks (still JSON-safe for most runs).
-      const maxGuideTokens = provider === 'google' ? 64000 : 32768;
-      const guideTemp = provider === 'google' ? 0.22 : 0.1;
-      const opts = { ...baseOpts, temperature: guideTemp, maxTokens: maxGuideTokens, timeoutMs: 180000, jsonMode: true };
+      const useFallback = !!msg.guideFallback;
+      const defaultMax = provider === 'google' ? 64000 : 32768;
+      const maxGuideTokens = msg.guideMaxTokens || defaultMax;
+
+      let guideTemp, guideThinking;
+      if (useFallback) {
+        guideTemp = provider === 'google' ? 0.22 : 0.1;
+        guideThinking = 'none';
+      } else {
+        guideTemp = msg.guideTemperature ?? (provider === 'google' ? 0.22 : 0.1);
+        guideThinking = msg.guideThinking || 'none';
+      }
+
+      const opts = {
+        ...baseOpts,
+        temperature: guideTemp,
+        maxTokens: maxGuideTokens,
+        timeoutMs: 180000,
+        jsonMode: true,
+        thinking: guideThinking
+      };
 
       const raw = await callAI(provider, model, apiKey,
         [{ role: 'user', content: transcriptText }], systemPrompt, opts);
@@ -377,8 +441,9 @@ async function handleMessage(msg) {
 
     case 'CHAT': {
       const { messages, systemPrompt } = msg;
+      const chatTemp = msg.chatTemperature ?? 0.35;
       return callAI(provider, model, apiKey, messages, systemPrompt,
-        { ...baseOpts, temperature: 0.4, timeoutMs: 120000 });
+        { ...baseOpts, temperature: chatTemp, timeoutMs: 120000 });
     }
 
     case 'FETCH_VTT': {

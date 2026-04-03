@@ -32,6 +32,8 @@
   let extractionGen = 0;
   let lastKnownHref = '';
   let lectureNavDebounce = null;
+  let focusMode = false;
+  let focusVideoContainer = null;
 
   const SIDEBAR_WIDTH = '380px';
   const SIDEBAR_MIN_WIDTH = 280;
@@ -185,8 +187,12 @@
       sidebarToggle.title = sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
       sidebarToggle.style.right = `${Math.max(w - 1, 0)}px`;
     }
-    if (!document.fullscreenElement) {
+    if (!document.fullscreenElement && !focusMode) {
       document.body.style.paddingRight = sidebarCollapsed ? '0px' : `${sidebarWidthPx}px`;
+    }
+    if (focusMode) {
+      document.body.style.paddingRight = '0px';
+      updateFocusLayout();
     }
   }
 
@@ -261,6 +267,51 @@
       document.body.style.userSelect = '';
       sidebarIframe.style.pointerEvents = '';
     });
+  }
+
+  // ─── Focus Mode ─────────────────────────────────────────────────────────────
+
+  function findVideoContainer() {
+    if (!videoEl) return null;
+    let el = videoEl.parentElement;
+    while (el && el !== document.body) {
+      const tag = el.tagName.toLowerCase();
+      const cls = (el.className || '').toString().toLowerCase();
+      const id = (el.id || '').toLowerCase();
+      if (cls.includes('player') || id.includes('player') ||
+          tag === 'section' || tag === 'main' || tag === 'article') {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return videoEl.parentElement;
+  }
+
+  function toggleFocusMode() {
+    focusMode = !focusMode;
+    if (focusMode) {
+      focusVideoContainer = findVideoContainer();
+      if (focusVideoContainer) {
+        focusVideoContainer.classList.add('eth-copilot-focus-video');
+      }
+      document.body.classList.add('eth-copilot-focus');
+    } else {
+      if (focusVideoContainer) {
+        focusVideoContainer.classList.remove('eth-copilot-focus-video');
+        focusVideoContainer.style.width = '';
+        focusVideoContainer = null;
+      }
+      document.body.classList.remove('eth-copilot-focus');
+      document.body.style.paddingRight = sidebarCollapsed ? '0px' : `${sidebarWidthPx}px`;
+    }
+    updateFocusLayout();
+    postToSidebar({ type: 'FOCUS_MODE_CHANGED', active: focusMode });
+  }
+
+  function updateFocusLayout() {
+    if (!focusMode || !focusVideoContainer) return;
+    const w = sidebarCollapsed ? 0 : sidebarWidthPx;
+    focusVideoContainer.style.width = `calc(100vw - ${w}px)`;
   }
 
   // ─── Timestamp Sync ──────────────────────────────────────────────────────────
@@ -610,6 +661,10 @@
         chrome.storage.local.get(['provider', 'model', 'apiKey', 'localBases'], settings => {
           postToSidebar({ type: 'SETTINGS', settings });
         });
+        break;
+
+      case 'TOGGLE_FOCUS':
+        toggleFocusMode();
         break;
     }
   }

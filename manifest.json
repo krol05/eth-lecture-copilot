@@ -4,7 +4,7 @@
   "version": "1.1.0",
   "description": "AI-powered lecture guide & Q&A sidebar for ETH Zürich video.ethz.ch",
 
-  "permissions": ["storage", "activeTab", "scripting"],
+  "permissions": ["storage", "unlimitedStorage", "activeTab", "scripting"],
   "host_permissions": [
     "https://video.ethz.ch/*",
     "https://dist.tobira.ethz.ch/*",
@@ -51,11 +51,17 @@
         "sidebar/sidebar.html",
         "sidebar/sidebar.css",
         "sidebar/sidebar.js",
+        "sidebar/scripts.js",
+        "sidebar/print-guide.html",
+        "sidebar/print-guide.css",
+        "sidebar/print-guide.js",
         "lib/providers-config.js",
         "lib/katex/katex.min.js",
         "lib/katex/katex.min.css",
         "lib/katex/auto-render.min.js",
-        "lib/katex/fonts/*"
+        "lib/katex/fonts/*",
+        "lib/pdfjs/pdf.min.mjs",
+        "lib/pdfjs/pdf.worker.min.mjs"
       ],
       "matches": ["https://video.ethz.ch/*"]
     }
