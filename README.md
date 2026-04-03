@@ -1,15 +1,13 @@
 # ETH Lecture Copilot
 
-**Chrome extension:** AI study guides and Q&amp;A for ETH Zürich lectures on [video.ethz.ch](https://video.ethz.ch). The sidebar stays next to the video: transcript sync, structured guides with KaTeX math, optional vision (current frame), optional course PDF scripts with local search, history, and PDF export.
-
-**Repository:** [github.com/krol05/eth-lecture-copilot](https://github.com/krol05/eth-lecture-copilot)
+**Chrome extension:** AI study guides and Q&amp;A for ETH Zürich lectures on [video.ethz.ch](https://video.ethz.ch). The sidebar sits next to the video: transcript sync, structured guides with KaTeX math, optional vision (current frame), optional course PDF scripts with local search, history, and PDF export.
 
 ---
 
 ## Table of contents
 
 1. [Overview](#overview)
-2. [Screenshots](#screenshots)
+2. [At a glance](#at-a-glance)
 3. [Features](#features)
 4. [Usage guide](#usage-guide)
 5. [Course scripts (PDFs)](#course-scripts-pdfs)
@@ -17,78 +15,21 @@
 7. [Installation](#installation)
 8. [Project structure](#project-structure)
 9. [Privacy and notes](#privacy-and-notes)
+10. [UI showcase](#ui-showcase)
 
 ---
 
 ## Overview
 
-ETH Lecture Copilot injects a sidebar into lecture pages on **video.ethz.ch**. It reads the page transcript (or accepts a manual paste), calls **your** AI provider from the browser, and builds a **time-stamped study guide** split into blocks. While you watch, the guide can follow playback or you can browse sections manually. A **Q&amp;A** tab answers questions using the transcript, the guide, optional **uploaded course scripts**, and optionally a **snapshot of the current video frame** for vision models.
+ETH Lecture Copilot injects a sidebar into lecture pages on **video.ethz.ch**. It reads the page transcript (or accepts a manual paste), calls **your** AI provider from the browser, and builds a **time-stamped study guide** split into blocks. While you watch, the guide can follow playback or you can browse sections manually. The **Q&amp;A** tab answers questions using the transcript, the guide, optional **uploaded course scripts**, and optionally a **snapshot of the current video frame** for vision models.
 
 ---
 
-## Screenshots
+## At a glance
 
-Each image is described so you know what you are looking at in the repo or on GitHub.
-
-### Guide tab: structured blocks next to the lecture
-
-![Guide tab showing a lecture block with key concepts, formulas, and definitions](docs/images/01-guide-tab.png)
-
-**Figure 1.** The **Guide** tab with a generated guide (here: 30 blocks). The current block matches the lecture segment (timestamp range under the title). Content includes **Key concepts**, **Formulas** rendered with KaTeX, and **Definitions**. Use **Copy block** for a single section. The header shows status (for example, "Guide ready") and tabs for Guide, Q&amp;A, and History.
-
-### Q&amp;A tab: questions with course scripts and vision options
-
-![Q&A tab with a German question and script-backed answer, temperature and attach frame](docs/images/02-qa-tab-scripts.png)
-
-**Figure 2.** The **Q&amp;A** tab. The user asked about content from the course script; the answer references that material. Below the chat: **Course Scripts** (collapsed header in this crop), **Temp** for answer creativity, and **Attach current frame** for models that accept images. The hint reminds you to use **vision-capable** models if you attach a frame.
-
-### Course Scripts: search method, script reliance, and help
-
-![Course Scripts section with Semantic AI selected, footprint notes, and expanded help](docs/images/03-course-scripts-semantic.png)
-
-**Figure 3.** Expanded **Course Scripts** in Q&amp;A: warning about chunking and tokens, **Search method** (here **Semantic AI**), the semantic info panel (local model, bundled ONNX footprint, embedding model download, indexing time), **Script reliance**, uploaded PDFs with chunk counts, and the **How to use scripts effectively** section (scrollable inside the sidebar).
-
-### History: past lectures and actions
-
-![History tab listing past guides with Open lecture, Load guide, PDF, Delete](docs/images/04-history-tab.png)
-
-**Figure 4.** The **History** tab lists saved sessions with title, date, block count, and Q&amp;A count. Per row: **Open lecture**, **Load guide**, **PDF** export, and **Delete** where applicable. Use this to reopen a guide without regenerating.
-
-### UI Settings: themes, text sizes, and colors
-
-![UI Settings page with live preview, text size sliders, and dark or light color pickers](docs/images/05-ui-settings.png)
-
-**Figure 5.** **UI Settings** (cog in the sidebar or popup): **Live preview** for dark or light theme, **Sidebar text sizes** (base, titles, labels, guide body, meta), **Dark theme colors** and **Light theme colors** with pickers and optional CSS fields. **Save UI settings** persists choices. Extreme values may crowd the layout on narrow sidebars.
-
-### Guide generation: options before the first run
-
-![No guide yet panel with language, block detail, block count, temperature, thinking, safe defaults](docs/images/06-generate-guide.png)
-
-**Figure 6.** The **No guide yet** state: blue info banner, **Language**, **Block detail**, **Block count** (with a token hint), **Temperature**, **Thinking** (with a dynamic tooltip that depends on your provider and model), **Use safe defaults**, **Generate Guide**, and **paste transcript manually**.
-
-### Copy full blocks: export multiple sections at once
-
-![Copy full blocks modal with checkboxes per block and Copy selected blocks](docs/images/07-copy-full-blocks.png)
-
-**Figure 7.** **Copy full blocks** opens from the Guide toolbar. Select sections; the clipboard gets titles, timestamps, key concepts, formulas (LaTeX source where applicable), definitions, and notes for each selected block.
-
-### Export full guide as PDF (print flow)
-
-![Guide toolbar with Export icon and tooltip about print and Save as PDF](docs/images/08-export-pdf-tooltip.png)
-
-**Figure 8.** The **Export** icon on the Guide toolbar. The tooltip explains that a print tab opens and you choose **Save as PDF** in the system print dialog.
-
-### Print view: printable study guide in the browser
-
-![Print-ready page with lecture title, section count, duration, and formatted blocks](docs/images/09-print-guide-page.png)
-
-**Figure 9.** The **print-guide** page: full guide title, total sections and duration, then each block with headings, times, notes, **FORMULAS**, and **DEFINITIONS** in a layout suited for printing or saving as PDF.
-
-### Guide navigation: blocks, time sync, and shortcuts
-
-![Guide navigation with block index, arrows, Current time, auto-follow checkbox, and keyboard hint](docs/images/10-guide-navigation.png)
-
-**Figure 10.** Block index (for example **14 / 36**), **Copy** and **Export** and **Regenerate** actions, **Previous** / **Next** section, **Current time** to jump to the block for the current playback time, and **Switch to timeline automatically** (auto-follow). The hint line documents **Arrow Up / Down** on the video page to change playback speed by **0.25×**.
+| **Guide** · Time-synced blocks, KaTeX, copy per section | **Q&amp;A** · Script-backed answers, temp, optional frame |
+|:---:|:---:|
+| <img src="docs/images/01-guide-tab.png" alt="Guide tab" width="400" /> | <img src="docs/images/02-qa-tab-scripts.png" alt="Q&A tab" width="400" /> |
 
 ---
 
@@ -226,3 +167,29 @@ Works with most major providers. Configure the popup or options page:
 - **API calls** originate in your browser to the provider or your machine. This project does not operate a server that sees your keys or lecture text.
 - **Course scripts** are processed locally; only selected chunks are included in prompts you send to the AI.
 - Works in Chrome, Edge, Brave, Arc, and other Chromium browsers that support Manifest V3 extensions.
+
+---
+
+## UI showcase
+
+Deeper look at the rest of the UI: scripts, history, settings, guide options, copy and export, print layout, and navigation. Same **380px** width on every shot for a uniform grid.
+
+| **3** · Course scripts | **4** · History |
+|:---:|:---:|
+| Semantic search, reliance, help | Past lectures, load, PDF, delete |
+| <img src="docs/images/03-course-scripts-semantic.png" alt="Course scripts" width="380" /> | <img src="docs/images/04-history-tab.png" alt="History" width="380" /> |
+
+| **5** · UI settings | **6** · Generate guide |
+|:---:|:---:|
+| Themes, text sizes, colors | Language, blocks, temp, thinking |
+| <img src="docs/images/05-ui-settings.png" alt="UI settings" width="380" /> | <img src="docs/images/06-generate-guide.png" alt="Generate guide" width="380" /> |
+
+| **7** · Copy full blocks | **8** · Export PDF |
+|:---:|:---:|
+| Select sections, copy to clipboard | Toolbar, print dialog, Save as PDF |
+| <img src="docs/images/07-copy-full-blocks.png" alt="Copy blocks" width="380" /> | <img src="docs/images/08-export-pdf-tooltip.png" alt="Export PDF" width="380" /> |
+
+| **9** · Print view | **10** · Navigation |
+|:---:|:---:|
+| Full guide for print or PDF | Block index, current time, auto-follow |
+| <img src="docs/images/09-print-guide-page.png" alt="Print view" width="380" /> | <img src="docs/images/10-guide-navigation.png" alt="Navigation" width="380" /> |
