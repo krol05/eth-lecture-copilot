@@ -195,7 +195,7 @@ Tests cover **pure functions** shared or mirrored from runtime code: **guide JSO
 
 ## UI showcase
 
-Deeper look at the rest of the UI: scripts, history, settings, guide options, copy and export, print layout, and navigation. Same **380px** width on every shot for a uniform grid.
+Deeper look at the rest of the UI: scripts, history, settings, guide options, copy and export, print layout, and navigation.
 
 | **3** · Course scripts | **4** · History |
 |:---:|:---:|
