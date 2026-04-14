@@ -31,6 +31,8 @@
   let speedOverlayTimeout = null;
   /** Bumped on SPA navigation so in-flight FETCH_JSON/VTT callbacks cannot complete with a stale generation. */
   let extractionGen = 0;
+  let lastSuccessfulEventId = null;
+  let blockedEventIdAfterNav = null;
   let lastKnownHref = '';
   let lectureNavDebounce = null;
   let focusMode = false;
@@ -111,6 +113,7 @@
     clearTimeout(lectureNavDebounce);
     lectureNavDebounce = setTimeout(() => {
       if (!isLecturePage()) return;
+      blockedEventIdAfterNav = lastSuccessfulEventId;
       // Invalidate any extraction still running for the previous lecture (callbacks may otherwise
       // never post a terminal status after the next initiateTranscriptExtraction bumps the gen).
       extractionGen++;
@@ -360,13 +363,24 @@
 
     const maxAttempts = 8;
     const retryDelayMs = 1500;
+    const blockedAttempts = 4;
 
     const attemptExtraction = (attempt) => {
       if (gen !== extractionGen) return;
       const urlEventId = extractEventIdFromLocation();
       const fallbackVtt = findCaptionsUrlFromPage();
       // Without a URL UUID, a .vtt from resource timing can still be the previous lecture's track.
-      if (!urlEventId && fallbackVtt) return fetchAndPublishVtt(fallbackVtt, null, gen);
+      if (!urlEventId && fallbackVtt) {
+        const fallbackEventId = extractEventIdFromVttUrl(fallbackVtt);
+        const isBlockedOldEvent =
+          blockedEventIdAfterNav &&
+          attempt < blockedAttempts &&
+          fallbackEventId &&
+          fallbackEventId === blockedEventIdAfterNav;
+        if (!isBlockedOldEvent) {
+          return fetchAndPublishVtt(fallbackVtt, fallbackEventId, gen);
+        }
+      }
 
       const eventCandidates = extractCandidateEventIds();
       if (!eventCandidates.length) {
@@ -458,6 +472,8 @@
         vttUrl,
         videoDuration: videoEl?.duration || 0
       });
+      lastSuccessfulEventId = eventId || extractEventIdFromVttUrl(vttUrl) || null;
+      blockedEventIdAfterNav = null;
     });
   }
 
@@ -490,6 +506,12 @@
   function extractEventIdFromLocation() {
     const m = location.href.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
     return m ? m[0] : null;
+  }
+
+  function extractEventIdFromVttUrl(vttUrl) {
+    if (!vttUrl) return null;
+    const m = String(vttUrl).match(/engage-player\/([0-9a-f-]{36})\//i);
+    return m ? m[1] : null;
   }
 
   function extractCandidateEventIds() {
