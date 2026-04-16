@@ -543,7 +543,7 @@
         Depending on block detail, block count, and API provider, it might take longer.
       </div>
       <div class="guide-timeout-actions">
-        <button id="guide-timeout-retry" class="secondary-btn">Retry</button>
+        <button id="guide-timeout-retry" class="primary-btn">Retry</button>
         <button id="guide-timeout-keep" class="primary-btn">Keep going</button>
       </div>
     `;
