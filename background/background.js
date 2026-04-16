@@ -115,7 +115,7 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
 
   const resp = await fetch(`${normalizedBase}/chat/completions`, {
     method: 'POST',
-    ...(maybeTimeoutSignal(opts.timeoutMs ?? 120000) ? { signal: maybeTimeoutSignal(opts.timeoutMs ?? 120000) } : {}),
+    ...(maybeTimeoutSignal(opts.timeoutMs) ? { signal: maybeTimeoutSignal(opts.timeoutMs) } : {}),
     headers: {
       'Content-Type': 'application/json',
       ...authHeader,
@@ -169,7 +169,7 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
 
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    ...(maybeTimeoutSignal(opts.timeoutMs ?? 120000) ? { signal: maybeTimeoutSignal(opts.timeoutMs ?? 120000) } : {}),
+    ...(maybeTimeoutSignal(opts.timeoutMs) ? { signal: maybeTimeoutSignal(opts.timeoutMs) } : {}),
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
@@ -225,7 +225,7 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
 
   const resp = await fetch(url, {
     method: 'POST',
-    ...(maybeTimeoutSignal(opts.timeoutMs ?? 120000) ? { signal: maybeTimeoutSignal(opts.timeoutMs ?? 120000) } : {}),
+    ...(maybeTimeoutSignal(opts.timeoutMs) ? { signal: maybeTimeoutSignal(opts.timeoutMs) } : {}),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
