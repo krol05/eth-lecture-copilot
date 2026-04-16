@@ -170,6 +170,39 @@ body {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.guide-timeout-dialog {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 3000;
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+}
+
+.guide-timeout-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--warning);
+}
+
+.guide-timeout-text {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.guide-timeout-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ─── Tabs ───────────────────────────────────────────────────────────────── */
 .tab-bar {
   display: flex;

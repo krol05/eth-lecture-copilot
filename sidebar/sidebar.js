@@ -451,19 +451,90 @@
   function apiRequest(payload) {
     return new Promise((resolve, reject) => {
       const id = makeRequestId();
-      const timeoutMs = payload?.type === 'GENERATE_GUIDE' ? 180000 : 120000;
-      const timer = setTimeout(() => {
-        delete pendingRequests[id];
-        reject(new Error('Request timed out. Please try again or switch model/provider.'));
-      }, timeoutMs);
+      const isGuideRequest = payload?.type === 'GENERATE_GUIDE';
+      let settled = false;
+      let timeoutTimer = null;
+      let guideWarnTimer = null;
+      let closeTimeoutDialog = null;
+
+      const cleanup = () => {
+        settled = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (guideWarnTimer) clearTimeout(guideWarnTimer);
+        if (closeTimeoutDialog) closeTimeoutDialog();
+      };
+
+      if (isGuideRequest) {
+        // Inform the user this is now server/provider-side work and can take a while.
+        setStatus('loading', 'Generating guide… Request sent to provider. Waiting for response…');
+        guideWarnTimer = setTimeout(() => {
+          if (settled) return;
+          closeTimeoutDialog = showGuideTimeoutDialog({
+            onRetry: () => {
+              if (settled) return;
+              delete pendingRequests[id];
+              cleanup();
+              reject(new Error('Retry requested by user.'));
+            },
+            onKeepGoing: () => {
+              if (settled) return;
+              setStatus('loading', 'Guide generation still running on provider…');
+            }
+          });
+        }, 180000);
+      } else {
+        timeoutTimer = setTimeout(() => {
+          if (settled) return;
+          delete pendingRequests[id];
+          cleanup();
+          reject(new Error('Request timed out. Please try again or switch model/provider.'));
+        }, 120000);
+      }
+
       pendingRequests[id] = resolve;
       const originalResolve = pendingRequests[id];
       pendingRequests[id] = (data) => {
-        clearTimeout(timer);
+        cleanup();
         originalResolve(data);
       };
       postToContent({ type: 'API_REQUEST', requestId: id, payload });
     });
+  }
+
+  function showGuideTimeoutDialog({ onRetry, onKeepGoing }) {
+    const existing = document.getElementById('guide-timeout-dialog');
+    if (existing) existing.remove();
+
+    const dialog = document.createElement('div');
+    dialog.id = 'guide-timeout-dialog';
+    dialog.className = 'guide-timeout-dialog';
+    dialog.innerHTML = `
+      <div class="guide-timeout-title">Possible timeout detected</div>
+      <div class="guide-timeout-text">
+        Guide generation ongoing for 180s. Do you want to retry or keep going?
+        Depending on block detail, block count, and API provider, it might take longer.
+      </div>
+      <div class="guide-timeout-actions">
+        <button id="guide-timeout-retry" class="secondary-btn">Retry</button>
+        <button id="guide-timeout-keep" class="primary-btn">Keep going</button>
+      </div>
+    `;
+    document.body.appendChild(dialog);
+
+    const close = () => {
+      if (dialog.parentNode) dialog.parentNode.removeChild(dialog);
+    };
+
+    dialog.querySelector('#guide-timeout-retry')?.addEventListener('click', () => {
+      close();
+      onRetry?.();
+    });
+    dialog.querySelector('#guide-timeout-keep')?.addEventListener('click', () => {
+      close();
+      onKeepGoing?.();
+    });
+
+    return close;
   }
 
   function captureFrame() {
