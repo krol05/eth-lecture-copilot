@@ -23,6 +23,7 @@
   let qaMessages = [];        // conversation history
   let isGenerating = false;
   let isChatting = false;
+  let activeGuideRequestId = null;
   let requestIdCounter = 0;
   const pendingRequests = {};
   let currentLectureUrl = null;
@@ -436,6 +437,10 @@
           delete pendingRequests[msg.requestId];
         }
         break;
+
+      case 'API_PROGRESS':
+        handleApiProgress(msg);
+        break;
     }
   }
 
@@ -465,14 +470,16 @@
       };
 
       if (isGuideRequest) {
+        activeGuideRequestId = id;
         // Inform the user this is now server/provider-side work and can take a while.
-        setStatus('loading', 'Generating guide… Request sent to provider. Waiting for response…');
+        setStatus('loading', 'Generating guide… Request sent from extension backend.');
         guideWarnTimer = setTimeout(() => {
           if (settled) return;
           closeTimeoutDialog = showGuideTimeoutDialog({
             onRetry: () => {
               if (settled) return;
               delete pendingRequests[id];
+              if (activeGuideRequestId === id) activeGuideRequestId = null;
               cleanup();
               reject(new Error('Retry requested by user.'));
             },
@@ -486,6 +493,7 @@
         timeoutTimer = setTimeout(() => {
           if (settled) return;
           delete pendingRequests[id];
+          if (activeGuideRequestId === id) activeGuideRequestId = null;
           cleanup();
           reject(new Error('Request timed out. Please try again or switch model/provider.'));
         }, 120000);
@@ -495,10 +503,30 @@
       const originalResolve = pendingRequests[id];
       pendingRequests[id] = (data) => {
         cleanup();
+        if (isGuideRequest && activeGuideRequestId === id) activeGuideRequestId = null;
         originalResolve(data);
       };
       postToContent({ type: 'API_REQUEST', requestId: id, payload });
     });
+  }
+
+  function handleApiProgress(msg) {
+    if (!isGenerating) return;
+    if (!msg?.requestId || msg.requestId !== activeGuideRequestId) return;
+    switch (msg.stage) {
+      case 'queued':
+        setStatus('loading', 'Guide request queued in extension backend…');
+        break;
+      case 'request_sent':
+        setStatus('loading', 'Request sent to API provider. Waiting for provider response…');
+        break;
+      case 'provider_responding':
+        setStatus('loading', 'Provider started responding… finalizing guide format.');
+        break;
+      case 'provider_finished':
+        setStatus('loading', 'Provider response received. Parsing guide…');
+        break;
+    }
   }
 
   function showGuideTimeoutDialog({ onRetry, onKeepGoing }) {

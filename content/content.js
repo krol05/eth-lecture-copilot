@@ -72,6 +72,15 @@
         chrome.storage.local.get(['provider', 'model', 'apiKey', 'localBases'], settings => {
           postToSidebar({ type: 'SETTINGS', settings });
         });
+        return;
+      }
+      if (msg.type === 'API_PROGRESS' && msg.requestId) {
+        postToSidebar({
+          type: 'API_PROGRESS',
+          requestId: msg.requestId,
+          stage: msg.stage || '',
+          detail: msg.detail || ''
+        });
       }
     });
   }
@@ -800,7 +809,7 @@
 
   function forwardApiRequest(payload, requestId) {
     console.log('[ETH Copilot] forwardApiRequest →', payload.type, requestId);
-    chrome.runtime.sendMessage(payload, response => {
+    chrome.runtime.sendMessage({ ...payload, _copilotRequestId: requestId }, response => {
       const err = chrome.runtime.lastError?.message;
       if (err) {
         console.error('[ETH Copilot] sendMessage error:', err);

@@ -63,8 +63,20 @@ function maybeTimeoutSignal(timeoutMs) {
     : undefined;
 }
 
+function emitApiProgress(sender, requestId, stage, detail = '') {
+  const tabId = sender?.tab?.id;
+  if (!tabId || !requestId) return;
+  chrome.tabs.sendMessage(tabId, {
+    type: 'API_PROGRESS',
+    requestId,
+    stage,
+    detail
+  }).catch(() => {});
+}
+
 async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts = {}) {
   const normalizedBase = normalizeOAIBase(base);
+  opts.onProgress?.('request_sent', normalizedBase);
   const oaiMessages = messages.map(m => {
     if (m.role === 'user' && m.imageBase64) {
       return {
@@ -111,6 +123,7 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
     },
     body: JSON.stringify(body)
   });
+  opts.onProgress?.('provider_responding', String(resp.status));
 
   if (!resp.ok) throw new Error(`${normalizedBase} → ${resp.status}: ${await resp.text()}`);
   const d = await resp.json();
@@ -120,6 +133,7 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
 // ─── Anthropic handler ────────────────────────────────────────────────────────
 
 async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
+  opts.onProgress?.('request_sent', 'anthropic');
   const anthropicMessages = messages.map(m => {
     if (m.role === 'user' && m.imageBase64) {
       return {
@@ -163,6 +177,7 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
     },
     body: JSON.stringify(body)
   });
+  opts.onProgress?.('provider_responding', String(resp.status));
 
   if (!resp.ok) throw new Error(`Anthropic → ${resp.status}: ${await resp.text()}`);
   const d = await resp.json();
@@ -176,6 +191,7 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
 // ─── Google Gemini handler ────────────────────────────────────────────────────
 
 async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
+  opts.onProgress?.('request_sent', 'google');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const contents = messages.map(m => {
@@ -213,6 +229,7 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
+  opts.onProgress?.('provider_responding', String(resp.status));
 
   if (!resp.ok) throw new Error(`Google → ${resp.status}: ${await resp.text()}`);
   const d = await resp.json();
@@ -267,14 +284,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  handleMessage(message).then(
+  const requestId = message?._copilotRequestId || null;
+  const progress = (stage, detail = '') => emitApiProgress(sender, requestId, stage, detail);
+  handleMessage(message, progress).then(
     result => sendResponse({ success: true, data: result }),
     err    => sendResponse({ success: false, error: err.message })
   );
   return true;
 });
 
-async function handleMessage(msg) {
+async function handleMessage(msg, progress = () => {}) {
   if (msg.type === 'PING') return 'pong';
 
   const { type, provider, apiKey, localBase } = msg;
@@ -305,6 +324,7 @@ async function handleMessage(msg) {
     }
 
     case 'GENERATE_GUIDE': {
+      progress('queued', 'Guide request received');
       const { transcriptText, systemPrompt } = msg;
       const useFallback = !!msg.guideFallback;
       const defaultMax = provider === 'google' ? 64000 : 32768;
@@ -325,12 +345,13 @@ async function handleMessage(msg) {
         maxTokens: maxGuideTokens,
         timeoutMs: null,
         jsonMode: true,
+        onProgress: progress,
         thinking: guideThinking
       };
 
       const raw = await callAI(provider, model, apiKey,
         [{ role: 'user', content: transcriptText }], systemPrompt, opts);
-
+      progress('provider_finished', 'Response body received');
       return parseGuideResponse(raw);
     }
 
