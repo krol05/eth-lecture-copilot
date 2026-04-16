@@ -57,6 +57,12 @@ function normalizeOAIBase(base) {
   return raw.replace(/\/+$/, '');
 }
 
+function maybeTimeoutSignal(timeoutMs) {
+  return Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? AbortSignal.timeout(timeoutMs)
+    : undefined;
+}
+
 async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts = {}) {
   const normalizedBase = normalizeOAIBase(base);
   const oaiMessages = messages.map(m => {
@@ -97,7 +103,7 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
 
   const resp = await fetch(`${normalizedBase}/chat/completions`, {
     method: 'POST',
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 120000),
+    ...(maybeTimeoutSignal(opts.timeoutMs ?? 120000) ? { signal: maybeTimeoutSignal(opts.timeoutMs ?? 120000) } : {}),
     headers: {
       'Content-Type': 'application/json',
       ...authHeader,
@@ -149,7 +155,7 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
 
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 120000),
+    ...(maybeTimeoutSignal(opts.timeoutMs ?? 120000) ? { signal: maybeTimeoutSignal(opts.timeoutMs ?? 120000) } : {}),
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
@@ -203,7 +209,7 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
 
   const resp = await fetch(url, {
     method: 'POST',
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 120000),
+    ...(maybeTimeoutSignal(opts.timeoutMs ?? 120000) ? { signal: maybeTimeoutSignal(opts.timeoutMs ?? 120000) } : {}),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
@@ -317,7 +323,7 @@ async function handleMessage(msg) {
         ...baseOpts,
         temperature: guideTemp,
         maxTokens: maxGuideTokens,
-        timeoutMs: 180000,
+        timeoutMs: null,
         jsonMode: true,
         thinking: guideThinking
       };
