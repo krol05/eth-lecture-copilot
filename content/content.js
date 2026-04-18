@@ -33,6 +33,7 @@
   let extractionGen = 0;
   let lastSuccessfulEventId = null;
   let blockedEventIdAfterNav = null;
+  let lectureNavPerfStart = 0;
   let lastKnownHref = '';
   let lectureNavDebounce = null;
   let focusMode = false;
@@ -50,6 +51,7 @@
 
     // Wait for the video element to appear (Paella loads dynamically)
     lastKnownHref = location.href;
+    lectureNavPerfStart = getPerfNow();
     waitForVideo().then(video => {
       videoEl = video;
       injectSidebar();
@@ -123,6 +125,7 @@
     lectureNavDebounce = setTimeout(() => {
       if (!isLecturePage()) return;
       blockedEventIdAfterNav = lastSuccessfulEventId;
+      lectureNavPerfStart = getPerfNow();
       // Invalidate any extraction still running for the previous lecture (callbacks may otherwise
       // never post a terminal status after the next initiateTranscriptExtraction bumps the gen).
       extractionGen++;
@@ -145,7 +148,8 @@
     return new Promise(resolve => {
       const t0 = Date.now();
       const tick = () => {
-        if (findCaptionsUrlFromPage()) return resolve();
+        // During SPA transitions, only treat very recent page signals as "ready" to avoid stale carry-over.
+        if (findCaptionsUrlFromPage({ recentOnly: true })) return resolve();
         if (extractCandidateEventIds().length) return resolve();
         if (Date.now() - t0 >= timeoutMs) return resolve();
         setTimeout(tick, stepMs);
@@ -377,7 +381,8 @@
     const attemptExtraction = (attempt) => {
       if (gen !== extractionGen) return;
       const urlEventId = extractEventIdFromLocation();
-      const fallbackVtt = findCaptionsUrlFromPage();
+      const recentOnly = attempt < blockedAttempts;
+      const fallbackVtt = findCaptionsUrlFromPage({ recentOnly });
       // Without a URL UUID, a .vtt from resource timing can still be the previous lecture's track.
       if (!urlEventId && fallbackVtt) {
         const fallbackEventId = extractEventIdFromVttUrl(fallbackVtt);
@@ -391,7 +396,11 @@
         }
       }
 
-      const eventCandidates = extractCandidateEventIds();
+      const rawCandidates = extractCandidateEventIds();
+      const eventCandidates =
+        (blockedEventIdAfterNav && attempt < blockedAttempts)
+          ? rawCandidates.filter(id => id !== blockedEventIdAfterNav)
+          : rawCandidates;
       if (!eventCandidates.length) {
         if (attempt < maxAttempts - 1) {
           setTimeout(() => attemptExtraction(attempt + 1), retryDelayMs);
@@ -562,7 +571,11 @@
     return ids;
   }
 
-  function findCaptionsUrlFromPage() {
+  function getPerfNow() {
+    try { return performance.now(); } catch (_) { return 0; }
+  }
+
+  function findCaptionsUrlFromPage({ recentOnly = false } = {}) {
     const selectors = [
       'track[src*=".vtt"]',
       'source[src*=".vtt"]',
@@ -578,11 +591,18 @@
     // Resource timing often contains the exact VTT URL once player initialized
     try {
       const entries = performance.getEntriesByType('resource') || [];
-      for (const entry of entries) {
+      const minStart = lectureNavPerfStart > 0 ? Math.max(0, lectureNavPerfStart - 250) : 0;
+      // Iterate from newest to oldest; the oldest entry is often from the previous lecture.
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const entry = entries[i];
         const name = entry?.name || '';
+        const startTime = Number(entry?.startTime || 0);
+        if (recentOnly && startTime < minStart) continue;
         if (/\.vtt(\?|$)/i.test(name)) return name;
       }
     } catch (_) {}
+
+    if (recentOnly) return null;
 
     const html = document.documentElement?.innerHTML || '';
     const direct = html.match(/https:\/\/dist\.tobira\.ethz\.ch\/[^"'\\\s]+\.vtt(?:\?[^"'\\\s]*)?/i);
