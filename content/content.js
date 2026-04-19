@@ -17,13 +17,19 @@
 (function () {
   'use strict';
 
+  const SIDEBAR_MIN_WIDTH = 280;
+  const SIDEBAR_MAX_WIDTH = 560;
+  const SIDEBAR_DEFAULT_WIDTH = 380;
+  /** Minimum horizontal space left for the page (video) when the sidebar is open. */
+  const SIDEBAR_MIN_VIDEO_RESERVE_PX = 160;
+
   // ─── State ──────────────────────────────────────────────────────────────────
   let sidebarIframe = null;
   let sidebarToggle = null;
   let sidebarResizeHandle = null;
   let sidebarVisible = false;
   let sidebarCollapsed = false;
-  let sidebarWidthPx = 380;
+  let sidebarWidthPx = SIDEBAR_DEFAULT_WIDTH;
   let videoEl = null;
   let fsVideoTarget = null;
   let timestampInterval = null;
@@ -38,10 +44,6 @@
   let lectureNavDebounce = null;
   let focusMode = false;
   let focusVideoContainer = null;
-
-  const SIDEBAR_WIDTH = '380px';
-  const SIDEBAR_MIN_WIDTH = 280;
-  const SIDEBAR_MAX_WIDTH = 560;
 
   // ─── Entry Point ─────────────────────────────────────────────────────────────
 
@@ -66,7 +68,14 @@
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    window.addEventListener('resize', () => updateSidebarWidths());
+    const onViewportChanged = () => {
+      clampSidebarWidthToViewport();
+      updateSidebarWidths();
+    };
+    window.addEventListener('resize', onViewportChanged);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', onViewportChanged);
+    }
 
     chrome.runtime.onMessage.addListener((msg) => {
       if (!msg?.type) return;
@@ -178,6 +187,21 @@
 
   // ─── Sidebar Injection ───────────────────────────────────────────────────────
 
+  function getEffectiveSidebarMaxWidth() {
+    const vw =
+      (typeof window.visualViewport !== 'undefined' && window.visualViewport?.width) ||
+      window.innerWidth;
+    return Math.min(
+      SIDEBAR_MAX_WIDTH,
+      Math.max(SIDEBAR_MIN_WIDTH, vw - SIDEBAR_MIN_VIDEO_RESERVE_PX)
+    );
+  }
+
+  function clampSidebarWidthToViewport() {
+    const cap = getEffectiveSidebarMaxWidth();
+    sidebarWidthPx = Math.max(SIDEBAR_MIN_WIDTH, Math.min(sidebarWidthPx, cap));
+  }
+
   function injectSidebar() {
     if (sidebarIframe) return;
 
@@ -216,6 +240,7 @@
 
   function updateSidebarWidths() {
     if (!sidebarIframe) return;
+    clampSidebarWidthToViewport();
     const w = sidebarCollapsed ? 0 : sidebarWidthPx;
     sidebarIframe.style.width = `${w}px`;
     sidebarIframe.style.minWidth = `${w}px`;
@@ -294,10 +319,8 @@
     document.addEventListener('mousemove', (ev) => {
       if (!dragging) return;
       ev.preventDefault();
-      sidebarWidthPx = Math.max(
-        SIDEBAR_MIN_WIDTH,
-        Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - ev.clientX)
-      );
+      const cap = getEffectiveSidebarMaxWidth();
+      sidebarWidthPx = Math.max(SIDEBAR_MIN_WIDTH, Math.min(cap, window.innerWidth - ev.clientX));
       updateSidebarWidths();
     });
 
