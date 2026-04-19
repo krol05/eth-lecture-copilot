@@ -359,7 +359,15 @@
       </div>
     </div>
 
-    <div class="qa-input-area">
+    <div class="qa-footer-stack">
+      <div id="qa-reply-ready-toast" class="qa-reply-ready-toast" hidden aria-live="polite">
+        <button type="button" id="qa-reply-ready-toast-action" class="qa-reply-ready-toast-action">
+          <span id="qa-reply-ready-toast-title" class="qa-reply-ready-toast-title">Assistant reply ready</span>
+          <span id="qa-reply-ready-toast-sub" class="qa-reply-ready-toast-sub">Click to jump to the start of the reply</span>
+        </button>
+        <button type="button" id="qa-reply-ready-toast-dismiss" class="qa-reply-ready-toast-dismiss" title="Dismiss" aria-label="Dismiss">×</button>
+      </div>
+      <div class="qa-input-area">
       <div class="qa-temp-row">
         <label class="qa-temp-label" for="qa-temp-slider">Temp
           <span class="setting-hint" data-tip="0.20-0.40 = focused, factual answers (recommended: 0.35)&#10;0.50-0.70 = more natural, conversational&#10;0.80+ = creative but may stray from lecture content">?</span>
@@ -388,6 +396,7 @@
             <polygon points="22 2 15 22 11 13 2 9 22 2"/>
           </svg>
         </button>
+      </div>
       </div>
     </div>
   </div>
