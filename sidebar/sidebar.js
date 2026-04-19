@@ -21,6 +21,8 @@
   let settings = null;        // { provider, model, apiKey }
   let currentBlockIndex = -1;
   let qaMessages = [];        // conversation history
+  /** When set, Q&A “reply ready” toast scroll target (assistant message element). */
+  let qaReplyReadyTargetEl = null;
   let isGenerating = false;
   let isChatting = false;
   let activeGuideRequestId = null;
@@ -73,6 +75,11 @@
   const genFallbackCb  = document.getElementById('gen-fallback-cb');
   const qaTempSlider   = document.getElementById('qa-temp-slider');
   const qaTempValue    = document.getElementById('qa-temp-value');
+  const qaReplyReadyToast = document.getElementById('qa-reply-ready-toast');
+  const qaReplyReadyToastAction = document.getElementById('qa-reply-ready-toast-action');
+  const qaReplyReadyToastDismiss = document.getElementById('qa-reply-ready-toast-dismiss');
+  const qaReplyReadyToastTitle = document.getElementById('qa-reply-ready-toast-title');
+  const qaReplyReadyToastSub = document.getElementById('qa-reply-ready-toast-sub');
 
   // Script panel refs
   const scriptPanel       = document.getElementById('script-panel');
@@ -171,6 +178,18 @@
     });
     qaSend.addEventListener('click', sendQaMessage);
 
+    qaReplyReadyToastAction?.addEventListener('click', () => {
+      if (qaReplyReadyTargetEl && qaReplyReadyTargetEl.isConnected) {
+        qaScrollMessagesToShowElementTop(qaReplyReadyTargetEl);
+      }
+      hideQaReplyReadyToast();
+    });
+    qaReplyReadyToastDismiss?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideQaReplyReadyToast();
+    });
+
     attachCb.addEventListener('change', () => {
       framePreview.style.display = attachCb.checked ? 'inline' : 'none';
     });
@@ -236,6 +255,7 @@
     setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
     showGuideContent();
     qaMessages_el.innerHTML = '';
+    hideQaReplyReadyToast();
     if (qaMessages.length) {
       restoreChatUI();
     } else {
@@ -305,16 +325,19 @@
     generateBtn.querySelector('.btn-text').textContent = 'Generate Guide';
     generateBtn.querySelector('.btn-spinner').style.display = 'none';
     qaMessages_el.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture. I have the full transcript and guide as context.</p></div>';
+    hideQaReplyReadyToast();
     const manualSection = document.getElementById('manual-paste-section');
     if (manualSection) manualSection.remove();
   }
 
   function restoreChatUI() {
+    hideQaReplyReadyToast();
     const welcome = qaMessages_el.querySelector('.qa-welcome');
     if (welcome) welcome.remove();
     for (const m of qaMessages) {
-      appendChatMsg(m.role, m.content, !!m.imageBase64);
+      appendChatMsg(m.role, m.content, !!m.imageBase64, 'none');
     }
+    qaMessages_el.scrollTop = qaMessages_el.scrollHeight;
   }
 
   /**
@@ -764,6 +787,7 @@
     generateError.style.display = 'none';
     chrome.storage?.local?.remove(['currentGuide', 'currentQaMessages']);
     qaMessages_el.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture. I have the full transcript and guide as context.</p></div>';
+    hideQaReplyReadyToast();
     const manualSection = document.getElementById('manual-paste-section');
     if (manualSection) manualSection.remove();
 
@@ -1432,6 +1456,7 @@ Now process the following transcript:`;
     const text = qaInput.value.trim();
     if (!text || isChatting || !hasUsableSettings() || !transcript?.text) return;
 
+    hideQaReplyReadyToast();
     isChatting = true;
     qaSend.disabled = true;
 
@@ -1574,7 +1599,63 @@ ${windowText}
 ${guideBlocksStr}${scriptContext}`;
   }
 
-  function appendChatMsg(role, content, hasFrame) {
+  /** If the user is within this many px of the bottom, new assistant replies align to the start of the bubble instead of jumping to the end. */
+  const QA_SCROLL_BOTTOM_THRESHOLD_PX = 80;
+
+  function qaIsFollowingLatest() {
+    const root = qaMessages_el;
+    if (!root) return true;
+    return root.scrollHeight - root.scrollTop - root.clientHeight <= QA_SCROLL_BOTTOM_THRESHOLD_PX;
+  }
+
+  function qaScrollToBottom() {
+    if (qaMessages_el) qaMessages_el.scrollTop = qaMessages_el.scrollHeight;
+  }
+
+  /**
+   * Align the top of `el` with the top of the Q&A message list viewport.
+   * Do not use scrollIntoView() here: it can scroll ancestor containers or the
+   * host page and push the tab bar off-screen in the extension iframe.
+   */
+  function qaScrollMessagesToShowElementTop(el) {
+    const root = qaMessages_el;
+    if (!root || !el) return;
+    const rootRect = root.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const delta = elRect.top - rootRect.top;
+    root.scrollTop = Math.max(0, root.scrollTop + delta);
+  }
+
+  function hideQaReplyReadyToast() {
+    qaReplyReadyTargetEl = null;
+    if (qaReplyReadyToast) qaReplyReadyToast.hidden = true;
+  }
+
+  /**
+   * Shown when an assistant message arrives while the user is scrolled up
+   * (not “following” the bottom). Uses theme / UI font variables via CSS.
+   */
+  function showQaReplyReadyToast(targetDiv, content) {
+    qaReplyReadyTargetEl = targetDiv;
+    if (!qaReplyReadyToast) return;
+    const isErr = typeof content === 'string' && content.trim().startsWith('⚠');
+    if (qaReplyReadyToastTitle) {
+      qaReplyReadyToastTitle.textContent = isErr
+        ? 'Reply finished with an error'
+        : 'Assistant reply ready';
+    }
+    if (qaReplyReadyToastSub) {
+      qaReplyReadyToastSub.textContent = isErr
+        ? 'Click to view the message'
+        : 'Click to jump to the start of the reply';
+    }
+    qaReplyReadyToast.hidden = false;
+  }
+
+  function appendChatMsg(role, content, hasFrame, scrollMode) {
+    const wasFollowing = qaIsFollowingLatest();
+    scrollMode = scrollMode || 'default';
+
     const div = document.createElement('div');
     div.className = `chat-msg ${role}`;
 
@@ -1599,11 +1680,21 @@ ${guideBlocksStr}${scriptContext}`;
       });
     }
 
-    qaMessages_el.scrollTop = qaMessages_el.scrollHeight;
+    if (scrollMode === 'none') return div;
+
+    if (role === 'user') {
+      qaScrollToBottom();
+    } else if (wasFollowing) {
+      hideQaReplyReadyToast();
+      qaScrollMessagesToShowElementTop(div);
+    } else if (scrollMode === 'default') {
+      showQaReplyReadyToast(div, content);
+    }
     return div;
   }
 
   function appendTypingIndicator() {
+    const wasFollowing = qaIsFollowingLatest();
     const div = document.createElement('div');
     div.className = 'chat-msg assistant';
     div.innerHTML = `<div class="typing-indicator">
@@ -1612,7 +1703,7 @@ ${guideBlocksStr}${scriptContext}`;
       <div class="typing-dot"></div>
     </div>`;
     qaMessages_el.appendChild(div);
-    qaMessages_el.scrollTop = qaMessages_el.scrollHeight;
+    if (wasFollowing) qaScrollToBottom();
     return div;
   }
 
@@ -1728,6 +1819,7 @@ ${guideBlocksStr}${scriptContext}`;
   // ─── Tab Switching ────────────────────────────────────────────────────────
 
   function switchTab(tabName) {
+    if (tabName !== 'qa') hideQaReplyReadyToast();
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
     if (tabName === 'history') loadHistory();
