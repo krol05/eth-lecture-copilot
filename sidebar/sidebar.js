@@ -1085,7 +1085,7 @@ Now process the following transcript:`;
       html += `<div>
         <div class="section-label">Key Concepts</div>
         <ul class="concepts-list">
-          ${block.key_concepts.map(c => `<li>${escHtml(c)}</li>`).join('')}
+          ${block.key_concepts.map(c => `<li><span class="concept-text">${escHtml(unescapeMathDelimiters(c))}</span></li>`).join('')}
         </ul>
       </div>`;
     }
@@ -1109,8 +1109,8 @@ Now process the following transcript:`;
         <div class="section-label">Definitions</div>
         ${block.definitions.map(d => `
           <div class="definition-item">
-            <div class="definition-term">${escHtml(d.term)}</div>
-            <div class="definition-text">${escHtml(d.definition)}</div>
+            <div class="definition-term"><span class="definition-term-text">${escHtml(unescapeMathDelimiters(d.term))}</span></div>
+            <div class="definition-text"><span class="definition-body-text">${escHtml(unescapeMathDelimiters(d.definition))}</span></div>
           </div>
         `).join('')}
       </div>`;
@@ -1128,7 +1128,7 @@ Now process the following transcript:`;
             </svg>
             <span class="notes-icon-label">Note</span>
           </div>
-          <div class="notes-text">${escHtml(block.notes)}</div>
+          <div class="notes-text"><span class="notes-body-text">${escHtml(unescapeMathDelimiters(block.notes))}</span></div>
         </div>
       `;
     }
@@ -1137,6 +1137,41 @@ Now process the following transcript:`;
     guideBlock.style.animation = 'none';
     void guideBlock.offsetWidth;
     guideBlock.style.animation = '';
+
+    if (typeof renderMathInElement === 'function') {
+      guideBlock.querySelectorAll('.concepts-list .concept-text').forEach(el => {
+        renderMathInElement(el, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          throwOnError: false,
+          trust: false
+        });
+      });
+
+      guideBlock.querySelectorAll('.definition-term-text, .definition-body-text').forEach(el => {
+        renderMathInElement(el, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          throwOnError: false,
+          trust: false
+        });
+      });
+
+      guideBlock.querySelectorAll('.notes-body-text').forEach(el => {
+        renderMathInElement(el, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          throwOnError: false,
+          trust: false
+        });
+      });
+    }
 
     // Render KaTeX formulas
     guideBlock.querySelectorAll('.formula-render[data-latex]').forEach(el => {
@@ -1867,6 +1902,10 @@ ${guideBlocksStr}${scriptContext}`;
     return String(str || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  function unescapeMathDelimiters(str) {
+    return String(str || '').replace(/\\\$/g, '$');
+  }
+
   function fmtSec(s) {
     s = Math.floor(s || 0);
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -1879,6 +1918,22 @@ ${guideBlocksStr}${scriptContext}`;
     } catch (e) {
       return `<span class="formula-fallback">${escHtml(latex)}</span>`;
     }
+  }
+
+  function renderInlineLatexForExport(text) {
+    return unescapeMathDelimiters(text)
+      .split(/(\$[^$\n]+\$)/g)
+      .map(part => {
+        if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
+          try {
+            return katex.renderToString(part.slice(1, -1), { displayMode: false, throwOnError: false, trust: false });
+          } catch (e) {
+            return escHtml(part);
+          }
+        }
+        return escHtml(part);
+      })
+      .join('');
   }
 
   function buildExportBlockHtml(block) {
@@ -1894,7 +1949,7 @@ ${guideBlocksStr}${scriptContext}`;
       html += `<div>
         <div class="section-label">Key Concepts</div>
         <ul class="concepts-list">
-          ${block.key_concepts.map(c => `<li>${escHtml(c)}</li>`).join('')}
+          ${block.key_concepts.map(c => `<li><span class="concept-text">${renderInlineLatexForExport(c)}</span></li>`).join('')}
         </ul>
       </div>`;
     }
@@ -1916,8 +1971,8 @@ ${guideBlocksStr}${scriptContext}`;
         <div class="section-label">Definitions</div>
         ${block.definitions.map(d => `
           <div class="definition-item">
-            <div class="definition-term">${escHtml(d.term)}</div>
-            <div class="definition-text">${escHtml(d.definition)}</div>
+            <div class="definition-term">${renderInlineLatexForExport(d.term)}</div>
+            <div class="definition-text">${renderInlineLatexForExport(d.definition)}</div>
           </div>
         `).join('')}
       </div>`;
@@ -1927,7 +1982,7 @@ ${guideBlocksStr}${scriptContext}`;
       html += `
         <div class="notes-box">
           <div class="notes-icon-label">Note</div>
-          <div class="notes-text">${escHtml(block.notes)}</div>
+          <div class="notes-text">${renderInlineLatexForExport(block.notes)}</div>
         </div>
       `;
     }

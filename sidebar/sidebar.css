@@ -773,6 +773,10 @@ body {
   line-height: 1.5;
 }
 
+.concepts-list .concept-text {
+  min-width: 0;
+}
+
 .concepts-list li::before {
   content: '▸';
   color: var(--accent);
