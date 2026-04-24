@@ -1275,6 +1275,37 @@ body {
 
 .chat-bubble p { margin: 0 0 6px; }
 .chat-bubble p:last-child { margin-bottom: 0; }
+.chat-bubble h1,
+.chat-bubble h2,
+.chat-bubble h3,
+.chat-bubble h4 {
+  margin: 0 0 6px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+.chat-bubble h1 { font-size: 1.28em; }
+.chat-bubble h2 { font-size: 1.18em; }
+.chat-bubble h3 { font-size: 1.1em; }
+.chat-bubble h4 { font-size: 1.03em; }
+.chat-bubble .qa-timestamp-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.chat-bubble .qa-timestamp-link:hover {
+  color: var(--accent-hover);
+}
+.chat-bubble .qa-timestamp-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
 .chat-bubble code {
   background: rgba(0,0,0,0.3);
   padding: 1px 5px;

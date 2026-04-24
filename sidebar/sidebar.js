@@ -177,6 +177,8 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQaMessage(); }
     });
     qaSend.addEventListener('click', sendQaMessage);
+    qaMessages_el?.addEventListener('click', onQaMessagesClick);
+    qaMessages_el?.addEventListener('scroll', onQaMessagesScroll);
 
     qaReplyReadyToastAction?.addEventListener('click', () => {
       if (qaReplyReadyTargetEl && qaReplyReadyTargetEl.isConnected) {
@@ -894,6 +896,8 @@ GENERAL RULES:
 - Blocks follow the logical flow of the lecture. One coherent topic = one block.
 - Do NOT hallucinate. Only extract content actually in the transcript.
 - Do NOT produce shallow one-liners unless the detail level is set to Low.
+- In textual fields (title, key_concepts, definitions.definition, notes), prefer LaTeX ($...$ inline, $$...$$ display) whenever mathematical notation appears.
+- Markdown is allowed in textual fields when it improves readability (e.g., #/## headings, short lists), but keep it lightweight and do NOT force markdown when plain text is clearer.
 - total_duration_seconds: use the last timestamp in the transcript.
 
 EXAMPLE:
@@ -1085,7 +1089,7 @@ Now process the following transcript:`;
       html += `<div>
         <div class="section-label">Key Concepts</div>
         <ul class="concepts-list">
-          ${block.key_concepts.map(c => `<li><span class="concept-text">${escHtml(unescapeMathDelimiters(c))}</span></li>`).join('')}
+          ${block.key_concepts.map(c => `<li><span class="concept-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(c)))}</span></li>`).join('')}
         </ul>
       </div>`;
     }
@@ -1109,8 +1113,8 @@ Now process the following transcript:`;
         <div class="section-label">Definitions</div>
         ${block.definitions.map(d => `
           <div class="definition-item">
-            <div class="definition-term"><span class="definition-term-text">${escHtml(unescapeMathDelimiters(d.term))}</span></div>
-            <div class="definition-text"><span class="definition-body-text">${escHtml(unescapeMathDelimiters(d.definition))}</span></div>
+            <div class="definition-term"><span class="definition-term-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(d.term)))}</span></div>
+            <div class="definition-text"><span class="definition-body-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(d.definition)))}</span></div>
           </div>
         `).join('')}
       </div>`;
@@ -1128,7 +1132,7 @@ Now process the following transcript:`;
             </svg>
             <span class="notes-icon-label">Note</span>
           </div>
-          <div class="notes-text"><span class="notes-body-text">${escHtml(unescapeMathDelimiters(block.notes))}</span></div>
+          <div class="notes-text"><span class="notes-body-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(block.notes)))}</span></div>
         </div>
       `;
     }
@@ -1177,7 +1181,7 @@ Now process the following transcript:`;
     guideBlock.querySelectorAll('.formula-render[data-latex]').forEach(el => {
       const latex = el.dataset.latex;
       try {
-        katex.render(latex, el, { displayMode: true, throwOnError: false, trust: false });
+        katex.render(normalizeLatexForKatex(latex), el, { displayMode: true, throwOnError: false, trust: false });
       } catch (e) {
         el.textContent = latex;
       }
@@ -1625,7 +1629,7 @@ Now process the following transcript:`;
     return `You are a helpful study assistant for the ETH Zürich lecture: "${title}".
 The student is currently at [${fmtSec(currentTime)}] in the video.
 
-Answer based on the transcript excerpt and guide blocks below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display). If the question is about a different part of the lecture, reference the lecture structure to guide the student.
+Answer based on the transcript excerpt and guide blocks below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display) whenever math appears. Markdown formatting (e.g., #/## headings, short bullet lists) is allowed when it improves readability, but do not force markdown when plain text is clearer. If the question is about a different part of the lecture, reference the lecture structure to guide the student.
 ${lectureOverview}
 --- TRANSCRIPT (${fmtSec(windowStart)} to ${fmtSec(windowEnd)}) ---
 ${windowText}
@@ -1666,6 +1670,31 @@ ${guideBlocksStr}${scriptContext}`;
     if (qaReplyReadyToast) qaReplyReadyToast.hidden = true;
   }
 
+  function onQaMessagesClick(e) {
+    const ts = e.target?.closest?.('.qa-timestamp-link[data-seconds]');
+    if (!ts) return;
+    e.preventDefault();
+    const seconds = Number(ts.dataset.seconds);
+    if (!Number.isFinite(seconds) || seconds < 0) return;
+    postToContent({ type: 'SEEK_VIDEO', time: seconds });
+  }
+
+  function onQaMessagesScroll() {
+    if (!qaReplyReadyToast || qaReplyReadyToast.hidden) return;
+    const root = qaMessages_el;
+    if (!root) return;
+
+    if (qaReplyReadyTargetEl && qaReplyReadyTargetEl.isConnected) {
+      const rootRect = root.getBoundingClientRect();
+      const targetRect = qaReplyReadyTargetEl.getBoundingClientRect();
+      if (targetRect.top <= rootRect.top + root.clientHeight * 0.6) {
+        hideQaReplyReadyToast();
+        return;
+      }
+    }
+    if (qaIsFollowingLatest()) hideQaReplyReadyToast();
+  }
+
   /**
    * Shown when an assistant message arrives while the user is scrolled up
    * (not “following” the bottom). Uses theme / UI font variables via CSS.
@@ -1690,6 +1719,9 @@ ${guideBlocksStr}${scriptContext}`;
   function appendChatMsg(role, content, hasFrame, scrollMode) {
     const wasFollowing = qaIsFollowingLatest();
     scrollMode = scrollMode || 'default';
+    const renderedContent = role === 'assistant'
+      ? normalizeLatexForKatex(unescapeMathDelimiters(content))
+      : String(content ?? '');
 
     const div = document.createElement('div');
     div.className = `chat-msg ${role}`;
@@ -1698,21 +1730,24 @@ ${guideBlocksStr}${scriptContext}`;
     if (role === 'user' && hasFrame) {
       bubbleHtml += `<span class="chat-frame-badge">📸</span>`;
     }
-    bubbleHtml += `<div class="chat-bubble">${renderMarkdown(content)}</div>`;
+    bubbleHtml += `<div class="chat-bubble">${renderMarkdown(renderedContent)}</div>`;
     div.innerHTML = bubbleHtml;
 
     qaMessages_el.appendChild(div);
 
     // Render KaTeX in the new message
     if (role === 'assistant' && typeof renderMathInElement === 'function') {
-      renderMathInElement(div, {
-        delimiters: [
-          { left: '$$', right: '$$', display: true },
-          { left: '$', right: '$', display: false }
-        ],
-        throwOnError: false,
-        trust: false
-      });
+      const bubble = div.querySelector('.chat-bubble');
+      if (bubble) {
+        renderMathInElement(bubble, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          throwOnError: false,
+          trust: false
+        });
+      }
     }
 
     if (scrollMode === 'none') return div;
@@ -1742,16 +1777,52 @@ ${guideBlocksStr}${scriptContext}`;
     return div;
   }
 
-  // Very basic markdown renderer (bold, italic, code, paragraphs)
+  // Lightweight markdown renderer for chat (headings, inline styles, paragraphs, timestamps)
   function renderMarkdown(text) {
-    return text
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\n\n+/g, '</p><p>')
-      .replace(/^/, '<p>').replace(/$/, '</p>')
-      .replace(/<p><\/p>/g, '');
+    const src = String(text || '').replace(/\r\n/g, '\n');
+    const out = [];
+    let para = [];
+
+    const flushPara = () => {
+      if (!para.length) return;
+      out.push(`<p>${para.map(line => renderMarkdownInline(line)).join('<br>')}</p>`);
+      para = [];
+    };
+
+    for (const rawLine of src.split('\n')) {
+      const line = rawLine.trimEnd();
+      const heading = line.match(/^\s*(#{1,4})\s+(.+)$/);
+      if (!line.trim()) {
+        flushPara();
+        continue;
+      }
+      if (heading) {
+        flushPara();
+        const level = Math.min(4, heading[1].length);
+        out.push(`<h${level}>${renderMarkdownInline(heading[2])}</h${level}>`);
+        continue;
+      }
+      para.push(line);
+    }
+    flushPara();
+    return out.join('');
+  }
+
+  function renderMarkdownInline(text) {
+    let s = escHtml(String(text || ''));
+    const codeSpans = [];
+    s = s.replace(/`([^`]+)`/g, (_, inner) => {
+      const i = codeSpans.push(`<code>${inner}</code>`) - 1;
+      return `@@CODE_${i}@@`;
+    });
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    s = s.replace(/\[(\d{2}):([0-5]\d):([0-5]\d)\]/g, (_, hh, mm, ss) => {
+      const seconds = Number(hh) * 3600 + Number(mm) * 60 + Number(ss);
+      return `<button type="button" class="qa-timestamp-link" data-seconds="${seconds}">[${hh}:${mm}:${ss}]</button>`;
+    });
+    s = s.replace(/@@CODE_(\d+)@@/g, (_, idx) => codeSpans[Number(idx)] || '');
+    return s;
   }
 
   // ─── History Persistence ──────────────────────────────────────────────────
@@ -1906,6 +1977,34 @@ ${guideBlocksStr}${scriptContext}`;
     return String(str || '').replace(/\\\$/g, '$');
   }
 
+  function normalizeLatexForKatex(str) {
+    return String(str || '').replace(
+      /\\sideset\s*\{([^{}]*)\}\s*\{([^{}]*)\}\s*([\\a-zA-Z]+|\{[^{}]+\})/g,
+      (_m, left, right, op) => {
+        const l = parseScriptSpec(left);
+        const r = parseScriptSpec(right);
+        const leftPart = `${l.sub || ''}${l.sup || ''}` ? `{}` + (l.sub || '') + (l.sup || '') + '\\!' : '';
+        const rightPart = (r.sub || '') + (r.sup || '');
+        return `${leftPart}${op}${rightPart}`;
+      }
+    );
+  }
+
+  function parseScriptSpec(spec) {
+    const out = { sub: '', sup: '' };
+    const s = String(spec || '').trim();
+    const re = /([_^])(\{[^{}]*\}|[^_^{}\s]+)/g;
+    let m;
+    while ((m = re.exec(s)) !== null) {
+      const kind = m[1];
+      const raw = m[2];
+      const wrapped = raw.startsWith('{') ? raw : `{${raw}}`;
+      if (kind === '_') out.sub = `_${wrapped}`;
+      if (kind === '^') out.sup = `^${wrapped}`;
+    }
+    return out;
+  }
+
   function fmtSec(s) {
     s = Math.floor(s || 0);
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -1914,14 +2013,14 @@ ${guideBlocksStr}${scriptContext}`;
 
   function renderFormulaLatexForExport(latex) {
     try {
-      return katex.renderToString(String(latex || ''), { displayMode: true, throwOnError: false, trust: false });
+      return katex.renderToString(normalizeLatexForKatex(String(latex || '')), { displayMode: true, throwOnError: false, trust: false });
     } catch (e) {
       return `<span class="formula-fallback">${escHtml(latex)}</span>`;
     }
   }
 
   function renderInlineLatexForExport(text) {
-    return unescapeMathDelimiters(text)
+    return normalizeLatexForKatex(unescapeMathDelimiters(text))
       .split(/(\$[^$\n]+\$)/g)
       .map(part => {
         if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
