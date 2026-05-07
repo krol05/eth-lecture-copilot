@@ -188,7 +188,11 @@
     <div id="guide-content" style="display:none">
       <div class="guide-toolbar">
         <div class="guide-progress">
-          <span id="block-counter">1 / 1</span>
+          <div class="block-counter-wrap">
+            <input type="number" id="block-jump-input" class="block-jump-input" min="1" value="1" title="Type a block number and press Enter to jump">
+            <span class="block-counter-sep">/</span>
+            <span id="block-counter">1</span>
+          </div>
           <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Guide progress">
             <div id="progress-fill" class="progress-fill"></div>
           </div>

@@ -883,6 +883,48 @@ body {
   background: var(--bg-2);
 }
 
+.block-counter-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.block-jump-input {
+  width: 34px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  padding: 0 1px;
+  text-align: center;
+  -moz-appearance: textfield;
+  appearance: textfield;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+  cursor: text;
+}
+
+.block-jump-input::-webkit-outer-spin-button,
+.block-jump-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.block-jump-input:focus {
+  background: var(--bg-2);
+  border-bottom-color: var(--accent);
+  border-radius: 3px 3px 0 0;
+}
+
+.block-counter-sep {
+  font-size: 11px;
+  color: var(--text-muted);
+  user-select: none;
+}
+
 #block-counter {
   font-size: 11px;
   color: var(--text-muted);

@@ -60,8 +60,9 @@
   const exportMdBtn  = document.getElementById('export-md-btn');
   const copyLatexMultiBtn = document.getElementById('copy-latex-multi-btn');
   const regenerateBtn = document.getElementById('regenerate-btn');
-  const blockPrevBtn = document.getElementById('block-prev-btn');
-  const blockNextBtn = document.getElementById('block-next-btn');
+  const blockPrevBtn   = document.getElementById('block-prev-btn');
+  const blockNextBtn   = document.getElementById('block-next-btn');
+  const blockJumpInput = document.getElementById('block-jump-input');
   const jumpCurrentBlockBtn = document.getElementById('jump-current-block-btn');
   const autoTimeFollowCb = document.getElementById('auto-time-follow-cb');
   const autoFollowPauseHint = document.getElementById('auto-follow-pause-hint');
@@ -150,6 +151,12 @@
     blockPrevBtn?.addEventListener('click', () => navigateBlock(-1));
     blockNextBtn?.addEventListener('click', () => navigateBlock(1));
     jumpCurrentBlockBtn?.addEventListener('click', jumpToCurrentTimeBlock);
+
+    blockJumpInput?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commitBlockJump(); blockJumpInput.blur(); }
+      if (e.key === 'Escape') { restoreBlockJumpInput(); blockJumpInput.blur(); }
+    });
+    blockJumpInput?.addEventListener('blur', restoreBlockJumpInput);
 
     genLangSel?.addEventListener('change', () => {
       if (genLangCustomRow) {
@@ -1176,7 +1183,8 @@ Now process the following transcript:`;
     if (!guide?.guide?.length) return;
     const n = guide.guide.length;
     let idx = currentBlockIndex >= 0 ? currentBlockIndex : 0;
-    idx = Math.max(0, Math.min(n - 1, idx + delta));
+    // Cycle: wrap around at both ends
+    idx = ((idx + delta) % n + n) % n;
     if (autoTimeFollow) {
       const liveIdx = findBlockIndex(lastVideoTime);
       autoFollowPaused = idx !== liveIdx;
@@ -1184,6 +1192,30 @@ Now process the following transcript:`;
     }
     if (guideBlock) guideBlock.dataset.direction = delta > 0 ? 'next' : 'prev';
     renderBlock(idx);
+  }
+
+  function commitBlockJump() {
+    if (!guide?.guide?.length) { restoreBlockJumpInput(); return; }
+    const n = guide.guide.length;
+    const raw = parseInt(blockJumpInput?.value, 10);
+    if (!Number.isFinite(raw) || raw < 1 || raw > n) {
+      restoreBlockJumpInput(); // out of bounds — silently stay
+      return;
+    }
+    const idx = raw - 1;
+    if (autoTimeFollow) {
+      const liveIdx = findBlockIndex(lastVideoTime);
+      autoFollowPaused = idx !== liveIdx;
+      syncAutoFollowCheckbox();
+    }
+    if (guideBlock) guideBlock.removeAttribute('data-direction');
+    renderBlock(idx);
+  }
+
+  function restoreBlockJumpInput() {
+    if (blockJumpInput && currentBlockIndex >= 0) {
+      blockJumpInput.value = currentBlockIndex + 1;
+    }
   }
 
   function jumpToCurrentTimeBlock() {
@@ -1234,7 +1266,9 @@ Now process the following transcript:`;
     currentBlockIndex = idx;
 
     // Update counter + progress
-    blockCounter.textContent = `${idx + 1} / ${blocks.length}`;
+    if (blockJumpInput) blockJumpInput.value = idx + 1;
+    if (blockJumpInput) blockJumpInput.max = String(blocks.length);
+    blockCounter.textContent = blocks.length;
     const progressPct = Math.round(((idx + 1) / blocks.length) * 100);
     progressFill.style.width = `${progressPct}%`;
     progressFill.parentElement?.setAttribute('aria-valuenow', String(progressPct));
