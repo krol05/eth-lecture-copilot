@@ -2059,6 +2059,37 @@ body {
   margin-top: 2px;
 }
 
+/* Speed toast shown inside the sidebar when arrow keys adjust playback rate */
+@keyframes speed-toast-pop {
+  0%   { opacity: 0; transform: translateX(-50%) scale(0.88); }
+  12%  { opacity: 1; transform: translateX(-50%) scale(1.04); }
+  22%  { opacity: 1; transform: translateX(-50%) scale(1); }
+  72%  { opacity: 1; transform: translateX(-50%) scale(1); }
+  100% { opacity: 0; transform: translateX(-50%) scale(0.94); }
+}
+
+#sidebar-speed-toast {
+  position: fixed;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.75);
+  color: #f0e6d3;
+  font-size: 22px;
+  font-weight: 600;
+  padding: 8px 22px;
+  border-radius: 8px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 99999;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+#sidebar-speed-toast.animating {
+  animation: speed-toast-pop 1.4s ease forwards;
+}
+
 .frame-preview-container {
   padding: 6px 0 2px;
 }

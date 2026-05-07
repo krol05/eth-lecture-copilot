@@ -812,7 +812,7 @@
 
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        const newRate = Math.min(4.0, Math.round((videoEl.playbackRate + 0.25) * 100) / 100);
+        const newRate = Math.min(5.0, Math.round((videoEl.playbackRate + 0.25) * 100) / 100);
         videoEl.playbackRate = newRate;
         showSpeedOverlay(newRate);
       } else if (e.key === 'ArrowDown') {
@@ -867,10 +867,12 @@
       case 'SPEED_CHANGE':
         if (videoEl) {
           const newRate = msg.direction > 0
-            ? Math.min(4.0,  Math.round((videoEl.playbackRate + 0.25) * 100) / 100)
+            ? Math.min(5.0,  Math.round((videoEl.playbackRate + 0.25) * 100) / 100)
             : Math.max(0.25, Math.round((videoEl.playbackRate - 0.25) * 100) / 100);
           videoEl.playbackRate = newRate;
-          showSpeedOverlay(newRate);
+          // Sidebar initiated — show overlay inside the sidebar (via SPEED_UPDATED),
+          // not on the video page side.
+          postToSidebar({ type: 'SPEED_UPDATED', rate: newRate });
         }
         break;
 

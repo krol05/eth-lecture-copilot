@@ -591,6 +591,10 @@
         }
         break;
 
+      case 'SPEED_UPDATED':
+        showSidebarSpeedOverlay(msg.rate);
+        break;
+
       case 'API_RESPONSE':
         if (pendingRequests[msg.requestId]) {
           pendingRequests[msg.requestId](msg.response);
@@ -1210,6 +1214,16 @@ Now process the following transcript:`;
     }
     if (guideBlock) guideBlock.removeAttribute('data-direction');
     renderBlock(idx);
+  }
+
+  function showSidebarSpeedOverlay(rate) {
+    const el = document.getElementById('sidebar-speed-toast');
+    if (!el) return;
+    el.textContent = `${rate}×`;
+    // Restart animation on each call: strip class, force reflow, re-add.
+    el.classList.remove('animating');
+    void el.offsetWidth;
+    el.classList.add('animating');
   }
 
   function restoreBlockJumpInput() {
