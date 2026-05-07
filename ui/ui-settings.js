@@ -11,34 +11,40 @@
   const textContentValue = document.getElementById('text-content-value');
   const textMetaInput = document.getElementById('text-meta');
   const textMetaValue = document.getElementById('text-meta-value');
-  const darkGrid = document.getElementById('dark-color-grid');
-  const lightGrid = document.getElementById('light-color-grid');
+  const darkGrid       = document.getElementById('dark-color-grid');
+  const lightGrid      = document.getElementById('light-color-grid');
+  const darkBlueGrid   = document.getElementById('dark-blue-color-grid');
+  const lightWhiteGrid = document.getElementById('light-white-color-grid');
   const statusEl = document.getElementById('status');
   const previewSidebar = document.getElementById('preview-sidebar');
-  const previewDarkBtn = document.getElementById('preview-dark');
-  const previewLightBtn = document.getElementById('preview-light');
-  const restoreTextBtn = document.getElementById('restore-text');
-  const restoreDarkBtn = document.getElementById('restore-dark');
-  const restoreLightBtn = document.getElementById('restore-light');
+  const previewDarkBtn       = document.getElementById('preview-dark');
+  const previewLightBtn      = document.getElementById('preview-light');
+  const previewDarkBlueBtn   = document.getElementById('preview-dark-blue');
+  const previewLightWhiteBtn = document.getElementById('preview-light-white');
+  const restoreTextBtn       = document.getElementById('restore-text');
+  const restoreDarkBtn       = document.getElementById('restore-dark');
+  const restoreLightBtn      = document.getElementById('restore-light');
+  const restoreDarkBlueBtn   = document.getElementById('restore-dark-blue');
+  const restoreLightWhiteBtn = document.getElementById('restore-light-white');
   const restoreAllBtn = document.getElementById('restore-all');
-  const saveBtn = document.getElementById('save');
+  const saveBtn       = document.getElementById('save');
 
   const FIELD_CONFIG = [
-    ['bg0', 'Background 0', 'color'],
-    ['bg1', 'Background 1', 'color'],
-    ['bg2', 'Background 2', 'color'],
-    ['bg3', 'Background 3', 'color'],
-    ['textPrimary', 'Text primary', 'color'],
-    ['textSecondary', 'Text secondary', 'color'],
-    ['textMuted', 'Text muted', 'color'],
-    ['accent', 'Accent', 'color'],
-    ['accentHover', 'Accent hover', 'color'],
-    ['border', 'Border (CSS)', 'text'],
-    ['accentDim', 'Accent dim (CSS)', 'text']
+    ['bg0',          'Background 0',       'color'],
+    ['bg1',          'Background 1',       'color'],
+    ['bg2',          'Background 2',       'color'],
+    ['bg3',          'Background 3',       'color'],
+    ['textPrimary',  'Text primary',       'color'],
+    ['textSecondary','Text secondary',     'color'],
+    ['textMuted',    'Text muted',         'color'],
+    ['accent',       'Accent',             'color'],
+    ['accentHover',  'Accent hover',       'color'],
+    ['border',       'Border (CSS)',        'text'],
+    ['accentDim',    'Accent dim (CSS)',    'text']
   ];
 
   let working = await UISettings.load();
-  let previewTheme = 'dark';
+  let previewTheme = 'dark'; // maps to settings key (dark / light / darkBlue / lightWhite)
 
   function setStatus(msg) {
     statusEl.textContent = msg || '';
@@ -51,6 +57,7 @@
   }
 
   function renderModeGrid(mode, target) {
+    if (!target) return;
     target.innerHTML = '';
     for (const [key, label, type] of FIELD_CONFIG) {
       const row = document.createElement('div');
@@ -86,15 +93,19 @@
     textContentValue.textContent = `${working.textSizes.content}px`;
     textMetaInput.value = String(working.textSizes.meta);
     textMetaValue.textContent = `${working.textSizes.meta}px`;
-    renderModeGrid('dark', darkGrid);
-    renderModeGrid('light', lightGrid);
+    renderModeGrid('dark',       darkGrid);
+    renderModeGrid('light',      lightGrid);
+    renderModeGrid('darkBlue',   darkBlueGrid);
+    renderModeGrid('lightWhite', lightWhiteGrid);
     applyPreview();
   }
 
   function applyPreview() {
     if (!previewSidebar) return;
     const c = working.colors[previewTheme];
+    if (!c) return;
     const style = previewSidebar.style;
+    style.setProperty('--bg', c.bg0);
     style.setProperty('--card', c.bg1);
     style.setProperty('--border', c.border);
     style.setProperty('--text', c.textPrimary);
@@ -115,39 +126,51 @@
       applyPreview();
     });
   }
-  bindTextSize(textBaseInput, textBaseValue, 'base');
-  bindTextSize(textTitleInput, textTitleValue, 'title');
+  bindTextSize(textBaseInput,    textBaseValue,    'base');
+  bindTextSize(textTitleInput,   textTitleValue,   'title');
   bindTextSize(textSectionInput, textSectionValue, 'sectionLabel');
   bindTextSize(textContentInput, textContentValue, 'content');
-  bindTextSize(textMetaInput, textMetaValue, 'meta');
+  bindTextSize(textMetaInput,    textMetaValue,    'meta');
 
+  // Preview buttons
   previewDarkBtn?.addEventListener('click', () => {
-    previewTheme = 'dark';
-    applyPreview();
-    setStatus('Previewing dark theme');
+    previewTheme = 'dark'; applyPreview(); setStatus('Previewing Warm Dark theme');
   });
   previewLightBtn?.addEventListener('click', () => {
-    previewTheme = 'light';
-    applyPreview();
-    setStatus('Previewing light theme');
+    previewTheme = 'light'; applyPreview(); setStatus('Previewing Cream Light theme');
+  });
+  previewDarkBlueBtn?.addEventListener('click', () => {
+    previewTheme = 'darkBlue'; applyPreview(); setStatus('Previewing Navy Blue theme');
+  });
+  previewLightWhiteBtn?.addEventListener('click', () => {
+    previewTheme = 'lightWhite'; applyPreview(); setStatus('Previewing Clean White theme');
   });
 
+  // Restore buttons
   restoreTextBtn.addEventListener('click', () => {
     working.textSizes = UISettings.deepClone(UISettings.DEFAULT_UI_SETTINGS.textSizes);
     renderAll();
     setStatus('Text sizes restored to defaults');
   });
-
   restoreDarkBtn.addEventListener('click', () => {
     working.colors.dark = UISettings.deepClone(UISettings.DEFAULT_UI_SETTINGS.colors.dark);
     renderAll();
-    setStatus('Dark colors restored');
+    setStatus('Warm Dark colors restored');
   });
-
   restoreLightBtn.addEventListener('click', () => {
     working.colors.light = UISettings.deepClone(UISettings.DEFAULT_UI_SETTINGS.colors.light);
     renderAll();
-    setStatus('Light colors restored');
+    setStatus('Cream Light colors restored');
+  });
+  restoreDarkBlueBtn?.addEventListener('click', () => {
+    working.colors.darkBlue = UISettings.deepClone(UISettings.DEFAULT_UI_SETTINGS.colors.darkBlue);
+    renderAll();
+    setStatus('Navy Blue colors restored');
+  });
+  restoreLightWhiteBtn?.addEventListener('click', () => {
+    working.colors.lightWhite = UISettings.deepClone(UISettings.DEFAULT_UI_SETTINGS.colors.lightWhite);
+    renderAll();
+    setStatus('Clean White colors restored');
   });
 
   restoreAllBtn.addEventListener('click', () => {
@@ -158,9 +181,8 @@
 
   saveBtn.addEventListener('click', async () => {
     working = await UISettings.save(working);
-    setStatus('Saved. Reopen sidebar/popup to confirm changes.');
+    setStatus('Saved. Reopen sidebar to confirm changes.');
   });
 
   renderAll();
 })();
-

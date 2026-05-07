@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ETH Lecture Copilot",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "description": "AI-powered lecture guide & Q&A sidebar for ETH Zürich video.ethz.ch",
 
   "content_security_policy": {
@@ -10,6 +10,7 @@
 
   "permissions": ["storage", "unlimitedStorage", "activeTab", "scripting"],
   "host_permissions": [
+    "<all_urls>",
     "https://video.ethz.ch/*",
     "https://dist.tobira.ethz.ch/*",
     "https://api.anthropic.com/*",
@@ -20,8 +21,20 @@
     "https://api.mistral.ai/*",
     "https://openrouter.ai/*",
     "https://api.groq.com/*",
+    "https://api.together.ai/*",
     "https://api.together.xyz/*",
     "https://api.cerebras.ai/*",
+    "https://integrate.api.nvidia.com/*",
+    "https://api.fireworks.ai/*",
+    "https://api.perplexity.ai/*",
+    "https://api.cohere.ai/*",
+    "https://router.huggingface.co/*",
+    "https://api.hyperbolic.xyz/*",
+    "https://api.sambanova.ai/*",
+    "https://api.moonshot.ai/*",
+    "https://api.z.ai/*",
+    "https://dashscope-intl.aliyuncs.com/*",
+    "https://dashscope-us.aliyuncs.com/*",
     "http://localhost/*",
     "http://127.0.0.1/*",
     "https://cdn.jsdelivr.net/*",

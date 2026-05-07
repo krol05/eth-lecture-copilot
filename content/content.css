@@ -5,13 +5,12 @@
   top: 0;
   right: 0;
   bottom: 0;
-  /* width / min-width set inline in content.js (adapts to viewport + user resize) */
   height: 100vh;
   height: 100dvh;
   max-height: 100vh;
   max-height: 100dvh;
   border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid rgba(100, 65, 20, 0.15);
   background: transparent;
   z-index: 2147483647;
 }
@@ -29,7 +28,7 @@
 
 #eth-copilot-resize-handle:hover,
 #eth-copilot-resize-handle:active {
-  background: rgba(124, 161, 253, 0.35);
+  background: rgba(160, 96, 48, 0.3);
 }
 
 #eth-copilot-toggle {
@@ -37,9 +36,9 @@
   top: 12px;
   width: 24px;
   height: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(15, 17, 23, 0.9);
-  color: #e6edf3;
+  border: 1px solid rgba(100, 65, 20, 0.2);
+  background: rgba(245, 240, 232, 0.95);
+  color: #6b5030;
   border-radius: 6px 0 0 6px;
   cursor: pointer;
   font-size: 14px;
@@ -48,9 +47,15 @@
   align-items: center;
   justify-content: center;
   z-index: 2147483647;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-/* When in copilot-managed fullscreen: the video's container fills the viewport */
+#eth-copilot-toggle:hover {
+  background: rgba(237, 229, 212, 0.98);
+  border-color: rgba(160, 96, 48, 0.35);
+}
+
+/* When in copilot-managed fullscreen */
 .eth-copilot-fs-video {
   position: fixed !important;
   top: 0 !important;
@@ -68,11 +73,9 @@
   padding: 0 !important;
 }
 
-body.eth-copilot-fs {
-  overflow: hidden !important;
-}
+body.eth-copilot-fs { overflow: hidden !important; }
 
-/* ─── Focus Mode (theater / split view) ───────────────────────────────── */
+/* ─── Focus Mode ───────────────────────────────────────────────────────── */
 body.eth-copilot-focus {
   overflow: hidden !important;
   margin: 0 !important;
@@ -117,8 +120,8 @@ body.eth-copilot-focus::before {
   bottom: 80px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.75);
-  color: #fff;
+  background: rgba(0, 0, 0, 0.72);
+  color: #f0e6d3;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 22px;
   font-weight: 600;
@@ -131,6 +134,4 @@ body.eth-copilot-focus::before {
   letter-spacing: 0.5px;
 }
 
-#eth-copilot-speed-overlay.visible {
-  opacity: 1;
-}
+#eth-copilot-speed-overlay.visible { opacity: 1; }

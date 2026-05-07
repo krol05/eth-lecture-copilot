@@ -15,6 +15,7 @@ importScripts(chrome.runtime.getURL('lib/guide-parse.js'));
 // Inlined here because service workers can't import arbitrary files in MV3.
 
 const PROVIDER_MAP = {
+  // ── Cloud providers ──────────────────────────────────────────────────────
   anthropic:       { type: 'anthropic',    base: 'https://api.anthropic.com' },
   openai:          { type: 'openai_compat',base: 'https://api.openai.com/v1' },
   google:          { type: 'google',       base: 'https://generativelanguage.googleapis.com' },
@@ -23,30 +24,56 @@ const PROVIDER_MAP = {
   mistral:         { type: 'openai_compat',base: 'https://api.mistral.ai/v1' },
   openrouter:      { type: 'openai_compat',base: 'https://openrouter.ai/api/v1' },
   groq:            { type: 'openai_compat',base: 'https://api.groq.com/openai/v1' },
-  together:        { type: 'openai_compat',base: 'https://api.together.xyz/v1' },
+  together:        { type: 'openai_compat',base: 'https://api.together.ai/v1' },
   cerebras:        { type: 'openai_compat',base: 'https://api.cerebras.ai/v1' },
-  // Local providers — base URL comes from message payload (user-configurable)
-  local_ollama:    { type: 'local' },
-  local_litellm:   { type: 'local' },
-  local_lmstudio:  { type: 'local' },
-  local_jan:       { type: 'local' },
-  local_localai:   { type: 'local' },
-  local_llamafile:  { type: 'local' },
-  local_custom:    { type: 'local' }
+  // ── Tier 2 cloud providers ───────────────────────────────────────────────
+  nvidia_nim:      { type: 'openai_compat',base: 'https://integrate.api.nvidia.com/v1' },
+  fireworks:       { type: 'openai_compat',base: 'https://api.fireworks.ai/inference/v1' },
+  perplexity:      { type: 'openai_compat',base: 'https://api.perplexity.ai' },
+  cohere:          { type: 'openai_compat',base: 'https://api.cohere.ai/compatibility/v1' },
+  huggingface:     { type: 'openai_compat',base: 'https://router.huggingface.co/v1' },
+  hyperbolic:      { type: 'openai_compat',base: 'https://api.hyperbolic.xyz/v1' },
+  sambanova:       { type: 'openai_compat',base: 'https://api.sambanova.ai/v1' },
+  moonshot:        { type: 'openai_compat',base: 'https://api.moonshot.ai/v1' },
+  zhipu:           { type: 'openai_compat',base: 'https://api.z.ai/api/paas/v4' },
+  qwen:            { type: 'openai_compat',base: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' },
+  // ── Local providers — base URL comes from message payload (user-configurable)
+  local_ollama:       { type: 'local' },
+  local_lmstudio:     { type: 'local' },
+  local_vllm:         { type: 'local' },
+  local_jan:          { type: 'local' },
+  local_textgenwebui: { type: 'local' },
+  local_koboldcpp:    { type: 'local' },
+  local_gpt4all:      { type: 'local' },
+  local_litellm:      { type: 'local' },
+  local_localai:      { type: 'local' },
+  local_tgi:          { type: 'local' },
+  local_llamafile:    { type: 'local' },
+  local_custom:       { type: 'local' }
 };
 
 // Default model per provider — first/best model in the list
 const DEFAULT_MODELS = {
-  anthropic:  'claude-sonnet-4-6',
-  openai:     'gpt-4o',
-  google:     'gemini-2.5-flash',
-  xai:        'grok-4',
-  deepseek:   'deepseek-chat',
-  mistral:    'mistral-large-latest',
-  openrouter: 'anthropic/claude-sonnet-4-6',
-  groq:       'meta-llama/llama-4-maverick-17b-128e-instruct',
-  together:   'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
-  cerebras:   'llama-4-scout-17b-16e-instruct'
+  anthropic:   'claude-sonnet-4-6',
+  openai:      'gpt-4o',
+  google:      'gemini-2.5-flash',
+  xai:         'grok-4',
+  deepseek:    'deepseek-v4-flash',
+  mistral:     'mistral-large-latest',
+  openrouter:  'anthropic/claude-sonnet-4-6',
+  groq:        'meta-llama/llama-4-maverick-17b-128e-instruct',
+  together:    'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
+  cerebras:    'llama-4-scout-17b-16e-instruct',
+  nvidia_nim:  'meta/llama-4-maverick-17b-128e-instruct',
+  fireworks:   'accounts/fireworks/models/llama-v4-maverick-instruct',
+  perplexity:  'sonar-pro',
+  cohere:      'command-a-03-2025',
+  huggingface: 'meta-llama/Llama-3.3-70B-Instruct',
+  hyperbolic:  'meta-llama/Llama-3.3-70B-Instruct',
+  sambanova:   'Meta-Llama-4-Maverick-17B-128E-Instruct',
+  moonshot:    'kimi-k2',
+  zhipu:       'glm-4',
+  qwen:        'qwen3-72b'
 };
 
 // ─── OpenAI-compatible handler (covers ~80% of providers) ────────────────────
@@ -92,13 +119,16 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
 
   const isOSeries = /^o[0-9]/.test(model);
 
+  // o-series uses max_completion_tokens (max_tokens is deprecated for o-series)
+  const maxTokensKey = isOSeries ? 'max_completion_tokens' : 'max_tokens';
+
   const body = {
     model,
     messages: [
       { role: 'system', content: systemPrompt },
       ...oaiMessages
     ],
-    ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
+    ...(opts.maxTokens ? { [maxTokensKey]: opts.maxTokens } : {}),
     ...(opts.jsonMode ? { response_format: { type: 'json_object' } } : {})
   };
 
@@ -160,8 +190,14 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
 
   if (useThinking) {
     const budgetTokens = thinkingBudgets[thinking];
-    body.thinking = { type: 'enabled', budget_tokens: budgetTokens };
-    body.max_tokens = Math.max(body.max_tokens, budgetTokens + 16000);
+    // Claude Opus 4.7+ uses adaptive thinking (no budget_tokens parameter)
+    const isAdaptiveModel = /claude-opus-4-7/.test(model);
+    if (isAdaptiveModel) {
+      body.thinking = { type: 'adaptive' };
+    } else {
+      body.thinking = { type: 'enabled', budget_tokens: budgetTokens };
+      body.max_tokens = Math.max(body.max_tokens, budgetTokens + 16000);
+    }
     body.temperature = 1;
   } else {
     body.temperature = opts.temperature ?? 0.4;
@@ -192,13 +228,16 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
 
 async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
   opts.onProgress?.('request_sent', 'google');
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  // Use stable v1 endpoint (v1beta is deprecated for production)
+  const url = `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`;
 
   const contents = messages.map(m => {
-    const parts = [{ text: m.content }];
+    // Google docs: image parts must come before text parts for best results
+    const parts = [];
     if (m.imageBase64) {
       parts.push({ inlineData: { mimeType: 'image/jpeg', data: m.imageBase64 } });
     }
+    parts.push({ text: m.content });
     return { role: m.role === 'assistant' ? 'model' : 'user', parts };
   });
 
@@ -212,9 +251,11 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
   };
 
   if (thinking !== 'none' && thinkingBudgets[thinking]) {
-    generationConfig.thinkingConfig = {
-      thinkingBudget: thinkingBudgets[thinking]
-    };
+    // Gemini 3+ uses thinkingLevel ('low'|'medium'|'high'); older Gemini uses thinkingBudget
+    const isGemini3 = /^gemini-3/.test(model);
+    generationConfig.thinkingConfig = isGemini3
+      ? { thinkingLevel: thinking }
+      : { thinkingBudget: thinkingBudgets[thinking] };
   }
 
   const body = {

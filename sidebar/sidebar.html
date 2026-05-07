@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,33 +8,38 @@
   <!-- KaTeX bundled locally -->
   <link rel="stylesheet" href="../lib/katex/katex.min.css">
 </head>
-<body>
+<body role="complementary" aria-label="ETH Lecture Copilot">
   <!-- Header -->
   <header class="sidebar-header">
     <div class="header-left">
+      <!-- Custom open-manuscript mark: open codex with marginalia strokes -->
       <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-        <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-        <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M4 5.5C4 4.4 4.9 3.5 6 3.5h5.5v16H6a2 2 0 01-2-2V5.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M20 5.5C20 4.4 19.1 3.5 18 3.5H12.5v16H18a2 2 0 002-2V5.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        <line x1="12.5" y1="3.5" x2="12.5" y2="19.5" stroke="currentColor" stroke-width="1" stroke-opacity="0.4"/>
+        <line x1="14.5" y1="9" x2="18.5" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="14.5" y1="12" x2="17.5" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="14.5" y1="15" x2="18" y2="15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="8" cy="9" r="1.2" fill="currentColor" stroke="none" opacity="0.7"/>
       </svg>
       <span class="header-title">Lecture Copilot</span>
     </div>
     <div class="header-right">
       <button id="ui-settings-btn" class="icon-btn" title="UI settings">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
       </button>
       <button id="focus-toggle" class="icon-btn" title="Focus mode — video + sidebar only">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <rect x="2" y="3" width="20" height="14" rx="2"/>
           <line x1="8" y1="21" x2="16" y2="21"/>
           <line x1="12" y1="17" x2="12" y2="21"/>
         </svg>
       </button>
       <button id="theme-toggle" class="icon-btn" title="Toggle theme">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <circle cx="12" cy="12" r="4"/>
           <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
         </svg>
@@ -43,7 +48,7 @@
   </header>
 
   <!-- Status bar -->
-  <div id="status-bar" class="status-bar status-loading">
+  <div id="status-bar" class="status-bar status-loading" aria-live="polite" role="status">
     <div class="status-spinner"></div>
     <span id="status-text">Waiting for lecture page…</span>
   </div>
@@ -51,20 +56,20 @@
   <!-- Tab bar -->
   <nav class="tab-bar">
     <button class="tab-btn active" data-tab="guide">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
         <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
       </svg>
       Guide
     </button>
     <button class="tab-btn" data-tab="qa">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
       </svg>
       Q&amp;A
     </button>
     <button class="tab-btn" data-tab="history">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <circle cx="12" cy="12" r="10"/>
         <polyline points="12 6 12 12 16 14"/>
       </svg>
@@ -87,7 +92,7 @@
       <p class="empty-title">No guide yet</p>
       <p class="empty-desc">Generate an AI lecture guide from the transcript.</p>
       <div class="info-banner">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
         <span>Results depend on your model, its context window, and these settings. Some tweaking and trial &amp; error is normal to get the best output for your setup.</span>
       </div>
 
@@ -123,7 +128,7 @@
         </div>
         <div class="gen-setting-row">
           <label class="gen-setting-label" for="gen-detail-select">Block detail
-            <span class="setting-hint" data-tip="How much information per block:&#10;Low = brief bullet points (~1-2 sentences)&#10;Medium = solid explanations (~2-3 sentences)&#10;High = thorough coverage (~3-5 sentences)&#10;Very High = exam-grade depth (~4-8 sentences)&#10;&#10;Higher detail → more tokens per block → may hit context limits on smaller models">?</span>
+            <span class="setting-hint" tabindex="0" data-tip="How much information per block:&#10;Low = brief bullet points (~1-2 sentences)&#10;Medium = solid explanations (~2-3 sentences)&#10;High = thorough coverage (~3-5 sentences)&#10;Very High = exam-grade depth (~4-8 sentences)&#10;&#10;Higher detail → more tokens per block → may hit context limits on smaller models">?</span>
           </label>
           <select id="gen-detail-select" class="gen-setting-select">
             <option value="low">Low</option>
@@ -134,7 +139,7 @@
         </div>
         <div class="gen-setting-row">
           <label class="gen-setting-label" for="gen-count-select">Block count
-            <span class="setting-hint" data-tip="How many blocks to split the lecture into:&#10;Low = 5-10 (broad overview)&#10;Medium = 10-20 (one per major topic)&#10;High = 20-35 (subtopics &amp; examples)&#10;Very High = 30-50+ (every shift &amp; proof step)&#10;&#10;More blocks x high detail = larger output.&#10;Stay within your model's output limit (8K-128K tokens).">?</span>
+            <span class="setting-hint" tabindex="0" data-tip="How many blocks to split the lecture into:&#10;Low = 5-10 (broad overview)&#10;Medium = 10-20 (one per major topic)&#10;High = 20-35 (subtopics &amp; examples)&#10;Very High = 30-50+ (every shift &amp; proof step)&#10;&#10;More blocks x high detail = larger output.&#10;Stay within your model's output limit (8K-128K tokens).">?</span>
           </label>
           <select id="gen-count-select" class="gen-setting-select">
             <option value="low">Low</option>
@@ -146,7 +151,7 @@
         <p id="gen-token-hint" class="gen-token-hint">~32 000 output tokens</p>
         <div class="gen-setting-row">
           <label class="gen-setting-label" for="gen-temp-slider">Temperature
-            <span class="setting-hint" data-tip="0.10 = strict &amp; safe JSON&#10;0.20-0.30 = richer writing, still reliable (recommended: 0.25)&#10;0.40+ = creative but may break JSON or hallucinate">?</span>
+            <span class="setting-hint" tabindex="0" data-tip="0.10 = strict &amp; safe JSON&#10;0.20-0.30 = richer writing, still reliable (recommended: 0.25)&#10;0.40+ = creative but may break JSON or hallucinate">?</span>
           </label>
           <div class="gen-slider-wrap">
             <input type="range" id="gen-temp-slider" min="0" max="100" value="25" step="1">
@@ -166,7 +171,8 @@
         </div>
         <label class="gen-fallback-toggle">
           <input type="checkbox" id="gen-fallback-cb">
-          <span>Use safe defaults (ignore above)</span>
+          <span class="toggle-thumb"></span>
+          <span class="toggle-label">Use safe defaults (ignore above)</span>
         </label>
       </div>
 
@@ -183,18 +189,27 @@
       <div class="guide-toolbar">
         <div class="guide-progress">
           <span id="block-counter">1 / 1</span>
-          <div class="progress-track">
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Guide progress">
             <div id="progress-fill" class="progress-fill"></div>
           </div>
         </div>
         <button id="copy-latex-multi-btn" class="icon-btn" type="button" title="Copy full selected blocks (including LaTeX)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <rect x="9" y="9" width="13" height="13" rx="2"/>
             <rect x="2" y="2" width="13" height="13" rx="2"/>
           </svg>
         </button>
+        <button id="export-md-btn" class="icon-btn export-md-btn" type="button" title="Export full guide as Markdown (.md)">
+          <!-- Markdown icon: doc + M↓ mark -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <polyline points="8 15 10 13 12 15 14 13 16 15" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="12" y1="13" x2="12" y2="18" stroke-linecap="round"/>
+          </svg>
+        </button>
         <button id="export-pdf-btn" class="icon-btn export-pdf-btn" type="button" title="Export full guide as PDF (opens print — choose Save as PDF)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
             <polyline points="14 2 14 8 20 8"/>
             <line x1="16" y1="13" x2="8" y2="13"/>
@@ -203,25 +218,32 @@
           </svg>
         </button>
         <button id="regenerate-btn" class="icon-btn regen-btn" title="Generate a new guide">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <polyline points="23 4 23 10 17 10"/>
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
           </svg>
         </button>
       </div>
       <div class="guide-nav-row">
-        <button type="button" id="block-prev-btn" class="block-nav-btn" title="Previous section" aria-label="Previous section">←</button>
-        <div class="guide-nav-center">
+        <div class="guide-nav-arrows">
+          <button type="button" id="block-prev-btn" class="block-nav-btn" title="Previous section" aria-label="Previous section">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
           <button type="button" id="jump-current-block-btn" class="jump-current-btn" title="Show the guide section that matches playback right now">Current time</button>
+          <button type="button" id="block-next-btn" class="block-nav-btn" title="Next section" aria-label="Next section">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+        <div class="guide-nav-follow">
           <label class="auto-follow-toggle" title="When on, the guide follows the video playback time.">
             <input type="checkbox" id="auto-time-follow-cb" checked>
-            <span>Switch to timeframe automatically</span>
+            <span class="toggle-thumb"></span>
+            <span class="toggle-label">Auto-follow playback</span>
           </label>
-          <p id="auto-follow-pause-hint" class="auto-follow-pause-hint" style="display:none">Temporarily paused — click <strong>Current time</strong> to resume</p>
+          <p id="auto-follow-pause-hint" class="auto-follow-pause-hint" style="display:none">Paused — click <strong>Current time</strong> to resume</p>
         </div>
-        <button type="button" id="block-next-btn" class="block-nav-btn" title="Next section" aria-label="Next section">→</button>
       </div>
-      <p class="guide-hints">On the video page: <kbd>↑</kbd> / <kbd>↓</kbd> change playback speed by 0.25×</p>
+      <p class="guide-hints"><kbd>↑</kbd> / <kbd>↓</kbd> change playback speed by 0.25×</p>
 
       <div id="guide-block" class="guide-block">
         <!-- Filled dynamically by sidebar.js -->
@@ -259,9 +281,9 @@
 
     <!-- Script panel (collapsible) -->
     <div id="script-panel" class="script-panel">
-      <button id="script-panel-toggle" class="script-panel-header" type="button">
+      <button id="script-panel-toggle" class="script-panel-header" type="button" aria-expanded="false">
         <div class="script-panel-header-left">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14">
             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
             <polyline points="14 2 14 8 20 8"/>
             <line x1="16" y1="13" x2="8" y2="13"/>
@@ -270,20 +292,20 @@
           <span>Course Scripts</span>
           <span id="script-badge" class="script-badge" style="display:none">0</span>
         </div>
-        <svg class="script-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+        <svg class="script-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
 
-      <div id="script-panel-body" class="script-panel-body" style="display:none">
+      <div id="script-panel-body" class="script-panel-body">
         <div class="script-info-banner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
           <span>PDFs are chunked &amp; indexed locally in your browser. Only the most relevant excerpts are sent with each question. Large scripts can significantly increase token usage per Q&amp;A message.</span>
         </div>
 
         <div class="script-strictness-row">
           <label class="gen-setting-label" for="script-search-method">Search method
-            <span class="setting-hint" data-tip="Fuzzy (fast): Text-based matching using character similarity. Works instantly, no download needed. May miss results when phrasing differs from the script.&#10;&#10;Semantic (AI): Uses a local AI model to understand meaning. Much more accurate, finds relevant content even with different wording. The extension includes ~25 MB of ONNX/WebAssembly; the embedding model may download once (~25 MB) and is then cached. Expect ~20–60 sec to index a new PDF.">?</span>
+            <span class="setting-hint" tabindex="0" data-tip="Fuzzy (fast): Text-based matching using character similarity. Works instantly, no download needed. May miss results when phrasing differs from the script.&#10;&#10;Semantic (AI): Uses a local AI model to understand meaning. Much more accurate, finds relevant content even with different wording. The extension includes ~25 MB of ONNX/WebAssembly; the embedding model may download once (~25 MB) and is then cached. Expect ~20–60 sec to index a new PDF.">?</span>
           </label>
           <select id="script-search-method" class="gen-setting-select">
             <option value="fuzzy">Fuzzy (fast)</option>
@@ -304,7 +326,7 @@
 
         <div class="script-strictness-row">
           <label class="gen-setting-label" for="script-strictness-select">Script reliance
-            <span class="setting-hint" data-tip="How heavily the AI uses the script:&#10;Low = supplementary reference only (4 chunks)&#10;Medium = balanced with lecture (8 chunks)&#10;High = script as primary source (14 chunks)&#10;Strict = answer almost exclusively from script (20 chunks)&#10;&#10;More chunks = more tokens per question">?</span>
+            <span class="setting-hint" tabindex="0" data-tip="How heavily the AI uses the script:&#10;Low = supplementary reference only (4 chunks)&#10;Medium = balanced with lecture (8 chunks)&#10;High = script as primary source (14 chunks)&#10;Strict = answer almost exclusively from script (20 chunks)&#10;&#10;More chunks = more tokens per question">?</span>
           </label>
           <select id="script-strictness-select" class="gen-setting-select">
             <option value="low">Low</option>
@@ -321,7 +343,7 @@
         <div class="script-upload-row">
           <input type="file" id="script-file-input" accept=".pdf" multiple style="display:none">
           <button id="script-upload-btn" class="script-upload-btn" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="13" height="13">
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
               <polyline points="17 8 12 3 7 8"/>
               <line x1="12" y1="3" x2="12" y2="15"/>
@@ -360,17 +382,17 @@
     </div>
 
     <div class="qa-footer-stack">
-      <div id="qa-reply-ready-toast" class="qa-reply-ready-toast" hidden aria-live="polite">
-        <button type="button" id="qa-reply-ready-toast-action" class="qa-reply-ready-toast-action">
-          <span id="qa-reply-ready-toast-title" class="qa-reply-ready-toast-title">Assistant reply ready</span>
-          <span id="qa-reply-ready-toast-sub" class="qa-reply-ready-toast-sub">Click to jump to the start of the reply</span>
-        </button>
-        <button type="button" id="qa-reply-ready-toast-dismiss" class="qa-reply-ready-toast-dismiss" title="Dismiss" aria-label="Dismiss">×</button>
-      </div>
+      <!-- Scroll-to-bottom pill — appears when user is scrolled up in Q&A -->
+      <button id="qa-scroll-bottom-btn" class="qa-scroll-bottom-btn" title="Jump to latest message" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+          <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
+        </svg>
+        Jump to latest
+      </button>
       <div class="qa-input-area">
       <div class="qa-temp-row">
         <label class="qa-temp-label" for="qa-temp-slider">Temp
-          <span class="setting-hint" data-tip="0.20-0.40 = focused, factual answers (recommended: 0.35)&#10;0.50-0.70 = more natural, conversational&#10;0.80+ = creative but may stray from lecture content">?</span>
+          <span class="setting-hint" tabindex="0" data-tip="0.20-0.40 = focused, factual answers (recommended: 0.35)&#10;0.50-0.70 = more natural, conversational&#10;0.80+ = creative but may stray from lecture content">?</span>
         </label>
         <input type="range" id="qa-temp-slider" min="0" max="100" value="35" step="1">
         <span id="qa-temp-value" class="gen-slider-value">0.35</span>
@@ -378,20 +400,26 @@
       <div class="qa-attach-row">
         <label class="attach-label">
           <input type="checkbox" id="attach-frame-cb">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <span class="toggle-thumb"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="attach-icon">
             <rect x="3" y="3" width="18" height="18" rx="2"/>
             <circle cx="8.5" cy="8.5" r="1.5"/>
             <polyline points="21 15 16 10 5 21"/>
           </svg>
-          Attach current frame
+          <span class="attach-text">Attach current frame</span>
         </label>
-        <span id="frame-preview-label" class="frame-preview-label" style="display:none">📸 Frame attached</span>
       </div>
-      <p class="attach-hint">Only works with vision models (e.g. GPT-4o, Gemini, Claude 3). Check your provider's docs.</p>
+      <p class="attach-hint">Only works with vision models. See provider info in settings.</p>
+      <div id="frame-preview-container" class="frame-preview-container" style="display:none">
+        <div class="frame-preview-inner">
+          <img id="frame-preview-img" class="frame-preview-img" alt="Attached video frame">
+          <button id="frame-preview-remove" class="frame-preview-remove" type="button" title="Remove frame">×</button>
+        </div>
+      </div>
       <div class="qa-textarea-row">
         <textarea id="qa-input" placeholder="Ask a question about the lecture…" rows="2"></textarea>
         <button id="qa-send" class="send-btn" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <line x1="22" y1="2" x2="11" y2="13"/>
             <polygon points="22 2 15 22 11 13 2 9 22 2"/>
           </svg>
@@ -403,13 +431,45 @@
 
   <!-- ── HISTORY TAB ── -->
   <div id="tab-history" class="tab-content">
+    <div class="history-search-wrap">
+      <div class="history-search-inner">
+        <input type="search" id="history-search" class="history-search-input" placeholder="Search lectures…" autocomplete="off" spellcheck="false">
+        <button id="history-search-clear" class="history-search-clear" type="button" title="Clear search" hidden>×</button>
+      </div>
+    </div>
     <div id="history-list" class="history-list">
       <p style="color:var(--text-muted);font-size:12px;padding:14px;">No previous guides yet.</p>
     </div>
   </div>
 
+  <!-- Q&A reply-ready toast — body-level so overflow:hidden on tab-content can't clip it -->
+  <div id="qa-reply-ready-toast" class="qa-reply-ready-toast" hidden aria-live="polite">
+    <button type="button" id="qa-reply-ready-toast-action" class="qa-reply-ready-toast-action">
+      <span id="qa-reply-ready-toast-title" class="qa-reply-ready-toast-title">Assistant reply ready</span>
+      <span id="qa-reply-ready-toast-sub" class="qa-reply-ready-toast-sub">Click to jump to the start of the reply</span>
+    </button>
+    <button type="button" id="qa-reply-ready-toast-dismiss" class="qa-reply-ready-toast-dismiss" title="Dismiss" aria-label="Dismiss">×</button>
+  </div>
+
+  <!-- History undo toast -->
+  <div id="history-undo-toast" class="history-undo-toast" hidden>
+    <span id="history-undo-msg">Deleted</span>
+    <button id="history-undo-btn" class="history-undo-btn" type="button">Undo</button>
+  </div>
+
   <!-- Global tooltip (body-level so overflow can't clip it) -->
   <div id="global-tip" class="global-tip"></div>
+
+  <!-- Cross-tab QA notification — visible from Guide/History tabs when a reply arrives -->
+  <div id="cross-tab-notify" class="cross-tab-notify" hidden>
+    <button id="cross-tab-notify-action" class="cross-tab-notify-action" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="13" height="13">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      <span class="cross-tab-notify-text">New reply in Q&amp;A</span>
+    </button>
+    <button id="cross-tab-notify-close" class="cross-tab-notify-close" type="button" title="Dismiss">×</button>
+  </div>
 
   <!-- Scripts -->
   <script src="../lib/katex/katex.min.js"></script>

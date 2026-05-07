@@ -51,14 +51,14 @@ ETH Lecture Copilot injects a sidebar into lecture pages on **video.ethz.ch**. I
 
 - **Time sync:** The guide can follow the video. If you move with **Previous** / **Next**, auto-follow pauses until you align with the live block again (by navigation or as the video catches up) or tap **Current time**.
 - **Focus mode:** Header control to emphasize the video and sidebar.
-- **Keyboard:** On the video page (when focus is not in a text field), **Arrow Up** / **Arrow Down** changes playback speed in **0.25×** steps; a short overlay shows the current speed.
+- **Keyboard:** **Arrow Up** / **Arrow Down** changes playback speed in **0.25×** steps from anywhere — including the sidebar. A short overlay shows the current speed.
 - **UI settings:** Sidebar text sizes, dark or light theme, and detailed color tokens, with live preview and restore defaults.
 
 ### Q&amp;A
 
 - Uses **transcript**, **guide**, and your **question**. Optional **Course scripts** add retrieved PDF excerpts. Context is **time-aware:** a window around the current playback time plus your question drives retrieval so prompts stay efficient.
 - **Temperature** for answer style.
-- **Attach current frame:** Sends a JPEG snapshot for **multimodal** models. Text-only models may ignore or error on images.
+- **Attach current frame:** Ticking the checkbox captures the frame immediately and shows a thumbnail preview above the text box before you send. Sends a JPEG snapshot with your message for **multimodal** models. Chat images persist across sessions.
 
 ### Course scripts (PDFs)
 
@@ -75,8 +75,8 @@ ETH Lecture Copilot injects a sidebar into lecture pages on **video.ethz.ch**. I
 
 ### Providers
 
-- **Cloud:** Google Gemini, OpenAI, Anthropic, xAI, DeepSeek, Mistral, OpenRouter, Groq, Together AI, Cerebras, and other OpenAI-compatible HTTPS APIs.
-- **Local:** Ollama, LM Studio, Jan, **LiteLLM**, or any server that speaks OpenAI **Chat Completions** (base URL in settings).
+- **Cloud:** Google Gemini, OpenAI, Anthropic, xAI, DeepSeek, Mistral, OpenRouter, Groq, Together AI, Cerebras, NVIDIA NIM, Fireworks AI, Perplexity, Cohere, HuggingFace, Hyperbolic, SambaNova, Moonshot (Kimi), Zhipu AI, Qwen (Alibaba), and other OpenAI-compatible HTTPS APIs.
+- **Local:** Ollama, LM Studio, vLLM, Jan, LiteLLM, KoboldCpp, GPT4All, Text Gen WebUI, HF TGI, or any server that speaks OpenAI **Chat Completions** (base URL in settings).
 
 API keys and local base URLs stay in the extension. Requests go from your browser to the provider or localhost, not through a project-hosted backend.
 
@@ -123,7 +123,9 @@ Works with most major providers. Configure the popup or options page:
 - **Google Gemini** (free tier via [AI Studio](https://aistudio.google.com/app/apikey))
 - **OpenAI**, **Anthropic**, **xAI**, **DeepSeek**, **Mistral**
 - **OpenRouter**, **Groq**, **Together AI**, **Cerebras**
-- **Local** stacks: Ollama, LM Studio, Jan, LiteLLM, or custom OpenAI-compatible URLs
+- **NVIDIA NIM**, **Fireworks AI**, **Perplexity** (web-search Sonar models), **Cohere**, **HuggingFace**
+- **Hyperbolic**, **SambaNova**, **Moonshot (Kimi)**, **Zhipu AI (Z.ai)**, **Qwen (Alibaba DashScope)**
+- **Local** stacks: Ollama, LM Studio, vLLM, Jan, LiteLLM, KoboldCpp, GPT4All, Text Gen WebUI, HF TGI, or custom OpenAI-compatible URLs
 
 **Suggestions**
 

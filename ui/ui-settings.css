@@ -1,51 +1,126 @@
+/* ui-settings.css — ETH Lecture Copilot theme & typography settings */
+
 :root {
-  --bg: #0f1117;
-  --card: #161b22;
-  --border: rgba(255,255,255,0.12);
-  --text: #e6edf3;
-  --muted: #9da7b3;
-  --accent: #8fb0ff;
+  --bg: #f5f0e8;
+  --card: #ede5d4;
+  --border: rgba(100, 65, 20, 0.12);
+  --text: #2a1e0e;
+  --muted: #9a8060;
+  --accent: #a06030;
+  --font-sans: Seravek, 'Gill Sans Nova', Ubuntu, Cantarell, system-ui, -apple-system, sans-serif;
 }
+
+[data-theme="dark"] {
+  --bg: #1c1a14;
+  --card: #242019;
+  --border: rgba(255, 232, 195, 0.09);
+  --text: #f0e6d3;
+  --muted: #7e6e5a;
+  --accent: #c89060;
+}
+
 * { box-sizing: border-box; }
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--font-sans);
   background: var(--bg);
   color: var(--text);
+  border-top: 3px solid var(--accent);
 }
+
 .wrap {
-  max-width: 980px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 22px 18px 40px;
 }
-h1 { margin: 0 0 4px; font-size: 24px; }
-.sub { margin: 0 0 16px; color: var(--muted); }
+
+/* ─── Page header ────────────────────────────────────────────────────────── */
+.page-header {
+  margin-bottom: 14px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: -0.55px;
+}
+
+.sub { margin: 0; color: var(--muted); font-size: 13px; }
+
+/* ─── Warning banner ─────────────────────────────────────────────────────── */
 .warn {
-  border: 1px solid rgba(210, 153, 34, 0.45);
-  background: rgba(210, 153, 34, 0.12);
-  color: #f2cc60;
+  border: 1px solid rgba(154, 112, 48, 0.38);
+  background: rgba(154, 112, 48, 0.08);
+  color: #7a5820;
   border-radius: 10px;
   padding: 10px 12px;
   margin-bottom: 14px;
   font-size: 13px;
 }
-.card {
+
+[data-theme="dark"] .warn {
+  color: #c8a44a;
+  background: rgba(200, 160, 70, 0.08);
+  border-color: rgba(200, 160, 70, 0.35);
+}
+
+/* ─── Unified panel (replaces individual cards) ──────────────────────────── */
+.panel {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px;
-  margin-bottom: 12px;
+  border-radius: 14px;
+  overflow: hidden;
 }
-h2 { margin: 0 0 12px; font-size: 16px; }
+
+/* ─── Sections within panel ──────────────────────────────────────────────── */
+.section {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section--last {
+  border-bottom: none;
+}
+
+h2 {
+  margin: 0 0 14px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.1px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+h2::before {
+  content: '§';
+  display: inline;
+  font-style: italic;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--accent);
+  opacity: 0.65;
+}
+
+/* ─── Preview ────────────────────────────────────────────────────────────── */
 .preview-label { font-size: 12px; color: var(--muted); margin-right: 4px; }
+
 .preview-wrap {
   margin-top: 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 14px;
-  background: #0b0f14;
+  background: #ede6d8;
   overflow: auto;
 }
+
+[data-theme="dark"] .preview-wrap {
+  background: #141210;
+}
+
 .preview-sidebar {
   width: 300px;
   border: 1px solid var(--border);
@@ -53,14 +128,16 @@ h2 { margin: 0 0 12px; font-size: 16px; }
   background: var(--card);
   transform-origin: top left;
 }
+
 .preview-header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
-  background: #101722;
+  background: var(--bg);
 }
+
 .preview-dot {
   width: 8px;
   height: 8px;
@@ -68,36 +145,53 @@ h2 { margin: 0 0 12px; font-size: 16px; }
   background: var(--accent);
   flex-shrink: 0;
 }
+
 .preview-title { font-size: var(--preview-base-size, 12px); color: var(--text); flex: 1; }
 .preview-gear { font-size: 12px; color: var(--muted); }
-.preview-content { padding: 10px; background: var(--card); }
+
+.preview-content {
+  padding: 10px;
+  background: var(--card);
+}
+
 .preview-pill {
   display: inline-block;
   font-size: var(--preview-section-size, 11px);
   color: var(--text);
-  background: rgba(255,255,255,0.06);
+  background: rgba(100, 65, 20, 0.07);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 3px 8px;
   margin-bottom: 8px;
 }
+
+[data-theme="dark"] .preview-pill {
+  background: rgba(255, 232, 195, 0.06);
+}
+
 .preview-line {
-  height: 8px;
-  background: rgba(255,255,255,0.08);
+  height: 7px;
+  background: rgba(100, 65, 20, 0.1);
   border-radius: 4px;
   margin-bottom: 7px;
 }
+
+[data-theme="dark"] .preview-line {
+  background: rgba(255, 232, 195, 0.08);
+}
+
 .preview-line.lg { width: 88%; }
 .preview-line:not(.lg) { width: 100%; }
-.preview-content {
-  font-size: var(--preview-content-size, 13px);
-}
+
+.preview-content { font-size: var(--preview-content-size, 13px); }
+
 .preview-accent-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-top: 10px;
 }
+
 .preview-accent-chip {
   font-size: var(--preview-content-size, 11px);
   color: #fff;
@@ -105,29 +199,49 @@ h2 { margin: 0 0 12px; font-size: 16px; }
   border-radius: 999px;
   padding: 3px 8px;
 }
+
 .preview-muted { font-size: var(--preview-meta-size, 11px); color: var(--muted); }
+
+/* ─── Form rows ──────────────────────────────────────────────────────────── */
 .row {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-bottom: 10px;
 }
-.row span:first-child { min-width: 70px; color: var(--muted); }
-input[type="range"] { flex: 1; }
+
+.row:last-of-type { margin-bottom: 0; }
+
+.row span:first-child {
+  min-width: 90px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+/* ─── Color grid ─────────────────────────────────────────────────────────── */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 8px 12px;
 }
+
 .field {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
+
 .field label {
   font-size: 12px;
   color: var(--muted);
 }
+
 .field input[type="color"] {
   width: 42px;
   height: 28px;
@@ -135,35 +249,78 @@ input[type="range"] { flex: 1; }
   border: 1px solid var(--border);
   border-radius: 6px;
   background: transparent;
+  cursor: pointer;
 }
+
 .field input[type="text"] {
   width: 120px;
-  background: #0f1117;
+  background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 5px 8px;
   font-size: 12px;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color 0.15s;
 }
+
+.field input[type="text"]:focus {
+  border-color: var(--accent);
+}
+
+/* ─── Action rows ────────────────────────────────────────────────────────── */
 .actions {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-top: 12px;
 }
+
 button {
   border: 1px solid var(--border);
-  background: #1e2430;
+  background: var(--bg);
   color: var(--text);
   border-radius: 8px;
   padding: 7px 11px;
   font-size: 12px;
+  font-family: var(--font-sans);
   cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
 }
+
+button:hover { background: rgba(100, 65, 20, 0.06); }
+[data-theme="dark"] button:hover { background: rgba(255, 232, 195, 0.06); }
+button:active { transform: scale(0.98); }
+
 button.primary {
   border-color: var(--accent);
-  background: rgba(143,176,255,0.18);
+  background: rgba(160, 96, 48, 0.12);
+  color: var(--accent);
+  font-weight: 600;
 }
-.sticky { margin-top: 16px; }
-.status { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 18px; }
 
+[data-theme="dark"] button.primary {
+  background: rgba(200, 144, 96, 0.14);
+}
+
+button.primary:hover {
+  background: rgba(160, 96, 48, 0.2);
+}
+
+[data-theme="dark"] button.primary:hover {
+  background: rgba(200, 144, 96, 0.22);
+}
+
+/* ─── Sticky save bar ────────────────────────────────────────────────────── */
+.sticky {
+  margin-top: 16px;
+}
+
+/* ─── Status message ─────────────────────────────────────────────────────── */
+.status {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+  min-height: 18px;
+}

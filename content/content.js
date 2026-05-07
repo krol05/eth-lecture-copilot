@@ -211,6 +211,9 @@
     sidebarIframe.src = chrome.runtime.getURL('sidebar/sidebar.html');
     sidebarIframe.style.width = `${sidebarWidthPx}px`;
     sidebarIframe.style.minWidth = `${sidebarWidthPx}px`;
+    sidebarIframe.setAttribute('aria-label', 'ETH Lecture Copilot sidebar');
+    sidebarIframe.setAttribute('title', 'ETH Lecture Copilot');
+    sidebarIframe.setAttribute('role', 'complementary');
     document.body.appendChild(sidebarIframe);
 
     sidebarResizeHandle = document.createElement('div');
@@ -232,7 +235,8 @@
     // Listen for messages from sidebar
     window.addEventListener('message', onSidebarMessage);
 
-    // Send ready state once iframe loads
+    // Send the handshake once the extension page has loaded. Before load,
+    // contentWindow.origin is the parent page's origin, causing a DOMException.
     sidebarIframe.addEventListener('load', () => {
       postToSidebar({ type: 'EXTENSION_READY', lectureUrl: location.href });
     });
@@ -465,7 +469,11 @@
               tryCandidate(idx + 1);
               return;
             }
-            fetchAndPublishVtt(vttUrl, eventId, gen);
+            // DOM is the most accurate source (Tobira's <time datetime> attribute);
+            // fall back to data.json fields if the DOM element isn't yet rendered.
+            const lectureDate = extractLectureDateFromPage()
+                             || extractLectureDateFromPlayerData(response.data);
+            fetchAndPublishVtt(vttUrl, eventId, gen, lectureDate);
           }
         );
       };
@@ -476,7 +484,7 @@
     attemptExtraction(0);
   }
 
-  function fetchAndPublishVtt(vttUrl, eventId, gen) {
+  function fetchAndPublishVtt(vttUrl, eventId, gen, lectureDate) {
     chrome.runtime.sendMessage({ type: 'FETCH_VTT', url: vttUrl }, vttResp => {
       if (gen !== extractionGen) return;
       if (chrome.runtime.lastError) {
@@ -499,9 +507,10 @@
         return;
       }
 
-      // Send clean [HH:MM:SS] text lines — same clean format as manual paste
       const transcriptText = formatTranscript(cues);
       const lectureTitle = document.querySelector('h1')?.textContent?.trim() || 'Lecture';
+      const courseKey   = extractCourseKeyFromUrl(location.href);
+      const courseName  = extractCourseName(lectureTitle);
 
       postToSidebar({
         type: 'TRANSCRIPT_READY',
@@ -511,11 +520,90 @@
         lectureUrl: location.href,
         eventId,
         vttUrl,
-        videoDuration: videoEl?.duration || 0
+        videoDuration: videoEl?.duration || 0,
+        lectureDate: lectureDate || null,
+        courseKey:   courseKey  || null,
+        courseName:  courseName || null,
       });
       lastSuccessfulEventId = eventId || extractEventIdFromVttUrl(vttUrl) || null;
       blockedEventIdAfterNav = null;
     });
+  }
+
+  /** Scrape the lecture recording date directly from the video.ethz.ch page DOM.
+   *  Tobira renders <time datetime="2026-05-04T08:13:00.000Z">Yesterday at…</time>
+   *  right below the <h1> title. We walk up from the h1 to find its sibling time
+   *  element, which is always the current video's date (series-list <time> elements
+   *  appear later in the DOM and are never the first match). */
+  function extractLectureDateFromPage() {
+    try {
+      // Walk up from h1 up to 5 levels; look for a time[datetime] sibling
+      const h1 = document.querySelector('h1');
+      if (h1) {
+        let ancestor = h1.parentElement;
+        for (let depth = 0; depth < 6 && ancestor; depth++, ancestor = ancestor.parentElement) {
+          const t = ancestor.querySelector('time[datetime]');
+          if (t) {
+            const dt = t.getAttribute('datetime');
+            return dt || null;
+          }
+        }
+      }
+      // Fallback: first time[datetime] anywhere on page is the current video's date
+      const t = document.querySelector('time[datetime]');
+      return t ? (t.getAttribute('datetime') || null) : null;
+    } catch { return null; }
+  }
+
+  /** Extract the lecture recording date from Tobira/Opencast data.json */
+  function extractLectureDateFromPlayerData(data) {
+    if (!data) return null;
+    // Opencast mediapackage format
+    const mp = data.mediapackage || data.mediaPackage;
+    if (mp?.start) return mp.start;
+    if (mp?.date) return mp.date;
+    // Tobira flat format
+    if (data.start)   return data.start;
+    if (data.created) return data.created;
+    if (data.date)    return data.date;
+    return null;
+  }
+
+  /** Derive a stable course key from a video.ethz.ch URL.
+   *  e.g. /lectures/d-infk/2024/spring/252-0002-00L/uuid → "d-infk::252-0002-00L" */
+  function extractCourseKeyFromUrl(href) {
+    if (!href) return null;
+    try {
+      const parts = new URL(href).pathname.split('/').filter(Boolean);
+      // Expect: lectures / dept / year / season / courseId / eventId
+      if (parts[0] === 'lectures' && parts.length >= 5) {
+        return `${parts[1]}::${parts[4]}`;
+      }
+      // Fallback: first 3 meaningful path segments
+      return parts.slice(0, 3).join('::') || null;
+    } catch { return null; }
+  }
+
+  /** Extract a human course name from the H1 lecture title.
+   *  "Algorithms and Data Structures — Lecture 5" → "Algorithms and Data Structures"
+   *
+   *  Tobira breadcrumbs render the full URL path as nav links:
+   *    Lectures → D-INFK → 2026 → Spring → Parallele Programmierung
+   *  We must skip URL path segments (seasons, years, dept codes) to get the real name. */
+  const _BAD_BREADCRUMB = /^(home|start|lectures?|spring|fall|autumn|winter|summer|herbst|früh?ling|sommer|d-\w{1,8}|\d{4})$/i;
+  function extractCourseName(lectureTitle) {
+    if (!lectureTitle) return null;
+    // Try breadcrumb nav on page first — skip URL path segments
+    const breadcrumbs = document.querySelectorAll('nav a, .breadcrumb a, [aria-label="breadcrumb"] a, [class*="breadcrumb"] a');
+    for (const el of breadcrumbs) {
+      const t = el.textContent?.trim();
+      if (t && t.length > 4 && !_BAD_BREADCRUMB.test(t)) return t;
+    }
+    // Fall back to stripping "Lecture N" / "— Lecture" suffix from H1
+    return lectureTitle
+      .replace(/[\s—–-]+lecture\s*\d+.*/i, '')
+      .replace(/[\s—–-]+\d{4}.*/i, '')
+      .trim() || lectureTitle;
   }
 
   function stripVttHeader(vtt) {
@@ -752,14 +840,21 @@
 
   // ─── Sidebar Messaging ───────────────────────────────────────────────────────
 
+  /** Origin of this extension's pages (chrome-extension://{id}) */
+  const _extOrigin = new URL(chrome.runtime.getURL('')).origin;
+
   function postToSidebar(msg) {
     if (!sidebarIframe?.contentWindow) return;
     try {
-      sidebarIframe.contentWindow.postMessage(msg, '*');
+      // Restrict to our own extension origin — prevents other pages from spoofing reads.
+      sidebarIframe.contentWindow.postMessage(msg, _extOrigin);
     } catch (_) {}
   }
 
   function onSidebarMessage(e) {
+    // Only accept messages that literally came from our sidebar iframe's window object.
+    // This prevents any page script from sending forged _copilot messages.
+    if (e.source !== sidebarIframe?.contentWindow) return;
     const msg = e.data;
     if (!msg?._copilot) return;
     if (!msg?.type) return;
@@ -767,6 +862,16 @@
     switch (msg.type) {
       case 'SEEK_VIDEO':
         if (videoEl) videoEl.currentTime = msg.time;
+        break;
+
+      case 'SPEED_CHANGE':
+        if (videoEl) {
+          const newRate = msg.direction > 0
+            ? Math.min(4.0,  Math.round((videoEl.playbackRate + 0.25) * 100) / 100)
+            : Math.max(0.25, Math.round((videoEl.playbackRate - 0.25) * 100) / 100);
+          videoEl.playbackRate = newRate;
+          showSpeedOverlay(newRate);
+        }
         break;
 
       case 'CAPTURE_FRAME':
@@ -794,28 +899,30 @@
   // ─── Frame Capture ───────────────────────────────────────────────────────────
 
   async function captureVideoFrame() {
-    if (!videoEl) return null;
-
-    // Strategy 1: direct canvas capture (fast, frame-accurate)
-    const canvasCapture = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = videoEl.videoWidth || 1280;
-      canvas.height = videoEl.videoHeight || 720;
-      canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null;
-    };
-
-    try {
-      const b64 = canvasCapture();
-      if (b64) return b64;
-    } catch (_) {
-      console.warn('[ETH Copilot] Canvas capture tainted, falling back to tab screenshot…');
+    // Re-query if the stored reference is stale (SPA navigation, player reinit)
+    let vid = videoEl;
+    if (!vid || !vid.isConnected) {
+      vid = document.querySelector('video');
+      if (vid) videoEl = vid;
+    }
+    if (!vid) {
+      console.warn('[ETH Copilot] captureVideoFrame: no video element found');
+      return null;
     }
 
-    // Strategy 2: screenshot the visible tab via background, then crop to video
+    // ETH video streams are cross-origin HLS (dist.tobira.ethz.ch), so canvas
+    // drawImage and captureStream() are both blocked by CORS. We use tab screenshot
+    // (captureVisibleTab) which requires <all_urls> in manifest host_permissions.
     try {
-      const rect = videoEl.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+      const rect = vid.getBoundingClientRect();
+      const dpr  = window.devicePixelRatio || 1;
+      const cw   = Math.round(rect.width  * dpr);
+      const ch   = Math.round(rect.height * dpr);
+
+      if (cw <= 0 || ch <= 0) {
+        console.warn('[ETH Copilot] captureVideoFrame: video element has zero dimensions');
+        return null;
+      }
 
       const dataUrl = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({ type: 'CAPTURE_VISIBLE_TAB' }, resp => {
@@ -825,18 +932,16 @@
         });
       });
 
-      const img = await loadImage(dataUrl);
-      const cx = Math.round(rect.left * dpr);
-      const cy = Math.round(rect.top * dpr);
-      const cw = Math.round(rect.width * dpr);
-      const ch = Math.round(rect.height * dpr);
+      const img    = await loadImage(dataUrl);
+      const cx     = Math.round(rect.left * dpr);
+      const cy     = Math.round(rect.top  * dpr);
       const canvas = document.createElement('canvas');
-      canvas.width = cw;
+      canvas.width  = cw;
       canvas.height = ch;
       canvas.getContext('2d').drawImage(img, cx, cy, cw, ch, 0, 0, cw, ch);
-      return canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+      return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null;
     } catch (e) {
-      console.warn('[ETH Copilot] Tab capture fallback failed:', e.message);
+      console.warn('[ETH Copilot] captureVideoFrame failed:', e.message);
       return null;
     }
   }

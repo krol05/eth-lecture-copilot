@@ -26,6 +26,13 @@ const statusLabel     = document.getElementById('status-label');
 const uiSettingsBtn   = document.getElementById('ui-settings-btn');
 
 function init() {
+  // Set version in footer
+  try {
+    const v = chrome.runtime.getManifest().version;
+    const vEl = document.getElementById('footer-version');
+    if (vEl && v) vEl.textContent = `Lecture Copilot v${v}`;
+  } catch (_) {}
+
   // Build provider dropdown — split into two optgroups
   const cloudGroup = document.createElement('optgroup');
   cloudGroup.label = 'Cloud';

@@ -203,6 +203,8 @@
       // Extension CSP blocks dynamic import() from CDNs; ship ort-wasm-simd-threaded.jsep.{mjs,wasm} locally.
       env.backends.onnx.wasm.wasmPaths = getOnnxWasmBaseUrl();
       env.backends.onnx.wasm.proxy = false;
+      // Single-threaded required in extension pages — multi-threading causes crashes in MV3 contexts.
+      env.backends.onnx.wasm.numThreads = 1;
 
       if (onStatus) onStatus('Downloading embedding model (~25 MB, one-time)...');
       embedPipeline = await pipeline('feature-extraction', EMBED_MODEL, {
@@ -216,8 +218,15 @@
       if (onStatus) onStatus('Model ready');
     })();
 
-    try { await modelLoadPromise; }
-    finally { modelLoadPromise = null; }
+    try {
+      await modelLoadPromise;
+    } catch (err) {
+      // Surface OOM or CSP-block errors clearly rather than swallowing them
+      embedPipeline = null;
+      throw new Error(`Embedding model failed to load: ${err?.message || err}. Try reloading the page.`);
+    } finally {
+      modelLoadPromise = null;
+    }
   }
 
   async function embedSingleText(text) {

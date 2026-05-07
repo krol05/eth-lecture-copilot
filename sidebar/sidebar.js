@@ -25,6 +25,7 @@
   let qaReplyReadyTargetEl = null;
   let isGenerating = false;
   let isChatting = false;
+  let pendingFrameBase64 = null;   // frame captured when checkbox is ticked, used at send time
   let activeGuideRequestId = null;
   let requestIdCounter = 0;
   const pendingRequests = {};
@@ -48,12 +49,15 @@
   const qaMessages_el = document.getElementById('qa-messages');
   const qaInput      = document.getElementById('qa-input');
   const qaSend       = document.getElementById('qa-send');
-  const attachCb     = document.getElementById('attach-frame-cb');
-  const framePreview = document.getElementById('frame-preview-label');
+  const attachCb              = document.getElementById('attach-frame-cb');
+  const framePreviewContainer = document.getElementById('frame-preview-container');
+  const framePreviewImg       = document.getElementById('frame-preview-img');
+  const framePreviewRemove    = document.getElementById('frame-preview-remove');
   const themeToggle  = document.getElementById('theme-toggle');
   const uiSettingsBtn = document.getElementById('ui-settings-btn');
   const focusToggle  = document.getElementById('focus-toggle');
   const exportPdfBtn = document.getElementById('export-pdf-btn');
+  const exportMdBtn  = document.getElementById('export-md-btn');
   const copyLatexMultiBtn = document.getElementById('copy-latex-multi-btn');
   const regenerateBtn = document.getElementById('regenerate-btn');
   const blockPrevBtn = document.getElementById('block-prev-btn');
@@ -157,12 +161,21 @@
     genCountSel?.addEventListener('change', updateTokenHint);
     updateTokenHint();
 
+    function updateSliderFill(slider) {
+      const pct = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
+      slider.style.setProperty('--pct', `${pct}%`);
+    }
     genTempSlider?.addEventListener('input', () => {
       genTempValue.textContent = (genTempSlider.value / 100).toFixed(2);
+      updateSliderFill(genTempSlider);
     });
+    if (genTempSlider) updateSliderFill(genTempSlider);
+
     qaTempSlider?.addEventListener('input', () => {
       qaTempValue.textContent = (qaTempSlider.value / 100).toFixed(2);
+      updateSliderFill(qaTempSlider);
     });
+    if (qaTempSlider) updateSliderFill(qaTempSlider);
     genFallbackCb?.addEventListener('change', () => {
       genSettings?.classList.toggle('disabled-controls', genFallbackCb.checked);
     });
@@ -192,14 +205,59 @@
       hideQaReplyReadyToast();
     });
 
-    attachCb.addEventListener('change', () => {
-      framePreview.style.display = attachCb.checked ? 'inline' : 'none';
+    // Cross-tab notification: click → switch to QA and jump to reply
+    _crossTabNotifyBtn()?.addEventListener('click', () => {
+      switchTab('qa');
+      if (_crossTabNotifyTarget && _crossTabNotifyTarget.isConnected) {
+        qaScrollMessagesToShowElementTop(_crossTabNotifyTarget);
+      }
+      hideCrossTabNotify();
+    });
+    _crossTabNotifyClose()?.addEventListener('click', () => hideCrossTabNotify());
+
+    // QA scroll-to-bottom button
+    initQaScrollButton();
+
+    // Arrow ↑/↓ speed control — works from anywhere in the sidebar
+    document.addEventListener('keydown', e => {
+      if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA') return;
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        postToContent({ type: 'SPEED_CHANGE', direction: e.key === 'ArrowUp' ? 1 : -1 });
+      }
+    });
+
+    attachCb.addEventListener('change', async () => {
+      if (attachCb.checked) {
+        attachCb.disabled = true;
+        const b64 = await captureFrame();
+        attachCb.disabled = false;
+        if (b64) {
+          pendingFrameBase64 = b64;
+          framePreviewImg.src = 'data:image/jpeg;base64,' + b64;
+          framePreviewContainer.style.display = 'block';
+        } else {
+          attachCb.checked = false;
+          pendingFrameBase64 = null;
+          setStatus('warning', 'Frame capture failed');
+        }
+      } else {
+        pendingFrameBase64 = null;
+        framePreviewContainer.style.display = 'none';
+      }
+    });
+
+    framePreviewRemove.addEventListener('click', () => {
+      attachCb.checked = false;
+      pendingFrameBase64 = null;
+      framePreviewContainer.style.display = 'none';
     });
 
     // Script panel
     scriptPanelToggle?.addEventListener('click', () => {
       const isOpen = scriptPanel.classList.toggle('open');
-      scriptPanelBody.style.display = isOpen ? '' : 'none';
+      scriptPanelBody.classList.toggle('open', isOpen);
+      scriptPanelToggle.setAttribute('aria-expanded', String(isOpen));
     });
     scriptUploadBtn?.addEventListener('click', () => scriptFileInput?.click());
     scriptFileInput?.addEventListener('change', handleScriptUpload);
@@ -214,7 +272,39 @@
       if (e.target === latexSelectModal) closeLatexSelectModal();
     });
 
+    // Export MD button
+    document.getElementById('export-md-btn')?.addEventListener('click', exportGuideAsMarkdown);
+
+    // Escape key: dismiss modals
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      if (latexSelectModal && !latexSelectModal.hidden) { closeLatexSelectModal(); return; }
+      const timeoutDialog = document.getElementById('guide-timeout-dialog');
+      if (timeoutDialog && !timeoutDialog.hidden) { timeoutDialog.hidden = true; return; }
+    });
+
+    // History search + clear button
+    document.getElementById('history-search')?.addEventListener('input', onHistorySearch);
+    document.getElementById('history-search-clear')?.addEventListener('click', () => {
+      const input = document.getElementById('history-search');
+      if (input) { input.value = ''; onHistorySearch(); }
+    });
+
     window.addEventListener('message', onContentMessage);
+
+    // Keep --qa-footer-h CSS var in sync so the reply-ready toast always
+    // floats precisely above the footer regardless of footer height changes.
+    const _footerStack = document.querySelector('.qa-footer-stack');
+    if (_footerStack) {
+      const _updateFooterH = () => {
+        const h = _footerStack.getBoundingClientRect().height;
+        if (h > 0) document.documentElement.style.setProperty('--qa-footer-h', `${h}px`);
+      };
+      _updateFooterH();
+      if (window.ResizeObserver) {
+        new ResizeObserver(_updateFooterH).observe(_footerStack);
+      }
+    }
 
     updateThinkingHint();
 
@@ -233,6 +323,42 @@
     }
   }
 
+  // ─── Safe storage write with quota / lastError handling ──────────────────
+  function storageSet(data, callback) {
+    if (!chrome?.storage?.local) { callback?.(); return; }
+    chrome.storage.local.set(data, () => {
+      if (chrome.runtime.lastError) {
+        const msg = chrome.runtime.lastError.message || '';
+        if (msg.includes('QUOTA_BYTES') || msg.includes('quota')) {
+          console.warn('[Copilot] Storage quota exceeded — oldest Q&A pruned.', msg);
+          // Prune the oldest 5 history entries and retry once
+          chrome.storage.local.get(['guideHistory'], res => {
+            const h = Array.isArray(res.guideHistory) ? res.guideHistory : [];
+            if (h.length > 5) {
+              const pruned = h.slice(0, h.length - 5);
+              chrome.storage.local.set({ guideHistory: pruned }, () => {
+                chrome.storage.local.set(data, () => {
+                  if (chrome.runtime.lastError) {
+                    console.error('[Copilot] Storage write failed after pruning:', chrome.runtime.lastError.message);
+                  }
+                  callback?.();
+                });
+              });
+            } else {
+              console.error('[Copilot] Storage quota exceeded and history too small to prune:', msg);
+              callback?.();
+            }
+          });
+        } else {
+          console.error('[Copilot] Storage write error:', msg);
+          callback?.();
+        }
+      } else {
+        callback?.();
+      }
+    });
+  }
+
   function pickLatestHistoryForUrl(history, lectureUrl) {
     const want = normalizeLectureUrl(lectureUrl);
     const matches = (history || []).filter(
@@ -248,7 +374,7 @@
     sanitizeGuide(guide);
     qaMessages = Array.isArray(qaFromStorage) ? qaFromStorage : [];
     if (persistSession && currentLectureUrl) {
-      chrome.storage?.local?.set({
+      storageSet({
         currentGuide: guide,
         currentLectureUrl: currentLectureUrl,
         currentQaMessages: qaMessages
@@ -337,7 +463,7 @@
     const welcome = qaMessages_el.querySelector('.qa-welcome');
     if (welcome) welcome.remove();
     for (const m of qaMessages) {
-      appendChatMsg(m.role, m.content, !!m.imageBase64, 'none');
+      appendChatMsg(m.role, m.content, m.imageBase64 || false, 'none');
     }
     qaMessages_el.scrollTop = qaMessages_el.scrollHeight;
   }
@@ -412,6 +538,8 @@
   // ─── Message Handling ─────────────────────────────────────────────────────
 
   function onContentMessage(e) {
+    // Only accept messages from video.ethz.ch — reject any other origin.
+    if (e.origin !== 'https://video.ethz.ch') return;
     const msg = e.data;
     if (!msg?.type) return;
 
@@ -471,7 +599,8 @@
 
   function postToContent(msg) {
     msg._copilot = true;
-    window.parent.postMessage(msg, '*');
+    // Target only video.ethz.ch — prevents message leakage to other origins.
+    window.parent.postMessage(msg, 'https://video.ethz.ch');
   }
 
   function makeRequestId() {
@@ -593,12 +722,15 @@
   function captureFrame() {
     return new Promise((resolve) => {
       const id = makeRequestId();
+      console.log('[Copilot] captureFrame: sending CAPTURE_FRAME', id);
       const timer = setTimeout(() => {
+        console.warn('[Copilot] captureFrame: timed out waiting for FRAME_CAPTURED', id);
         delete pendingRequests[id];
         resolve(null);
       }, 8000);
       pendingRequests[id] = (result) => {
         clearTimeout(timer);
+        console.log('[Copilot] captureFrame: got result', id, result ? 'b64 length=' + result.length : 'null');
         resolve(result);
       };
       postToContent({ type: 'CAPTURE_FRAME', requestId: id });
@@ -630,13 +762,16 @@
   function handleTranscriptReady(msg) {
     if (msg.lectureUrl) currentLectureUrl = msg.lectureUrl;
     transcript = {
-      cues: msg.cues,
-      text: msg.transcriptText,
-      lectureTitle: msg.lectureTitle,
-      lectureUrl: msg.lectureUrl || currentLectureUrl,
-      videoDuration: msg.videoDuration
+      cues:          msg.cues,
+      text:          msg.transcriptText,
+      lectureTitle:  msg.lectureTitle,
+      lectureUrl:    msg.lectureUrl || currentLectureUrl,
+      videoDuration: msg.videoDuration,
+      lectureDate:   msg.lectureDate  || null,
+      courseKey:     msg.courseKey    || null,
+      courseName:    msg.courseName   || null,
     };
-    chrome.storage?.local?.set({
+    storageSet({
       currentTranscript: transcript,
       currentLectureUrl: currentLectureUrl
     });
@@ -758,7 +893,7 @@
       guide = response.data;
       guide = sanitizeGuide(guide);
 
-      chrome.storage?.local?.set({ currentGuide: guide, currentLectureUrl: currentLectureUrl });
+      storageSet({ currentGuide: guide, currentLectureUrl: currentLectureUrl });
       saveToHistory();
 
       setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
@@ -780,7 +915,25 @@
     }
   }
 
+  let _regenConfirmTimer = null;
+
   function onRegenerateClick() {
+    // Two-step confirmation: first click asks, second click executes
+    if (!regenerateBtn.classList.contains('confirming')) {
+      regenerateBtn.classList.add('confirming');
+      regenerateBtn.title = 'Click again to confirm — this will clear the current guide';
+      clearTimeout(_regenConfirmTimer);
+      _regenConfirmTimer = setTimeout(() => {
+        regenerateBtn.classList.remove('confirming');
+        regenerateBtn.title = 'Generate a new guide';
+      }, 3500);
+      return;
+    }
+    // Confirmed
+    clearTimeout(_regenConfirmTimer);
+    regenerateBtn.classList.remove('confirming');
+    regenerateBtn.title = 'Generate a new guide';
+
     guide = null;
     currentBlockIndex = -1;
     qaMessages = [];
@@ -994,8 +1147,17 @@ Now process the following transcript:`;
 
   function syncAutoFollowCheckbox() {
     if (autoTimeFollowCb) autoTimeFollowCb.checked = autoTimeFollow;
+    const isPaused = autoTimeFollow && autoFollowPaused;
     if (autoFollowPauseHint) {
-      autoFollowPauseHint.style.display = (autoTimeFollow && autoFollowPaused) ? '' : 'none';
+      autoFollowPauseHint.style.display = isPaused ? '' : 'none';
+    }
+    const guideNavFollow = document.querySelector('.guide-nav-follow');
+    if (guideNavFollow) {
+      if (isPaused) {
+        guideNavFollow.dataset.paused = '';
+      } else {
+        delete guideNavFollow.dataset.paused;
+      }
     }
   }
 
@@ -1020,6 +1182,7 @@ Now process the following transcript:`;
       autoFollowPaused = idx !== liveIdx;
       syncAutoFollowCheckbox();
     }
+    if (guideBlock) guideBlock.dataset.direction = delta > 0 ? 'next' : 'prev';
     renderBlock(idx);
   }
 
@@ -1027,6 +1190,7 @@ Now process the following transcript:`;
     if (!guide?.guide?.length) return;
     autoFollowPaused = false;
     syncAutoFollowCheckbox();
+    if (guideBlock) guideBlock.removeAttribute('data-direction'); // use fadeIn, not slide
     const idx = findBlockIndex(lastVideoTime);
     renderBlock(idx);
   }
@@ -1071,7 +1235,9 @@ Now process the following transcript:`;
 
     // Update counter + progress
     blockCounter.textContent = `${idx + 1} / ${blocks.length}`;
-    progressFill.style.width = `${((idx + 1) / blocks.length) * 100}%`;
+    const progressPct = Math.round(((idx + 1) / blocks.length) * 100);
+    progressFill.style.width = `${progressPct}%`;
+    progressFill.parentElement?.setAttribute('aria-valuenow', String(progressPct));
 
     // Build block HTML
     let html = `
@@ -1137,10 +1303,12 @@ Now process the following transcript:`;
       `;
     }
 
+    // ── Freeze visually during render to eliminate KaTeX-induced flicker ──
+    const _animDir = guideBlock.dataset.direction || null;
+    guideBlock.removeAttribute('data-direction'); // suppress animation during render
+    guideBlock.style.opacity = '0';               // hide until fully rendered
+
     guideBlock.innerHTML = html;
-    guideBlock.style.animation = 'none';
-    void guideBlock.offsetWidth;
-    guideBlock.style.animation = '';
 
     if (typeof renderMathInElement === 'function') {
       guideBlock.querySelectorAll('.concepts-list .concept-text').forEach(el => {
@@ -1187,12 +1355,68 @@ Now process the following transcript:`;
       }
     });
 
+    // ── Normalize formula sizes BEFORE revealing ──
+    normalizeBlockFormulas(guideBlock);
+
+    // ── All rendering done — trigger animation cleanly ──
+    void guideBlock.offsetWidth;   // flush layout
+    guideBlock.style.opacity = ''; // hand off to CSS animation
+
+    if (_animDir) {
+      guideBlock.dataset.direction = _animDir;
+      // Use animationend so removing data-direction doesn't trigger a second fadeIn replay
+      const _onAnimEnd = () => {
+        guideBlock.style.animation = 'none';
+        void guideBlock.offsetWidth;
+        guideBlock.removeAttribute('data-direction');
+        // Leave animation:none — next renderBlock resets cleanly via opacity:0
+      };
+      guideBlock.addEventListener('animationend', _onAnimEnd, { once: true });
+    } else {
+      // Replay soft fadeIn for auto-follow / jump transitions
+      guideBlock.style.animation = 'none';
+      void guideBlock.offsetWidth;
+      guideBlock.style.animation = '';
+    }
+
     guideBlock.querySelectorAll('.latex-copy-btn[data-block-index]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const i = parseInt(btn.dataset.blockIndex, 10);
         await copyLatexFromSingleBlock(i);
       });
     });
+  }
+
+  /**
+   * After KaTeX renders, measure each formula's natural width and apply a uniform
+   * CSS zoom to all formulas in the block so none require horizontal scrolling.
+   * The same zoom value is applied to all (smallest needed wins) so they look
+   * consistent side-by-side. Zoom is clamped at 0.46 minimum.
+   */
+  function normalizeBlockFormulas(blockEl) {
+    const renders = blockEl.querySelectorAll('.formula-render');
+    if (!renders.length) return;
+
+    // Reset any previous zoom so measurements reflect natural size
+    renders.forEach(r => { r.style.zoom = ''; });
+    void blockEl.offsetHeight; // force layout
+
+    const containerW = blockEl.clientWidth - 28; // 16+12 padding buffer
+    if (containerW <= 0) return;
+
+    let minScale = 1.0;
+    renders.forEach(render => {
+      const sw = render.scrollWidth;
+      if (sw > containerW && sw > 0) {
+        const ratio = containerW / sw;
+        if (ratio < minScale) minScale = ratio;
+      }
+    });
+
+    const scale = Math.max(0.46, minScale);
+    if (scale < 0.995) {
+      renders.forEach(r => { r.style.zoom = scale.toFixed(3); });
+    }
   }
 
   function formatBlockForCopy(block, idx) {
@@ -1486,6 +1710,18 @@ Now process the following transcript:`;
     const hasSettings = hasUsableSettings();
     const hasTranscript = transcript?.text;
     qaSend.disabled = !hasText || !hasSettings || !hasTranscript || isChatting;
+    // Dynamic tooltip explaining why button is disabled
+    if (!hasSettings) {
+      qaSend.title = 'Add an API key in Settings first';
+    } else if (!hasTranscript) {
+      qaSend.title = 'Waiting for transcript to load';
+    } else if (!hasText) {
+      qaSend.title = 'Type a question first';
+    } else if (isChatting) {
+      qaSend.title = 'Waiting for reply…';
+    } else {
+      qaSend.title = 'Send (Enter)';
+    }
     // Auto-resize textarea
     qaInput.style.height = 'auto';
     qaInput.style.height = Math.min(qaInput.scrollHeight, 120) + 'px';
@@ -1499,16 +1735,13 @@ Now process the following transcript:`;
     isChatting = true;
     qaSend.disabled = true;
 
-    // Capture frame if checkbox checked
+    // Use the frame that was captured when the checkbox was ticked
     let imageBase64 = null;
-    if (attachCb.checked) {
-      setStatus('loading', 'Capturing video frame…');
-      imageBase64 = await captureFrame();
+    if (attachCb.checked && pendingFrameBase64) {
+      imageBase64 = pendingFrameBase64;
+      pendingFrameBase64 = null;
       attachCb.checked = false;
-      framePreview.style.display = 'none';
-      if (!imageBase64) {
-        setStatus('warning', 'Frame capture failed — sending without image');
-      }
+      framePreviewContainer.style.display = 'none';
     }
 
     setStatus('loading', 'Waiting for reply…');
@@ -1516,7 +1749,7 @@ Now process the following transcript:`;
     // Add user message to UI
     const userMsg = { role: 'user', content: text, imageBase64 };
     qaMessages.push(userMsg);
-    appendChatMsg('user', text, !!imageBase64);
+    appendChatMsg('user', text, imageBase64 || false);
     qaInput.value = '';
     qaInput.style.height = 'auto';
 
@@ -1551,12 +1784,31 @@ Now process the following transcript:`;
 
     } catch (err) {
       typingEl.remove();
-      appendChatMsg('assistant', `⚠ Error: ${err.message}`, false);
+      const humanError = humanizeApiError(err.message);
+      appendChatMsg('assistant', `Error: ${humanError}`, false);
     } finally {
       isChatting = false;
       onQaInputChange();
       restoreMainStatus();
     }
+  }
+
+  function humanizeApiError(msg) {
+    if (!msg) return 'Something went wrong. Try again.';
+    const m = String(msg);
+    if (/401|unauthorized|invalid.{0,20}key|api.{0,10}key/i.test(m))
+      return 'Invalid API key — check your key in Settings (popup icon).';
+    if (/403|forbidden/i.test(m))
+      return 'Access denied — your API key may not have permission for this model.';
+    if (/429|rate.?limit|too many/i.test(m))
+      return 'Rate limit hit — wait a moment and try again.';
+    if (/timeout|timed.{0,5}out|network/i.test(m))
+      return 'Request timed out — the server took too long. Try again.';
+    if (/json|parse|syntax/i.test(m))
+      return 'The AI returned an unexpected response. Try a different model or settings.';
+    if (/context.{0,20}length|too.{0,10}long|token/i.test(m))
+      return 'The conversation is too long for this model. Start a new Q&A or use a model with a larger context window.';
+    return m.length > 140 ? m.slice(0, 140) + '…' : m;
   }
 
   /**
@@ -1648,7 +1900,7 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   function qaScrollToBottom() {
-    if (qaMessages_el) qaMessages_el.scrollTop = qaMessages_el.scrollHeight;
+    if (qaMessages_el) qaMessages_el.scrollTo({ top: qaMessages_el.scrollHeight, behavior: 'smooth' });
   }
 
   /**
@@ -1662,7 +1914,8 @@ ${guideBlocksStr}${scriptContext}`;
     const rootRect = root.getBoundingClientRect();
     const elRect = el.getBoundingClientRect();
     const delta = elRect.top - rootRect.top;
-    root.scrollTop = Math.max(0, root.scrollTop + delta);
+    const target = Math.max(0, root.scrollTop + delta);
+    root.scrollTo({ top: target, behavior: 'smooth' });
   }
 
   function hideQaReplyReadyToast() {
@@ -1670,7 +1923,52 @@ ${guideBlocksStr}${scriptContext}`;
     if (qaReplyReadyToast) qaReplyReadyToast.hidden = true;
   }
 
+  // ─── Frame image lightbox ────────────────────────────────────────────────
+  let _frameLightbox = null;
+
+  function openFrameLightbox(src) {
+    if (!_frameLightbox) {
+      _frameLightbox = document.createElement('div');
+      _frameLightbox.id = 'frame-lightbox';
+      _frameLightbox.className = 'frame-lightbox';
+      _frameLightbox.hidden = true;
+      _frameLightbox.setAttribute('role', 'dialog');
+      _frameLightbox.setAttribute('aria-label', 'Video frame preview');
+      _frameLightbox.innerHTML = `
+        <div class="frame-lightbox-backdrop"></div>
+        <div class="frame-lightbox-inner">
+          <button class="frame-lightbox-close" title="Close preview" aria-label="Close">×</button>
+          <img class="frame-lightbox-img" alt="Video frame preview">
+        </div>
+      `;
+      document.body.appendChild(_frameLightbox);
+      _frameLightbox.querySelector('.frame-lightbox-backdrop')
+        .addEventListener('click', closeFrameLightbox);
+      _frameLightbox.querySelector('.frame-lightbox-close')
+        .addEventListener('click', closeFrameLightbox);
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && _frameLightbox && !_frameLightbox.hidden) {
+          closeFrameLightbox();
+        }
+      });
+    }
+    _frameLightbox.querySelector('.frame-lightbox-img').src = src;
+    _frameLightbox.hidden = false;
+  }
+
+  function closeFrameLightbox() {
+    if (_frameLightbox) _frameLightbox.hidden = true;
+  }
+
   function onQaMessagesClick(e) {
+    // Frame thumbnail click → open lightbox
+    const thumb = e.target?.closest?.('.chat-frame-thumb');
+    if (thumb) {
+      e.preventDefault();
+      openFrameLightbox(thumb.src);
+      return;
+    }
+    // Timestamp link click → seek video
     const ts = e.target?.closest?.('.qa-timestamp-link[data-seconds]');
     if (!ts) return;
     e.preventDefault();
@@ -1723,12 +2021,16 @@ ${guideBlocksStr}${scriptContext}`;
       ? normalizeLatexForKatex(unescapeMathDelimiters(content))
       : String(content ?? '');
 
+    // hasFrame may be a raw base64 string or a legacy boolean
+    const frameBase64 = typeof hasFrame === 'string' && hasFrame ? hasFrame : null;
+
     const div = document.createElement('div');
     div.className = `chat-msg ${role}`;
 
     let bubbleHtml = '';
-    if (role === 'user' && hasFrame) {
-      bubbleHtml += `<span class="chat-frame-badge">📸</span>`;
+    if (role === 'user' && frameBase64) {
+      // Thumbnail — clicks handled via delegation on qaMessages_el
+      bubbleHtml += `<img class="chat-frame-thumb" src="data:image/jpeg;base64,${frameBase64}" alt="Attached video frame" title="Click to preview full image">`;
     }
     bubbleHtml += `<div class="chat-bubble">${renderMarkdown(renderedContent)}</div>`;
     div.innerHTML = bubbleHtml;
@@ -1754,6 +2056,9 @@ ${guideBlocksStr}${scriptContext}`;
 
     if (role === 'user') {
       qaScrollToBottom();
+    } else if (_currentTab !== 'qa') {
+      // User navigated away from QA while waiting — show cross-tab notification
+      showCrossTabNotify(div);
     } else if (wasFollowing) {
       hideQaReplyReadyToast();
       qaScrollMessagesToShowElementTop(div);
@@ -1828,76 +2133,435 @@ ${guideBlocksStr}${scriptContext}`;
   // ─── History Persistence ──────────────────────────────────────────────────
 
   function persistChat() {
-    chrome.storage?.local?.set({ currentQaMessages: qaMessages });
+    storageSet({ currentQaMessages: qaMessages });
     saveToHistory();
+  }
+
+  // ─── History: lecture ID assignment ──────────────────────────────────────
+  // lectureIdMap: { [normalizedUrl]: { number, courseKey } }
+  // Numbers are permanent per URL — deletion does not free a slot.
+
+  function assignLectureNumber(norm, courseKey, idMap) {
+    if (idMap[norm]) return idMap[norm].number;          // already assigned
+    const sameCoursePeers = Object.values(idMap).filter(v => v.courseKey === courseKey);
+    const nextNum = sameCoursePeers.length
+      ? Math.max(...sameCoursePeers.map(v => v.number)) + 1
+      : 1;
+    idMap[norm] = { number: nextNum, courseKey };
+    return nextNum;
   }
 
   function saveToHistory() {
     if (!guide?.guide?.length || !currentLectureUrl) return;
-    chrome.storage?.local?.get(['guideHistory'], saved => {
+    const norm      = normalizeLectureUrl(currentLectureUrl);
+    const courseKey = transcript?.courseKey || deriveCourseKeyFromUrl(currentLectureUrl);
+    const courseName= transcript?.courseName || transcript?.lectureTitle || 'Unknown Course';
+
+    chrome.storage?.local?.get(['guideHistory', 'lectureIdMap'], saved => {
       let history = Array.isArray(saved.guideHistory) ? [...saved.guideHistory] : [];
-      const norm = normalizeLectureUrl(currentLectureUrl);
+      const idMap  = (typeof saved.lectureIdMap === 'object' && saved.lectureIdMap) ? { ...saved.lectureIdMap } : {};
+
+      const lectureNumber = assignLectureNumber(norm, courseKey, idMap);
       const prevSame = history.find(h => normalizeLectureUrl(h.lectureUrl) === norm);
       history = history.filter(h => normalizeLectureUrl(h.lectureUrl) !== norm);
+
       const entry = {
-        lectureUrl: currentLectureUrl,
-        lectureTitle: transcript?.lectureTitle || guide?.lecture_title || 'Lecture',
-        date: new Date().toISOString(),
+        lectureUrl:    currentLectureUrl,
+        lectureTitle:  transcript?.lectureTitle || guide?.lecture_title || 'Lecture',
+        lectureDate:   transcript?.lectureDate  || null,
+        guideDate:     new Date().toISOString(),
+        date:          new Date().toISOString(),   // kept for back-compat
+        courseKey,
+        courseName,
+        lectureNumber,
         guide,
+        // unlimitedStorage permission allows keeping images; they persist across sessions.
         qaMessages: qaMessages.length ? qaMessages : (prevSame?.qaMessages || [])
       };
       history.unshift(entry);
       if (history.length > 50) history.length = 50;
-      chrome.storage?.local?.set({ guideHistory: history });
+      storageSet({ guideHistory: history, lectureIdMap: idMap });
     });
   }
+
+  /** Fallback course-key derivation for URLs already in storage without a courseKey. */
+  function deriveCourseKeyFromUrl(href) {
+    if (!href) return 'other';
+    try {
+      const parts = new URL(href).pathname.split('/').filter(Boolean);
+      if (parts[0] === 'lectures' && parts.length >= 5) return `${parts[1]}::${parts[4]}`;
+      return parts.slice(0, 3).join('::') || 'other';
+    } catch { return 'other'; }
+  }
+
+  /** Extract { year, season } from a lecture URL for the year/season tree grouping. */
+  function extractYearSeason(href) {
+    try {
+      const parts = new URL(href).pathname.split('/').filter(Boolean);
+      // ['lectures', 'd-infk', '2026', 'spring', '01337', ...]
+      if (parts[0] === 'lectures' && parts.length >= 4) {
+        const yr = /^\d{4}$/.test(parts[2]) ? parts[2] : null;
+        const raw = parts[3] || '';
+        const sn = /^(spring|fall|autumn|winter|summer|herbst|frühling|sommer)$/i.test(raw)
+          ? raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
+          : null;
+        if (yr && sn) return { year: yr, season: sn };
+      }
+    } catch {}
+    return { year: 'Other', season: '' };
+  }
+
+  const SEASON_ORDER = { Spring: 0, Summer: 1, Autumn: 2, Fall: 2, Herbst: 2, Winter: 3 };
 
   function loadHistory() {
     const container = document.getElementById('history-list');
     if (!container) return;
-    container.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:14px;">Loading…</p>';
-    chrome.storage?.local?.get(['guideHistory'], saved => {
-      const history = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
+    // Reset saved search state whenever history reloads
+    _historySearchPreState = null;
+    container.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:14px 16px;">Loading…</p>';
+
+    chrome.storage?.local?.get(['guideHistory', 'hiddenCourses'], saved => {
+      const history   = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
+      const hiddenSet = new Set(Array.isArray(saved.hiddenCourses) ? saved.hiddenCourses : []);
+
       if (!history.length) {
-        container.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:14px;">No previous guides yet.</p>';
+        container.innerHTML = `
+          <div class="history-empty">
+            <span class="history-empty-mark">§</span>
+            <p class="history-empty-text">No guides generated yet.</p>
+          </div>`;
         return;
       }
-      container.innerHTML = '';
-      for (const entry of history) {
-        const isActive = entry.lectureUrl === currentLectureUrl;
-        const div = document.createElement('div');
-        div.className = 'history-item' + (isActive ? ' history-active' : '');
-        const dateStr = new Date(entry.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const blockCount = entry.guide?.guide?.length || 0;
-        const chatCount = entry.qaMessages?.length || 0;
-        div.innerHTML = `
-          <div class="history-title">${escHtml(entry.lectureTitle)}</div>
-          <div class="history-meta">
-            <span>${dateStr}</span>
-            <span>${blockCount} blocks</span>
-            ${chatCount ? `<span>${Math.floor(chatCount / 2)} Q&amp;As</span>` : ''}
-          </div>
-          <div class="history-actions">
-            <a class="history-link" href="${escAttr(entry.lectureUrl)}" target="_blank" title="Open lecture">Open lecture</a>
-            <button class="history-load-btn" title="Load this guide">Load guide</button>
-            <button class="history-pdf-btn" type="button" title="Export guide as PDF">PDF</button>
-            ${!isActive ? '<button class="history-delete-btn" title="Delete">Delete</button>' : ''}
-          </div>
-        `;
-        div.querySelector('.history-load-btn').addEventListener('click', () => loadHistoryEntry(entry));
-        div.querySelector('.history-pdf-btn').addEventListener('click', () => {
-          if (entry.guide?.guide?.length) {
-            openGuidePrintWindow(entry.guide, entry.lectureTitle);
-          }
+
+      // One-time repair: fix bad courseNames (season/year/dept artifacts)
+      const _BAD_NAME_RE = /^(spring|fall|autumn|winter|summer|herbst|früh?ling|sommer|lectures?|d-\w{1,8}|\d{4}|lecture)$/i;
+      const _isBadName  = n => !n || _BAD_NAME_RE.test(n.trim());
+      const patchedHistory = history.map(e => ({
+        ...e,
+        courseKey:  e.courseKey  || deriveCourseKeyFromUrl(e.lectureUrl),
+        courseName: _isBadName(e.courseName) ? (e.lectureTitle || 'Lecture') : e.courseName,
+      }));
+      if (history.some(e => _isBadName(e.courseName))) {
+        storageSet({ guideHistory: patchedHistory });
+      }
+
+      const normCurrent    = normalizeLectureUrl(currentLectureUrl);
+      const activeCourseKey = patchedHistory.find(e => normalizeLectureUrl(e.lectureUrl) === normCurrent)?.courseKey;
+
+      // ── Group by courseKey ────────────────────────────────────────────────
+      const groups = {};
+      for (const entry of patchedHistory) {
+        const k = entry.courseKey || 'other';
+        if (!groups[k]) groups[k] = { courseName: entry.courseName, entries: [], yearSeason: extractYearSeason(entry.lectureUrl) };
+        groups[k].entries.push(entry);
+      }
+
+      for (const g of Object.values(groups)) {
+        g.entries.sort((a, b) => {
+          const da = a.lectureDate || a.guideDate || a.date || '';
+          const db = b.lectureDate || b.guideDate || b.date || '';
+          return da < db ? -1 : da > db ? 1 : 0;
         });
-        const delBtn = div.querySelector('.history-delete-btn');
-        if (delBtn) delBtn.addEventListener('click', () => deleteHistoryEntry(entry.lectureUrl));
-        container.appendChild(div);
+        const allHaveNumbers = g.entries.every(e => typeof e.lectureNumber === 'number');
+        g.entries.forEach((e, i) => { e._displayNum = allHaveNumbers ? e.lectureNumber : (i + 1); });
+      }
+
+      container.innerHTML = '';
+
+      // ── Section A: Recent ─────────────────────────────────────────────────
+      const allEntriesByDate = [...patchedHistory].sort((a, b) => {
+        const da = a.guideDate || a.date || '';
+        const db = b.guideDate || b.date || '';
+        return da > db ? -1 : da < db ? 1 : 0;
+      });
+      // Attach _displayNum from their group for display
+      allEntriesByDate.forEach(e => {
+        const g = groups[e.courseKey || 'other'];
+        e._displayNum = g ? e._displayNum : null;
+      });
+      container.appendChild(buildRecentSection(allEntriesByDate, normCurrent, hiddenSet));
+
+      // ── Section B: Year/Season tree ───────────────────────────────────────
+      const visibleKeys = Object.keys(groups).filter(k => !hiddenSet.has(k));
+      const hiddenKeys  = Object.keys(groups).filter(k =>  hiddenSet.has(k));
+
+      // Build Year → Season → [courseKeys] index
+      const yearTree = {}; // { year: { season: [courseKey] } }
+      for (const k of visibleKeys) {
+        const { year, season } = groups[k].yearSeason;
+        const yr = year || 'Other';
+        const sn = season || 'Other';
+        if (!yearTree[yr]) yearTree[yr] = {};
+        if (!yearTree[yr][sn]) yearTree[yr][sn] = [];
+        yearTree[yr][sn].push(k);
+      }
+
+      // Sort years descending, seasons by calendar order
+      const sortedYears = Object.keys(yearTree).sort((a, b) => {
+        if (a === 'Other') return 1;
+        if (b === 'Other') return -1;
+        return b.localeCompare(a);
+      });
+
+      // Determine active path for auto-open
+      const activeEntry = patchedHistory.find(e => normalizeLectureUrl(e.lectureUrl) === normCurrent);
+      const activeYS = activeEntry ? extractYearSeason(activeEntry.lectureUrl) : null;
+
+      for (const year of sortedYears) {
+        const yearEl = buildYearGroup(year, yearTree[year], groups, hiddenSet, activeCourseKey, activeYS);
+        container.appendChild(yearEl);
+      }
+
+      // Hidden courses at the bottom (same as before)
+      if (hiddenKeys.length) {
+        const hiddenSection = document.createElement('details');
+        hiddenSection.className = 'history-hidden-section';
+        hiddenSection.innerHTML = `<summary class="history-hidden-summary">Hidden courses (${hiddenKeys.length})</summary>`;
+        for (const k of hiddenKeys) {
+          hiddenSection.appendChild(buildCourseGroup(k, groups[k], hiddenSet, true, activeCourseKey));
+        }
+        container.appendChild(hiddenSection);
       }
     });
   }
 
+  const RECENT_PAGE_SIZE = 6;
+
+  function buildRecentSection(entriesByDate, normCurrent, hiddenSet) {
+    const wrapper = document.createElement('details');
+    wrapper.className = 'history-recent-group';
+    wrapper.innerHTML = `<summary class="history-recent-summary">
+      <span class="history-recent-chevron">›</span>
+      <span class="history-recent-label">Recent</span>
+      <span class="history-recent-count">${entriesByDate.length} guide${entriesByDate.length !== 1 ? 's' : ''}</span>
+    </summary>`;
+
+    let shownCount = 0;
+    const itemsContainer = document.createElement('div');
+    itemsContainer.className = 'history-recent-items';
+
+    function renderPage() {
+      const slice = entriesByDate.slice(shownCount, shownCount + RECENT_PAGE_SIZE);
+      slice.forEach(entry => {
+        itemsContainer.appendChild(buildRecentItem(entry, normCurrent));
+      });
+      shownCount += slice.length;
+      if (shownCount < entriesByDate.length) {
+        const remaining = entriesByDate.length - shownCount;
+        const next = Math.min(RECENT_PAGE_SIZE, remaining);
+        const moreBtn = document.createElement('button');
+        moreBtn.className = 'history-show-more-btn';
+        moreBtn.textContent = `Show ${next} more`;
+        moreBtn.addEventListener('click', () => {
+          moreBtn.remove();
+          renderPage();
+        });
+        itemsContainer.appendChild(moreBtn);
+      }
+    }
+    renderPage();
+
+    wrapper.appendChild(itemsContainer);
+    return wrapper;
+  }
+
+  function buildRecentItem(entry, normCurrent) {
+    const isActive = normalizeLectureUrl(entry.lectureUrl) === normCurrent;
+
+    // Lecture upload date (when the lecture was recorded/published)
+    const lectureDate = entry.lectureDate;
+    const lectureDateLabel = lectureDate
+      ? new Date(lectureDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+      : null;
+
+    // Guide creation date
+    const guideDate = entry.guideDate || entry.date;
+    const guideDateLabel = guideDate
+      ? new Date(guideDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+      : '—';
+
+    const div = document.createElement('div');
+    div.className = 'history-recent-item' + (isActive ? ' history-active' : '');
+    div.innerHTML = `
+      <div class="history-recent-item-meta">
+        <span class="history-recent-course">${escHtml(entry.courseName || '—')}</span>
+        <span class="history-recent-date">${lectureDateLabel ? lectureDateLabel : guideDateLabel}</span>
+      </div>
+      <div class="history-recent-item-title">${escHtml(entry.lectureTitle)}</div>
+      ${lectureDateLabel ? `<div class="history-guide-date">Guide created: ${guideDateLabel}</div>` : ''}
+      <div class="history-actions history-recent-actions">
+        <button class="history-load-btn" title="Load guide">Load</button>
+        <button class="history-pdf-btn" type="button" title="Export as PDF">PDF</button>
+      </div>
+    `;
+    div.querySelector('.history-load-btn').addEventListener('click', () => loadHistoryEntry(entry));
+    div.querySelector('.history-pdf-btn').addEventListener('click', () => {
+      if (entry.guide?.guide?.length) openGuidePrintWindow(entry.guide, entry.lectureTitle);
+    });
+    return div;
+  }
+
+  function buildYearGroup(year, seasonMap, groups, hiddenSet, activeCourseKey, activeYS) {
+    const isActiveYear = activeYS?.year === year;
+    const totalGuides  = Object.values(seasonMap).flat().reduce((n, k) => n + (groups[k]?.entries.length || 0), 0);
+
+    const details = document.createElement('details');
+    details.className = 'history-year-group';
+    if (isActiveYear) details.open = true;
+    details.innerHTML = `<summary class="history-year-summary">
+      <span class="history-year-chevron">›</span>
+      <span class="history-year-label">${escHtml(year)}</span>
+      <span class="history-year-count">${totalGuides} guide${totalGuides !== 1 ? 's' : ''}</span>
+    </summary>`;
+
+    const sortedSeasons = Object.keys(seasonMap).sort((a, b) => {
+      const oa = SEASON_ORDER[a] ?? 99;
+      const ob = SEASON_ORDER[b] ?? 99;
+      return oa !== ob ? oa - ob : a.localeCompare(b);
+    });
+
+    for (const season of sortedSeasons) {
+      const courseKeys = seasonMap[season];
+      const isActiveSeason = isActiveYear && activeYS?.season === season;
+      const seasonDetails = buildSeasonGroup(season, courseKeys, groups, hiddenSet, activeCourseKey, isActiveSeason);
+      details.appendChild(seasonDetails);
+    }
+
+    return details;
+  }
+
+  function buildSeasonGroup(season, courseKeys, groups, hiddenSet, activeCourseKey, isActiveSeason) {
+    const totalGuides = courseKeys.reduce((n, k) => n + (groups[k]?.entries.length || 0), 0);
+
+    const details = document.createElement('details');
+    details.className = 'history-season-group';
+    if (isActiveSeason) details.open = true;
+    details.innerHTML = `<summary class="history-season-summary">
+      <span class="history-season-chevron">›</span>
+      <span class="history-season-label">${escHtml(season)}</span>
+      <span class="history-season-count">${totalGuides} guide${totalGuides !== 1 ? 's' : ''}</span>
+    </summary>`;
+
+    // Sort courses: active first, then alphabetically
+    const sortedCourseKeys = [...courseKeys].sort((a, b) => {
+      if (a === activeCourseKey) return -1;
+      if (b === activeCourseKey) return  1;
+      return groups[a].courseName.localeCompare(groups[b].courseName);
+    });
+
+    for (const k of sortedCourseKeys) {
+      details.appendChild(buildCourseGroup(k, groups[k], hiddenSet, false, activeCourseKey));
+    }
+
+    return details;
+  }
+
+  function buildCourseGroup(courseKey, group, hiddenSet, isHidden, activeCourseKey) {
+    const normCurrent = normalizeLectureUrl(currentLectureUrl);
+    const hasActive   = group.entries.some(e => normalizeLectureUrl(e.lectureUrl) === normCurrent);
+    const count       = group.entries.length;
+
+    const details = document.createElement('details');
+    details.className = 'history-course-group';
+    if (hasActive || count <= 3) details.open = true;
+
+    const guideWord = count === 1 ? 'guide' : 'guides';
+    details.innerHTML = `
+      <summary class="history-course-summary">
+        <span class="history-course-chevron">›</span>
+        <span class="history-course-name">${escHtml(group.courseName)}</span>
+        <span class="history-course-count">${count} ${guideWord}</span>
+        <button class="history-course-hide-btn" title="${isHidden ? 'Unhide course' : 'Hide course'}" data-key="${escAttr(courseKey)}">
+          ${isHidden ? 'Unhide' : 'Hide'}
+        </button>
+      </summary>
+    `;
+
+    details.querySelector('.history-course-hide-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (isHidden) unhideHistoryCourse(courseKey);
+      else          hideHistoryCourse(courseKey);
+    });
+
+    for (const entry of group.entries) {
+      const isActive    = normalizeLectureUrl(entry.lectureUrl) === normCurrent;
+      const num         = entry._displayNum;
+      const blockCount  = entry.guide?.guide?.length || 0;
+      const chatCount   = Math.floor((entry.qaMessages?.length || 0) / 2);
+
+      // Prefer lecture upload date for display; fall back to guide creation date
+      const displayDate = entry.lectureDate || entry.guideDate || entry.date;
+      const guideDate   = entry.guideDate || entry.date;
+      const dateLabel   = displayDate
+        ? new Date(displayDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+        : '—';
+      const guideDateLabel = guideDate
+        ? new Date(guideDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '';
+
+      const item = document.createElement('div');
+      item.className = 'history-item' + (isActive ? ' history-active' : '');
+
+      item.innerHTML = `
+        <div class="history-item-header">
+          <span class="history-lecture-num">${num}</span>
+          <span class="history-title">${escHtml(entry.lectureTitle)}</span>
+        </div>
+        <div class="history-meta">
+          <span title="Lecture date">${dateLabel}</span>
+          <span>${blockCount} block${blockCount !== 1 ? 's' : ''}</span>
+          ${chatCount ? `<span>${chatCount} Q&amp;A${chatCount !== 1 ? 's' : ''}</span>` : ''}
+        </div>
+        ${guideDateLabel ? `<div class="history-guide-date">Guide created: ${guideDateLabel}</div>` : ''}
+        <div class="history-actions">
+          <a class="history-link" href="${escAttr(entry.lectureUrl)}" target="_blank" title="Open lecture page">Open lecture</a>
+          <button class="history-load-btn" title="Load guide">Load</button>
+          <button class="history-pdf-btn" type="button" title="Export as PDF">PDF</button>
+          ${!isActive ? `<button class="history-delete-btn" title="Delete guide">Delete</button>` : ''}
+        </div>
+      `;
+
+      item.querySelector('.history-load-btn').addEventListener('click', () => loadHistoryEntry(entry));
+      item.querySelector('.history-pdf-btn').addEventListener('click', () => {
+        if (entry.guide?.guide?.length) openGuidePrintWindow(entry.guide, entry.lectureTitle);
+      });
+      const delBtn = item.querySelector('.history-delete-btn');
+      if (delBtn) delBtn.addEventListener('click', () => deleteHistoryEntry(entry.lectureUrl));
+
+      details.appendChild(item);
+    }
+
+    return details;
+  }
+
+  function hideHistoryCourse(courseKey) {
+    chrome.storage?.local?.get(['hiddenCourses'], saved => {
+      const hidden = new Set(Array.isArray(saved.hiddenCourses) ? saved.hiddenCourses : []);
+      hidden.add(courseKey);
+      storageSet({ hiddenCourses: [...hidden] }, () => loadHistory());
+    });
+  }
+
+  function unhideHistoryCourse(courseKey) {
+    chrome.storage?.local?.get(['hiddenCourses'], saved => {
+      const hidden = new Set(Array.isArray(saved.hiddenCourses) ? saved.hiddenCourses : []);
+      hidden.delete(courseKey);
+      storageSet({ hiddenCourses: [...hidden] }, () => loadHistory());
+    });
+  }
+
   function loadHistoryEntry(entry) {
+    // Guard: if there's an active guide for a DIFFERENT URL with unsaved Q&A, prompt
+    const differentLecture = currentLectureUrl &&
+      normalizeLectureUrl(entry.lectureUrl) !== normalizeLectureUrl(currentLectureUrl);
+    if (differentLecture && guide?.guide?.length && qaMessages.length > 0) {
+      const proceed = window.confirm(
+        'Loading this history entry will replace your current guide and Q&A conversation. Continue?'
+      );
+      if (!proceed) return;
+    }
+
     guide = entry.guide;
     qaMessages = Array.isArray(entry.qaMessages) ? entry.qaMessages : [];
     transcript = transcript || { cues: [], text: '', lectureTitle: entry.lectureTitle, videoDuration: 0 };
@@ -1905,7 +2569,6 @@ ${guideBlocksStr}${scriptContext}`;
     showGuideContent();
     setStatus('ready', `Guide loaded · ${guide.guide.length} blocks`);
 
-    // Restore chat UI
     qaMessages_el.innerHTML = '';
     if (qaMessages.length) {
       restoreChatUI();
@@ -1915,36 +2578,200 @@ ${guideBlocksStr}${scriptContext}`;
     switchTab('guide');
   }
 
+  let _deleteUndoTimer = null;
+  let _deletedEntry = null;
+  let _deletedOriginalHistory = null;
+
   function deleteHistoryEntry(url) {
+    // Removes the guide entry but preserves the lectureIdMap slot (number stays reserved)
     chrome.storage?.local?.get(['guideHistory'], saved => {
-      const history = (saved.guideHistory || []).filter(h => h.lectureUrl !== url);
-      chrome.storage?.local?.set({ guideHistory: history }, () => loadHistory());
+      const history = saved.guideHistory || [];
+      const deleted = history.find(h => h.lectureUrl === url);
+      if (!deleted) return;
+      _deletedEntry = deleted;
+      _deletedOriginalHistory = history;
+      const filtered = history.filter(h => h.lectureUrl !== url);
+      storageSet({ guideHistory: filtered }, () => loadHistory());
+
+      // Show undo toast
+      const toast = document.getElementById('history-undo-toast');
+      const msg = document.getElementById('history-undo-msg');
+      const undoBtn = document.getElementById('history-undo-btn');
+      if (toast && msg && undoBtn) {
+        msg.textContent = `"${deleted.lectureTitle || 'Entry'}" deleted`;
+        toast.hidden = false;
+        clearTimeout(_deleteUndoTimer);
+        _deleteUndoTimer = setTimeout(() => {
+          toast.hidden = true;
+          _deletedEntry = null;
+          _deletedOriginalHistory = null;
+        }, 5000);
+        undoBtn.onclick = () => {
+          clearTimeout(_deleteUndoTimer);
+          toast.hidden = true;
+          if (_deletedOriginalHistory) {
+            storageSet({ guideHistory: _deletedOriginalHistory }, () => loadHistory());
+          }
+          _deletedEntry = null;
+          _deletedOriginalHistory = null;
+        };
+      }
+    });
+  }
+
+  /** Saved accordion open/close state before search started */
+  let _historySearchPreState = null;
+
+  function onHistorySearch() {
+    const q = (document.getElementById('history-search')?.value || '').trim().toLowerCase();
+    const list = document.getElementById('history-list');
+    const clearBtn = document.getElementById('history-search-clear');
+    if (!list) return;
+
+    if (clearBtn) clearBtn.hidden = !q;
+
+    if (!q) {
+      // Restore all visibility
+      list.querySelectorAll('[data-hidden]').forEach(el => delete el.dataset.hidden);
+      // Restore accordion open/closed states from before search
+      if (_historySearchPreState) {
+        _historySearchPreState.forEach(({ el, open }) => {
+          if (el.isConnected) el.open = open;
+        });
+        _historySearchPreState = null;
+      }
+      return;
+    }
+
+    // Save accordion state before first search modifies it
+    if (!_historySearchPreState) {
+      _historySearchPreState = Array.from(list.querySelectorAll('details'))
+        .map(el => ({ el, open: el.open }));
+    }
+
+    // Course groups — match on course name or lecture titles within
+    list.querySelectorAll('.history-course-group').forEach(group => {
+      const courseName = group.querySelector('.history-course-name')?.textContent?.toLowerCase() || '';
+      const titles = Array.from(group.querySelectorAll('.history-title, .history-recent-item-title'))
+        .map(el => el.textContent.toLowerCase());
+      const match = courseName.includes(q) || titles.some(t => t.includes(q));
+      if (match) { delete group.dataset.hidden; group.open = true; }
+      else group.dataset.hidden = '';
+    });
+
+    // Recent items — show individually based on title or course name
+    list.querySelectorAll('.history-recent-item').forEach(item => {
+      const text = item.textContent.toLowerCase();
+      if (text.includes(q)) delete item.dataset.hidden; else item.dataset.hidden = '';
+    });
+
+    // Recent group — open if any item is visible
+    const recentGroup = list.querySelector('.history-recent-group');
+    if (recentGroup) {
+      const hasVisible = Array.from(recentGroup.querySelectorAll('.history-recent-item'))
+        .some(i => i.dataset.hidden === undefined);
+      if (hasVisible) recentGroup.open = true;
+    }
+
+    // Season groups — hide if all courses hidden, else open
+    list.querySelectorAll('.history-season-group').forEach(season => {
+      const allHidden = Array.from(season.querySelectorAll('.history-course-group'))
+        .every(g => g.dataset.hidden !== undefined);
+      if (allHidden) season.dataset.hidden = '';
+      else { delete season.dataset.hidden; season.open = true; }
+    });
+
+    // Year groups — hide if all seasons hidden, else open
+    list.querySelectorAll('.history-year-group').forEach(year => {
+      const allHidden = Array.from(year.querySelectorAll('.history-season-group'))
+        .every(s => s.dataset.hidden !== undefined);
+      if (allHidden) year.dataset.hidden = '';
+      else { delete year.dataset.hidden; year.open = true; }
     });
   }
 
   // ─── Tab Switching ────────────────────────────────────────────────────────
 
+  let _currentTab = 'guide';
+
   function switchTab(tabName) {
-    if (tabName !== 'qa') hideQaReplyReadyToast();
+    _currentTab = tabName;
+    if (tabName === 'qa') {
+      hideCrossTabNotify();
+    } else {
+      hideQaReplyReadyToast();
+    }
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
     if (tabName === 'history') loadHistory();
   }
 
+  // ─── Cross-tab QA notification ────────────────────────────────────────────
+  // Shows when user is on Guide/History and a QA reply arrives.
+
+  let _crossTabNotifyTarget = null;
+  const _crossTabNotify      = () => document.getElementById('cross-tab-notify');
+  const _crossTabNotifyClose = () => document.getElementById('cross-tab-notify-close');
+  const _crossTabNotifyBtn   = () => document.getElementById('cross-tab-notify-action');
+
+  function showCrossTabNotify(targetDiv) {
+    _crossTabNotifyTarget = targetDiv;
+    const el = _crossTabNotify();
+    if (!el) return;
+    el.hidden = false;
+  }
+
+  function hideCrossTabNotify() {
+    _crossTabNotifyTarget = null;
+    const el = _crossTabNotify();
+    if (el) el.hidden = true;
+  }
+
+  // ─── QA Scroll-to-bottom button ───────────────────────────────────────────
+
+  function initQaScrollButton() {
+    const btn = document.getElementById('qa-scroll-bottom-btn');
+    if (!btn || !qaMessages_el) return;
+
+    const update = () => {
+      btn.hidden = qaIsFollowingLatest();
+    };
+    qaMessages_el.addEventListener('scroll', update, { passive: true });
+    btn.addEventListener('click', () => {
+      qaScrollToBottom();
+      btn.hidden = true;
+    });
+    update();
+  }
+
   // ─── Theme ────────────────────────────────────────────────────────────────
+
+  const THEMES = ['dark', 'light', 'dark-blue', 'light-white'];
+  const THEME_LABELS = { dark: 'Warm Dark', light: 'Cream Light', 'dark-blue': 'Navy Blue', 'light-white': 'Clean White' };
 
   function toggleTheme() {
     const html = document.documentElement;
-    const current = html.dataset.theme;
-    const next = current === 'dark' ? 'light' : 'dark';
+    const current = html.dataset.theme || 'dark';
+    const idx = THEMES.indexOf(current);
+    const next = THEMES[(idx + 1) % THEMES.length];
     html.dataset.theme = next;
     localStorage.setItem('eth-copilot-theme', next);
+    updateThemeToggleTooltip(next);
     applyUISettings();
+  }
+
+  function updateThemeToggleTooltip(theme) {
+    if (!themeToggle) return;
+    const next = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+    themeToggle.title = `Theme: ${THEME_LABELS[theme] || theme} → click for ${THEME_LABELS[next] || next}`;
   }
 
   function applyStoredTheme() {
     const saved = localStorage.getItem('eth-copilot-theme');
-    if (saved) document.documentElement.dataset.theme = saved;
+    if (saved) {
+      document.documentElement.dataset.theme = saved;
+      updateThemeToggleTooltip(saved);
+    }
   }
 
   async function applyUISettings() {
@@ -2120,6 +2947,56 @@ ${guideBlocksStr}${scriptContext}`;
     }
   }
 
+  function exportGuideAsMarkdown() {
+    if (!guide?.guide?.length) {
+      setStatus('warning', 'No guide to export');
+      return;
+    }
+    const title = transcript?.lectureTitle || guide.lecture_title || 'Lecture Guide';
+    const lines = [`# ${title}`, ''];
+    for (const block of guide.guide) {
+      lines.push(`## ${block.title}`);
+      lines.push(`*${fmtSec(block.start_time)} – ${fmtSec(block.end_time)}*`);
+      lines.push('');
+      if (block.key_concepts?.length) {
+        lines.push('### Key Concepts');
+        for (const c of block.key_concepts) {
+          lines.push(`- ${c.replace(/\n/g, ' ')}`);
+        }
+        lines.push('');
+      }
+      if (block.formulas?.length) {
+        lines.push('### Formulas');
+        for (const f of block.formulas) {
+          if (f.label) lines.push(`**${f.label}**`);
+          if (f.latex) lines.push(`$$${f.latex}$$`);
+        }
+        lines.push('');
+      }
+      if (block.definitions?.length) {
+        lines.push('### Definitions');
+        for (const d of block.definitions) {
+          lines.push(`**${d.term}** — ${d.definition}`);
+        }
+        lines.push('');
+      }
+      if (block.notes?.trim()) {
+        lines.push('### Notes');
+        lines.push(`> ${block.notes.replace(/\n/g, '\n> ')}`);
+        lines.push('');
+      }
+    }
+    const md = lines.join('\n');
+    const blob = new Blob([md], { type: 'text/markdown; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-guide.md`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setStatus('ready', 'Markdown exported');
+  }
+
   function getLocalBase() {
     if (!settings?.provider) return null;
     if (!String(settings.provider).startsWith('local_')) return null;
@@ -2182,6 +3059,15 @@ ${guideBlocksStr}${scriptContext}`;
       if (hint) show(hint); else if (activeHint) hide();
     });
     document.addEventListener('mouseout', function (e) {
+      const hint = e.target.closest('.setting-hint[data-tip]');
+      if (hint && hint === activeHint) hide();
+    });
+    // Keyboard accessibility for hints with tabindex="0"
+    document.addEventListener('focusin', function (e) {
+      const hint = e.target.closest('.setting-hint[data-tip]');
+      if (hint) show(hint);
+    });
+    document.addEventListener('focusout', function (e) {
       const hint = e.target.closest('.setting-hint[data-tip]');
       if (hint && hint === activeHint) hide();
     });
