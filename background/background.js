@@ -90,6 +90,114 @@ function maybeTimeoutSignal(timeoutMs) {
     : undefined;
 }
 
+function isGeminiModel(model) {
+  return /(^|\/)gemini-/.test(String(model || '').toLowerCase());
+}
+
+function isClaudeModel(model) {
+  return /(^|\/)claude-/.test(String(model || '').toLowerCase());
+}
+
+function providerMaxOutputTokens(provider, model) {
+  const m = String(model || '').toLowerCase();
+  const p = String(provider || '').toLowerCase();
+
+  if (p === 'google' || isGeminiModel(m)) {
+    if (/gemini-3/.test(m)) return 65536;
+    return 65536;
+  }
+
+  if (p === 'anthropic' || isClaudeModel(m)) return 64000;
+
+  if (/^o[0-9]/.test(m)) return 100000;
+  if (/gpt-5|gpt-4\.1/.test(m)) return 32768;
+  if (/gpt-4o|gpt-oss/.test(m)) return 16384;
+
+  if (p === 'openai') return 16384;
+  if (p === 'xai') return 32768;
+  if (p === 'mistral') return 32768;
+  if (p === 'fireworks') return 16384;
+  if (p === 'cohere') return 4096;
+
+  if (p === 'deepseek') return 8192;
+  if (p === 'groq') return 8192;
+  if (p === 'together') return 8192;
+  if (p === 'cerebras') return 8192;
+  if (p === 'nvidia_nim') return 8192;
+  if (p === 'perplexity') return 8192;
+  if (p === 'huggingface') return 8192;
+  if (p === 'hyperbolic') return 8192;
+  if (p === 'sambanova') return 8192;
+  if (p === 'moonshot') return 8192;
+  if (p === 'zhipu') return 8192;
+  if (p === 'qwen') return 8192;
+
+  // Local and proxy providers vary by backend. Start high and let the retry
+  // logic below honor provider-reported limits when available.
+  if (p.startsWith('local_')) return 81920;
+
+  return 8192;
+}
+
+function outputTokensFor(provider, model, requestedMax) {
+  const providerCap = providerMaxOutputTokens(provider, model);
+  const requested = Number.isFinite(requestedMax) && requestedMax > 0
+    ? requestedMax
+    : providerCap;
+  return Math.max(1, Math.min(requested, providerCap));
+}
+
+function providerReportedMaxTokens(error) {
+  const text = String(error?.message || error || '');
+  const match = text.match(/supported range is from\s+\d+\s+to\s+(\d+)(?:\s*\((exclusive|inclusive)\))?/i);
+  if (!match) return null;
+  const n = Number(match[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return match[2]?.toLowerCase() === 'exclusive' ? n - 1 : n;
+}
+
+function guideMaxTokensFor(provider, model, requestedMax) {
+  return outputTokensFor(provider, model, requestedMax);
+}
+
+function geminiThinkingConfig(model, thinking) {
+  const m = String(model || '').toLowerCase();
+  const level = thinking || 'none';
+  const isGemini3 = /^gemini-3/.test(m) || /\/gemini-3/.test(m);
+
+  if (isGemini3) {
+    if (level === 'none') {
+      // Gemini 3 Pro cannot fully disable thinking; Flash/Lite support minimal.
+      return { thinkingLevel: /pro/.test(m) ? 'low' : 'minimal' };
+    }
+    return { thinkingLevel: level };
+  }
+
+  const budgets = { low: 1024, medium: 8192, high: 24576 };
+  if (level === 'none') {
+    // Gemini 2.5 Pro cannot disable thinking; use the smallest allowed budget.
+    return { thinkingBudget: /pro/.test(m) ? 128 : 0 };
+  }
+  return { thinkingBudget: budgets[level] || 0 };
+}
+
+function oaiReasoningEffort(provider, model, thinking) {
+  const level = thinking || 'none';
+  const m = String(model || '').toLowerCase();
+  const p = String(provider || '').toLowerCase();
+
+  if (/^o[0-9]/.test(m)) return level === 'none' ? null : level;
+
+  // LiteLLM maps reasoning_effort to Gemini thinking controls. Omit it for
+  // other OpenAI-compatible providers because many reject unknown reasoning args.
+  if (p === 'local_litellm' && isGeminiModel(m)) {
+    if (level === 'none') return /^gemini-3/.test(m) ? 'none' : 'disable';
+    return level;
+  }
+
+  return null;
+}
+
 function emitApiProgress(sender, requestId, stage, detail = '') {
   const tabId = sender?.tab?.id;
   if (!tabId || !requestId) return;
@@ -132,12 +240,12 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
     ...(opts.jsonMode ? { response_format: { type: 'json_object' } } : {})
   };
 
-  if (isOSeries) {
-    const thinking = opts.thinking || 'none';
-    if (thinking !== 'none') {
-      body.reasoning_effort = thinking;
-    }
-  } else {
+  const reasoningEffort = oaiReasoningEffort(opts.provider, model, opts.thinking || 'none');
+  if (reasoningEffort) {
+    body.reasoning_effort = reasoningEffort;
+  }
+
+  if (!isOSeries) {
     body.temperature = opts.temperature ?? 0.4;
   }
 
@@ -190,8 +298,8 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
 
   if (useThinking) {
     const budgetTokens = thinkingBudgets[thinking];
-    // Claude Opus 4.7+ uses adaptive thinking (no budget_tokens parameter)
-    const isAdaptiveModel = /claude-opus-4-7/.test(model);
+    // Claude Opus 4.7+ uses adaptive thinking (no budget_tokens parameter).
+    const isAdaptiveModel = /claude-opus-4-[67]|claude-sonnet-4-6/.test(model);
     if (isAdaptiveModel) {
       body.thinking = { type: 'adaptive' };
     } else {
@@ -241,22 +349,12 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
     return { role: m.role === 'assistant' ? 'model' : 'user', parts };
   });
 
-  const thinking = opts.thinking || 'none';
-  const thinkingBudgets = { low: 1024, medium: 8192, high: 24576 };
-
   const generationConfig = {
     temperature: opts.temperature ?? 0.4,
     ...(opts.maxTokens ? { maxOutputTokens: opts.maxTokens } : {}),
-    ...(opts.jsonMode ? { responseMimeType: 'application/json' } : {})
+    ...(opts.jsonMode ? { responseMimeType: 'application/json' } : {}),
+    thinkingConfig: geminiThinkingConfig(model, opts.thinking || 'none')
   };
-
-  if (thinking !== 'none' && thinkingBudgets[thinking]) {
-    // Gemini 3+ uses thinkingLevel ('low'|'medium'|'high'); older Gemini uses thinkingBudget
-    const isGemini3 = /^gemini-3/.test(model);
-    generationConfig.thinkingConfig = isGemini3
-      ? { thinkingLevel: thinking }
-      : { thinkingBudget: thinkingBudgets[thinking] };
-  }
 
   const body = {
     systemInstruction: { parts: [{ text: systemPrompt }] },
@@ -275,7 +373,7 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
   if (!resp.ok) throw new Error(`Google → ${resp.status}: ${await resp.text()}`);
   const d = await resp.json();
   const cand = d.candidates?.[0];
-  const text = cand?.content?.parts?.[0]?.text ?? '';
+  const text = cand?.content?.parts?.find(part => !part.thought && part.text)?.text ?? '';
   if (cand?.finishReason === 'MAX_TOKENS') {
     console.warn('[BG] Gemini finishReason=MAX_TOKENS — guide output may be incomplete');
   }
@@ -368,8 +466,7 @@ async function handleMessage(msg, progress = () => {}) {
       progress('queued', 'Guide request received');
       const { transcriptText, systemPrompt } = msg;
       const useFallback = !!msg.guideFallback;
-      const defaultMax = provider === 'google' ? 64000 : 32768;
-      const maxGuideTokens = msg.guideMaxTokens || defaultMax;
+      const maxGuideTokens = guideMaxTokensFor(provider, model, msg.guideMaxTokens);
 
       let guideTemp, guideThinking;
       if (useFallback) {
@@ -382,6 +479,7 @@ async function handleMessage(msg, progress = () => {}) {
 
       const opts = {
         ...baseOpts,
+        provider,
         temperature: guideTemp,
         maxTokens: maxGuideTokens,
         timeoutMs: null,
@@ -390,8 +488,22 @@ async function handleMessage(msg, progress = () => {}) {
         thinking: guideThinking
       };
 
-      const raw = await callAI(provider, model, apiKey,
-        [{ role: 'user', content: transcriptText }], systemPrompt, opts);
+      let raw;
+      try {
+        raw = await callAI(provider, model, apiKey,
+          [{ role: 'user', content: transcriptText }], systemPrompt, opts);
+      } catch (err) {
+        const reportedMax = providerReportedMaxTokens(err);
+        if (!reportedMax || reportedMax >= opts.maxTokens) throw err;
+        const retryTokens = guideMaxTokensFor(provider, model, reportedMax);
+        if (retryTokens >= opts.maxTokens) throw err;
+        progress('queued', `Retrying with provider max output ${retryTokens}`);
+        raw = await callAI(provider, model, apiKey,
+          [{ role: 'user', content: transcriptText }], systemPrompt, {
+            ...opts,
+            maxTokens: retryTokens
+          });
+      }
       progress('provider_finished', 'Response body received');
       return parseGuideResponse(raw);
     }
@@ -399,8 +511,9 @@ async function handleMessage(msg, progress = () => {}) {
     case 'CHAT': {
       const { messages, systemPrompt } = msg;
       const chatTemp = msg.chatTemperature ?? 0.35;
+      const chatThinking = msg.chatThinking || 'none';
       return callAI(provider, model, apiKey, messages, systemPrompt,
-        { ...baseOpts, temperature: chatTemp, timeoutMs: 120000 });
+        { ...baseOpts, provider, temperature: chatTemp, timeoutMs: 120000, thinking: chatThinking });
     }
 
     case 'FETCH_VTT': {

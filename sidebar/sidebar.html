@@ -139,16 +139,21 @@
         </div>
         <div class="gen-setting-row">
           <label class="gen-setting-label" for="gen-count-select">Block count
-            <span class="setting-hint" tabindex="0" data-tip="How many blocks to split the lecture into:&#10;Low = 5-10 (broad overview)&#10;Medium = 10-20 (one per major topic)&#10;High = 20-35 (subtopics &amp; examples)&#10;Very High = 30-50+ (every shift &amp; proof step)&#10;&#10;More blocks x high detail = larger output.&#10;Stay within your model's output limit (8K-128K tokens).">?</span>
+            <span class="setting-hint" tabindex="0" data-tip="How many blocks to split the lecture into:&#10;Low = 5-10 (broad overview)&#10;Medium = 10-20 (one per major topic)&#10;High = 20-35 (subtopics &amp; examples)&#10;Very High = 30-50+ (every shift &amp; proof step)&#10;Custom tokens = keep Very High block guidance but manually set the output token cap for debugging provider errors.&#10;&#10;More blocks x high detail = larger output. If a token error appears, try Custom tokens and lower the cap.">?</span>
           </label>
           <select id="gen-count-select" class="gen-setting-select">
             <option value="low">Low</option>
             <option value="medium">Medium</option>
             <option value="high">High</option>
             <option value="very_high" selected>Very High</option>
+            <option value="custom">Custom tokens…</option>
           </select>
         </div>
-        <p id="gen-token-hint" class="gen-token-hint">~32 000 output tokens</p>
+        <div id="gen-custom-token-row" class="gen-setting-row" style="display:none">
+          <label class="gen-setting-label" for="gen-custom-token-input">Max tokens</label>
+          <input type="number" id="gen-custom-token-input" class="gen-setting-input" min="1" step="1" placeholder="e.g. 32768">
+        </div>
+        <p id="gen-token-hint" class="gen-token-hint">Up to ~82 000 output tokens (upper limit, not a target)</p>
         <div class="gen-setting-row">
           <label class="gen-setting-label" for="gen-temp-slider">Temperature
             <span class="setting-hint" tabindex="0" data-tip="0.10 = strict &amp; safe JSON&#10;0.20-0.30 = richer writing, still reliable (recommended: 0.25)&#10;0.40+ = creative but may break JSON or hallucinate">?</span>
@@ -400,6 +405,17 @@
         </label>
         <input type="range" id="qa-temp-slider" min="0" max="100" value="35" step="1">
         <span id="qa-temp-value" class="gen-slider-value">0.35</span>
+      </div>
+      <div class="qa-temp-row">
+        <label class="qa-temp-label" for="qa-thinking-select">Thinking
+          <span class="setting-hint" id="qa-thinking-hint" tabindex="0" data-tip="">?</span>
+        </label>
+        <select id="qa-thinking-select" class="gen-setting-select">
+          <option value="none" selected>None</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
       </div>
       <div class="qa-attach-row">
         <label class="attach-label">

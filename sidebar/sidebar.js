@@ -72,6 +72,8 @@
   const genLangCustom  = document.getElementById('gen-lang-custom');
   const genDetailSel   = document.getElementById('gen-detail-select');
   const genCountSel    = document.getElementById('gen-count-select');
+  const genCustomTokenRow = document.getElementById('gen-custom-token-row');
+  const genCustomTokenInput = document.getElementById('gen-custom-token-input');
   const genTokenHint   = document.getElementById('gen-token-hint');
   const genTempSlider  = document.getElementById('gen-temp-slider');
   const genTempValue   = document.getElementById('gen-temp-value');
@@ -80,6 +82,8 @@
   const genFallbackCb  = document.getElementById('gen-fallback-cb');
   const qaTempSlider   = document.getElementById('qa-temp-slider');
   const qaTempValue    = document.getElementById('qa-temp-value');
+  const qaThinkingSel  = document.getElementById('qa-thinking-select');
+  const qaThinkingHint = document.getElementById('qa-thinking-hint');
   const qaReplyReadyToast = document.getElementById('qa-reply-ready-toast');
   const qaReplyReadyToastAction = document.getElementById('qa-reply-ready-toast-action');
   const qaReplyReadyToastDismiss = document.getElementById('qa-reply-ready-toast-dismiss');
@@ -165,7 +169,12 @@
     });
 
     genDetailSel?.addEventListener('change', updateTokenHint);
-    genCountSel?.addEventListener('change', updateTokenHint);
+    genCountSel?.addEventListener('change', () => {
+      updateCustomTokenVisibility();
+      updateTokenHint();
+    });
+    genCustomTokenInput?.addEventListener('input', updateTokenHint);
+    updateCustomTokenVisibility();
     updateTokenHint();
 
     function updateSliderFill(slider) {
@@ -183,6 +192,10 @@
       updateSliderFill(qaTempSlider);
     });
     if (qaTempSlider) updateSliderFill(qaTempSlider);
+    qaThinkingSel?.addEventListener('change', () => {
+      localStorage.setItem('eth-copilot-qa-thinking', qaThinkingSel.value || 'none');
+    });
+    if (qaThinkingSel) qaThinkingSel.value = localStorage.getItem('eth-copilot-qa-thinking') || 'none';
     genFallbackCb?.addEventListener('change', () => {
       genSettings?.classList.toggle('disabled-controls', genFallbackCb.checked);
     });
@@ -508,7 +521,15 @@
       return (
         levels +
         'Your setup: Google Gemini.\n' +
-        'Low/Medium/High sends a thinking budget. Use a Gemini model that supports thinking (see Google’s model docs). If the API errors or ignores it, try None or another model.'
+        'None now explicitly requests off/minimal thinking where Google allows it. Gemini 2.5 Flash can disable thinking with budget 0; Gemini 2.5 Pro and Gemini 3.1 Pro cannot fully disable thinking, so None uses the smallest/lowest setting. Low/Medium/High sends the provider thinking controls.'
+      );
+    }
+
+    if (isLocal && /(^|\/)gemini-/.test(model.toLowerCase())) {
+      return (
+        levels +
+        'Your setup: local/proxy Gemini model.\n' +
+        'For LiteLLM, None sends a low/off reasoning hint so Gemini does not fall back to its native dynamic-thinking default. Gemini 3 models still cannot fully disable thinking.'
       );
     }
 
@@ -538,8 +559,9 @@
   }
 
   function updateThinkingHint() {
-    if (!genThinkingHint) return;
-    genThinkingHint.setAttribute('data-tip', buildThinkingTooltipText());
+    const text = buildThinkingTooltipText();
+    genThinkingHint?.setAttribute('data-tip', text);
+    qaThinkingHint?.setAttribute('data-tip', text);
   }
 
   // ─── Message Handling ─────────────────────────────────────────────────────
@@ -561,6 +583,7 @@
         settings = msg.settings;
         updateGenerateButton();
         updateThinkingHint();
+        updateTokenHint();
         break;
 
       case 'TRANSCRIPT_STATUS':
@@ -865,8 +888,7 @@
     const guideThinking = useFallback ? 'none' : (genThinkingSel?.value || 'none');
     const guideDetail = genDetailSel?.value || 'very_high';
     const guideCount = genCountSel?.value || 'very_high';
-    const isGoogle = settings.provider === 'google';
-    const maxTokens = guideMaxTokens(guideDetail, guideCount, isGoogle);
+    const maxTokens = selectedGuideMaxTokens(guideDetail, guideCount, settings.provider, settings.model);
 
     const guideLang = getSelectedLanguage();
     const systemPrompt = buildGuidePrompt(guideDetail, guideCount, guideLang);
@@ -914,8 +936,7 @@
 
     } catch (err) {
       console.error('[Copilot] GENERATE_GUIDE error:', err.message);
-      generateError.textContent = err.message;
-      generateError.style.display = 'block';
+      showGuideError(err.message);
       setStatus('error', 'Guide generation failed');
       showManualPasteOption();
     } finally {
@@ -929,22 +950,44 @@
   let _regenConfirmTimer = null;
 
   function onRegenerateClick() {
-    // Two-step confirmation: first click asks, second click executes
-    if (!regenerateBtn.classList.contains('confirming')) {
-      regenerateBtn.classList.add('confirming');
-      regenerateBtn.title = 'Click again to confirm — this will clear the current guide';
-      clearTimeout(_regenConfirmTimer);
-      _regenConfirmTimer = setTimeout(() => {
-        regenerateBtn.classList.remove('confirming');
-        regenerateBtn.title = 'Generate a new guide';
-      }, 3500);
-      return;
-    }
-    // Confirmed
-    clearTimeout(_regenConfirmTimer);
-    regenerateBtn.classList.remove('confirming');
-    regenerateBtn.title = 'Generate a new guide';
+    showRegenerateConfirmToast();
+  }
 
+  function hideRegenerateConfirmToast() {
+    clearTimeout(_regenConfirmTimer);
+    document.getElementById('regen-confirm-toast')?.remove();
+    regenerateBtn.title = 'Generate a new guide';
+  }
+
+  function showRegenerateConfirmToast() {
+    hideRegenerateConfirmToast();
+    regenerateBtn.title = 'Confirm regenerate guide';
+
+    const toast = document.createElement('div');
+    toast.id = 'regen-confirm-toast';
+    toast.className = 'regen-confirm-toast';
+    toast.setAttribute('role', 'alertdialog');
+    toast.setAttribute('aria-live', 'polite');
+    toast.innerHTML = `
+      <div class="regen-confirm-text">
+        <strong>Regenerate guide?</strong>
+        This clears the current guide and Q&amp;A for this lecture.
+      </div>
+      <div class="regen-confirm-actions">
+        <button type="button" class="regen-confirm-cancel">Cancel</button>
+        <button type="button" class="regen-confirm-action">Regenerate</button>
+      </div>
+    `;
+    document.body.appendChild(toast);
+
+    toast.querySelector('.regen-confirm-cancel')?.addEventListener('click', hideRegenerateConfirmToast);
+    toast.querySelector('.regen-confirm-action')?.addEventListener('click', confirmRegenerateGuide);
+
+    _regenConfirmTimer = setTimeout(hideRegenerateConfirmToast, 8000);
+  }
+
+  function confirmRegenerateGuide() {
+    hideRegenerateConfirmToast();
     guide = null;
     currentBlockIndex = -1;
     qaMessages = [];
@@ -1005,24 +1048,68 @@
     very_high: { label: 'Very High', range: '30–50+', rule: 'Every subtopic, worked example, proof step, or clear topic shift gets its own block. Do NOT merge distant parts of the transcript.' }
   };
 
-  const LEVEL_SCORES = { low: 1, medium: 2, high: 3, very_high: 4 };
+  const LEVEL_SCORES = { low: 1, medium: 2, high: 3, very_high: 4, custom: 4 };
 
-  function guideMaxTokens(detail, count, isGoogle) {
+  function providerMaxOutputTokens(provider, model) {
+    const p = String(provider || '').toLowerCase();
+    const m = String(model || '').toLowerCase();
+
+    if (p === 'google' || /(^|\/)gemini-/.test(m)) {
+      if (/gemini-3/.test(m)) return 65536;
+      return 65536;
+    }
+    if (p === 'anthropic' || /(^|\/)claude-/.test(m)) return 64000;
+    if (/^o[0-9]/.test(m)) return 100000;
+    if (/gpt-5|gpt-4\.1/.test(m)) return 32768;
+    if (/gpt-4o|gpt-oss/.test(m)) return 16384;
+    if (p === 'openai') return 16384;
+    if (p === 'xai') return 32768;
+    if (p === 'mistral') return 32768;
+    if (p === 'fireworks') return 16384;
+    if (p === 'cohere') return 4096;
+    if (p.startsWith('local_')) return 81920;
+    return 8192;
+  }
+
+  function clampTokens(n, provider, model) {
+    const cap = providerMaxOutputTokens(provider, model);
+    return Math.max(1, Math.min(n, cap));
+  }
+
+  function guideMaxTokens(detail, count, provider, model) {
     const score = (LEVEL_SCORES[detail] || 4) + (LEVEL_SCORES[count] || 4);
-    const cap = isGoogle ? 64000 : 32768;
+    const cap = providerMaxOutputTokens(provider, model);
     if (score <= 3) return Math.round(cap * 0.25);
     if (score <= 5) return Math.round(cap * 0.5);
     if (score <= 7) return Math.round(cap * 0.75);
     return cap;
   }
 
+  function selectedGuideMaxTokens(detail, count, provider, model) {
+    if (count === 'custom') {
+      const n = parseInt(genCustomTokenInput?.value, 10);
+      if (Number.isFinite(n) && n > 0) return clampTokens(n, provider, model);
+    }
+    return guideMaxTokens(detail, count, provider, model);
+  }
+
+  function updateCustomTokenVisibility() {
+    if (!genCustomTokenRow) return;
+    genCustomTokenRow.style.display = genCountSel?.value === 'custom' ? '' : 'none';
+  }
+
   function updateTokenHint() {
     if (!genTokenHint) return;
     const detail = genDetailSel?.value || 'very_high';
     const count = genCountSel?.value || 'very_high';
-    const tokens = guideMaxTokens(detail, count, false);
+    const providerCap = providerMaxOutputTokens(settings?.provider, settings?.model);
+    const tokens = selectedGuideMaxTokens(detail, count, settings?.provider, settings?.model);
     const fmt = n => (n / 1000).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-    genTokenHint.textContent = `~${fmt(tokens)} 000 max output tokens`;
+    if (count === 'custom') {
+      genTokenHint.textContent = `Manual cap: ${tokens.toLocaleString()} tokens · provider max ${providerCap.toLocaleString()}`;
+    } else {
+      genTokenHint.textContent = `Up to ~${fmt(tokens)} 000 output tokens (upper limit, not a target)`;
+    }
   }
 
   function getSelectedLanguage() {
@@ -1060,6 +1147,7 @@ GENERAL RULES:
 - Blocks follow the logical flow of the lecture. One coherent topic = one block.
 - Do NOT hallucinate. Only extract content actually in the transcript.
 - Do NOT produce shallow one-liners unless the detail level is set to Low.
+- The output token limit is only a ceiling for long lectures. Be complete, but do not pad, repeat, or spend extra tokens when the transcript does not need them.
 - In textual fields (title, key_concepts, definitions.definition, notes), prefer LaTeX ($...$ inline, $$...$$ display) whenever mathematical notation appears.
 - Markdown is allowed in textual fields when it improves readability (e.g., #/## headings, short lists), but keep it lightweight and do NOT force markdown when plain text is clearer.
 - total_duration_seconds: use the last timestamp in the transcript.
@@ -1809,6 +1897,7 @@ Now process the following transcript:`;
 
     try {
       const qaTemp = qaTempSlider ? qaTempSlider.value / 100 : 0.35;
+      const qaThinking = qaThinkingSel?.value || 'none';
 
       const response = await apiRequest({
         type: 'CHAT',
@@ -1818,7 +1907,8 @@ Now process the following transcript:`;
         model: settings.model || null,
         apiKey: settings.apiKey,
         localBase: getLocalBase(),
-        chatTemperature: qaTemp
+        chatTemperature: qaTemp,
+        chatThinking: qaThinking
       });
 
       typingEl.remove();
@@ -1833,7 +1923,7 @@ Now process the following transcript:`;
     } catch (err) {
       typingEl.remove();
       const humanError = humanizeApiError(err.message);
-      appendChatMsg('assistant', `Error: ${humanError}`, false);
+      appendErrorMsg(humanError);
     } finally {
       isChatting = false;
       onQaInputChange();
@@ -1843,7 +1933,7 @@ Now process the following transcript:`;
 
   function humanizeApiError(msg) {
     if (!msg) return 'Something went wrong. Try again.';
-    const m = String(msg);
+    const m = extractApiErrorMessage(String(msg));
     if (/401|unauthorized|invalid.{0,20}key|api.{0,10}key/i.test(m))
       return 'Invalid API key — check your key in Settings (popup icon).';
     if (/403|forbidden/i.test(m))
@@ -1854,9 +1944,39 @@ Now process the following transcript:`;
       return 'Request timed out — the server took too long. Try again.';
     if (/json|parse|syntax/i.test(m))
       return 'The AI returned an unexpected response. Try a different model or settings.';
-    if (/context.{0,20}length|too.{0,10}long|token/i.test(m))
-      return 'The conversation is too long for this model. Start a new Q&A or use a model with a larger context window.';
+    if (/max(output)?tokens|max_tokens|max_completion_tokens|supported range|token/i.test(m))
+      return 'The provider rejected the token settings. Try Block count -> Custom tokens and lower the manual value, or reduce Thinking.';
+    if (/context.{0,20}length|too.{0,10}long/i.test(m))
+      return 'The request is too long for this model. Use fewer blocks, lower detail, or a model with a larger context window.';
     return m.length > 140 ? m.slice(0, 140) + '…' : m;
+  }
+
+  function extractApiErrorMessage(raw) {
+    const text = String(raw || '');
+    const jsonStart = text.indexOf('{');
+    if (jsonStart >= 0) {
+      try {
+        const parsed = JSON.parse(text.slice(jsonStart));
+        const nested = parsed?.error?.message || parsed?.message || parsed?.error;
+        if (typeof nested === 'string') return extractApiErrorMessage(nested);
+      } catch (_) {}
+    }
+    const escaped = text.match(/\\"message\\":\\"([^"]+)/);
+    if (escaped?.[1]) {
+      return escaped[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+    }
+    return text;
+  }
+
+  function showGuideError(raw) {
+    if (!generateError) return;
+    const human = humanizeApiError(raw);
+    generateError.innerHTML = `
+      <strong>Guide generation failed</strong>
+      <span>${escHtml(human)}</span>
+      <small>Tip: choose Block count → Custom tokens and lower the token cap if the provider rejects the request.</small>
+    `;
+    generateError.style.display = 'block';
   }
 
   /**
@@ -2111,6 +2231,28 @@ ${guideBlocksStr}${scriptContext}`;
       hideQaReplyReadyToast();
       qaScrollMessagesToShowElementTop(div);
     } else if (scrollMode === 'default') {
+      showQaReplyReadyToast(div, content);
+    }
+    return div;
+  }
+
+  function appendErrorMsg(content) {
+    const wasFollowing = qaIsFollowingLatest();
+    const div = document.createElement('div');
+    div.className = 'chat-msg assistant chat-msg-error';
+    div.innerHTML = `
+      <div class="chat-bubble error-bubble">
+        <strong>Request failed</strong>
+        <p>${escHtml(content)}</p>
+        <small>For guide generation, try Block count -> Custom tokens and lower the cap. For Q&amp;A, reduce Thinking or switch model/provider.</small>
+      </div>
+    `;
+    qaMessages_el.appendChild(div);
+    if (_currentTab !== 'qa') {
+      showCrossTabNotify(div);
+    } else if (wasFollowing) {
+      qaScrollMessagesToShowElementTop(div);
+    } else {
       showQaReplyReadyToast(div, content);
     }
     return div;
