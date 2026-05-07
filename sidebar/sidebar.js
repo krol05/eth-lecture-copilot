@@ -1124,7 +1124,7 @@
     const c = GUIDE_COUNT_PROFILES[count] || GUIDE_COUNT_PROFILES.very_high;
     const langInstruction = lang
       ? `\n\nLANGUAGE: Write ALL text content (titles, key_concepts, definitions, notes) in ${lang}. Keep JSON keys, LaTeX, and technical notation unchanged.`
-      : '';
+      : `\n\nLANGUAGE: Detect the dominant natural language of the transcript and write ALL text content (lecture_title, titles, key_concepts, definitions, notes) in that same language. Do not default to English unless the transcript itself is mainly English. Keep JSON keys, LaTeX, and technical notation unchanged.`;
 
     return `You are an expert academic assistant that converts lecture transcripts into structured study guides.
 
@@ -1144,6 +1144,7 @@ BLOCK DETAIL (${d.label}):
 - notes: ${d.notes}
 
 GENERAL RULES:
+- The language instruction is mandatory. Examples below are only schema examples; do not copy their English language unless the transcript language is English.
 - Blocks follow the logical flow of the lecture. One coherent topic = one block.
 - Do NOT hallucinate. Only extract content actually in the transcript.
 - Do NOT produce shallow one-liners unless the detail level is set to Low.
