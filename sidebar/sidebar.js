@@ -26,6 +26,7 @@
   let isGenerating = false;
   let isChatting = false;
   let pendingFrameBase64 = null;   // frame captured when checkbox is ticked, used at send time
+  let pastedImages = [];           // base64 data-URLs from paste / drag-drop / file-picker
   let activeGuideRequestId = null;
   let requestIdCounter = 0;
   const pendingRequests = {};
@@ -49,10 +50,10 @@
   const qaMessages_el = document.getElementById('qa-messages');
   const qaInput      = document.getElementById('qa-input');
   const qaSend       = document.getElementById('qa-send');
-  const attachCb              = document.getElementById('attach-frame-cb');
-  const framePreviewContainer = document.getElementById('frame-preview-container');
-  const framePreviewImg       = document.getElementById('frame-preview-img');
-  const framePreviewRemove    = document.getElementById('frame-preview-remove');
+  const attachCb     = document.getElementById('attach-frame-cb');
+  const qaImageStrip = document.getElementById('qa-image-strip');
+  const qaAttachBtn  = document.getElementById('qa-attach-btn');
+  const qaFileInput  = document.getElementById('qa-file-input');
   const themeToggle  = document.getElementById('theme-toggle');
   const uiSettingsBtn = document.getElementById('ui-settings-btn');
   const focusToggle  = document.getElementById('focus-toggle');
@@ -254,8 +255,7 @@
         attachCb.disabled = false;
         if (b64) {
           pendingFrameBase64 = b64;
-          framePreviewImg.src = 'data:image/jpeg;base64,' + b64;
-          framePreviewContainer.style.display = 'block';
+          renderImageStrip();
         } else {
           attachCb.checked = false;
           pendingFrameBase64 = null;
@@ -263,14 +263,44 @@
         }
       } else {
         pendingFrameBase64 = null;
-        framePreviewContainer.style.display = 'none';
+        renderImageStrip();
       }
     });
 
-    framePreviewRemove.addEventListener('click', () => {
-      attachCb.checked = false;
-      pendingFrameBase64 = null;
-      framePreviewContainer.style.display = 'none';
+    // Paste images anywhere in the Q&A input area
+    qaInput.addEventListener('paste', e => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          processImageFile(item.getAsFile());
+        }
+      }
+    });
+
+    // Drag-and-drop onto the textarea
+    qaInput.addEventListener('dragover', e => {
+      if ([...e.dataTransfer.items].some(i => i.kind === 'file' && i.type.startsWith('image/'))) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        qaInput.classList.add('drag-over');
+      }
+    });
+    qaInput.addEventListener('dragleave', () => qaInput.classList.remove('drag-over'));
+    qaInput.addEventListener('drop', e => {
+      qaInput.classList.remove('drag-over');
+      const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+      if (!files.length) return;
+      e.preventDefault();
+      files.forEach(processImageFile);
+    });
+
+    // Paperclip button → file picker
+    qaAttachBtn?.addEventListener('click', () => qaFileInput?.click());
+    qaFileInput?.addEventListener('change', () => {
+      [...qaFileInput.files].forEach(processImageFile);
+      qaFileInput.value = '';
     });
 
     // Script panel
@@ -769,6 +799,96 @@
       };
       postToContent({ type: 'CAPTURE_FRAME', requestId: id });
     });
+  }
+
+  // ─── Image strip helpers ──────────────────────────────────────────────────
+
+  function renderImageStrip() {
+    if (!qaImageStrip) return;
+    const allImages = [
+      ...(pendingFrameBase64 ? [{ dataUrl: 'data:image/jpeg;base64,' + pendingFrameBase64, label: 'Frame', isFrame: true }] : []),
+      ...pastedImages.map((d, i) => ({ dataUrl: d, label: 'Pasted', isFrame: false, idx: i }))
+    ];
+    if (!allImages.length) {
+      qaImageStrip.style.display = 'none';
+      qaImageStrip.innerHTML = '';
+      return;
+    }
+    qaImageStrip.style.display = 'flex';
+    qaImageStrip.innerHTML = allImages.map((img, i) => `
+      <div class="qa-image-thumb" data-strip-index="${i}" title="Click to preview">
+        <img src="${img.dataUrl}" alt="${img.label}">
+        <button class="qa-image-remove" data-strip-index="${i}" type="button" title="Remove" aria-label="Remove image">×</button>
+        <span class="qa-image-label">${img.label}</span>
+      </div>
+    `).join('');
+
+    // Remove buttons
+    qaImageStrip.querySelectorAll('.qa-image-remove').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.stripIndex, 10);
+        const img = allImages[idx];
+        if (img.isFrame) {
+          attachCb.checked = false;
+          pendingFrameBase64 = null;
+        } else {
+          pastedImages.splice(img.idx, 1);
+        }
+        renderImageStrip();
+      });
+    });
+
+    // Click thumbnail to fullscreen preview
+    qaImageStrip.querySelectorAll('.qa-image-thumb').forEach(thumb => {
+      thumb.addEventListener('click', e => {
+        if (e.target.classList.contains('qa-image-remove')) return;
+        const idx = parseInt(thumb.dataset.stripIndex, 10);
+        openFrameLightbox(allImages[idx].dataUrl);
+      });
+    });
+  }
+
+  function processImageFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    const total = (pendingFrameBase64 ? 1 : 0) + pastedImages.length;
+    if (total >= 4) {
+      flashStatus('Maximum 4 images per message');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => {
+      const original = e.target.result;
+      // Compress: cap longest side at 1280px, re-encode as JPEG
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1280;
+        let { width: w, height: h } = img;
+        if (w > MAX || h > MAX) {
+          if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+          else       { w = Math.round(w * MAX / h); h = MAX; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        pastedImages.push(canvas.toDataURL('image/jpeg', 0.82));
+        renderImageStrip();
+      };
+      img.src = original;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function flashStatus(msg) {
+    // Reuse the existing status bar for a brief message
+    const prev = statusText.textContent;
+    const prevClass = statusBar.className;
+    statusBar.className = 'status-bar status-warning';
+    statusText.textContent = msg;
+    setTimeout(() => {
+      statusBar.className = prevClass;
+      statusText.textContent = prev;
+    }, 2200);
   }
 
   // ─── Transcript Handling ──────────────────────────────────────────────────
@@ -1872,21 +1992,23 @@ Now process the following transcript:`;
     isChatting = true;
     qaSend.disabled = true;
 
-    // Use the frame that was captured when the checkbox was ticked
-    let imageBase64 = null;
-    if (attachCb.checked && pendingFrameBase64) {
-      imageBase64 = pendingFrameBase64;
-      pendingFrameBase64 = null;
-      attachCb.checked = false;
-      framePreviewContainer.style.display = 'none';
-    }
+    // Collect all images: captured frame first, then pasted images
+    const allImages = [
+      ...(attachCb.checked && pendingFrameBase64 ? [pendingFrameBase64] : []),
+      ...pastedImages
+    ];
+    // Clear image state
+    pendingFrameBase64 = null;
+    attachCb.checked = false;
+    pastedImages = [];
+    renderImageStrip();
 
     setStatus('loading', 'Waiting for reply…');
 
     // Add user message to UI
-    const userMsg = { role: 'user', content: text, imageBase64 };
+    const userMsg = { role: 'user', content: text, images: allImages };
     qaMessages.push(userMsg);
-    appendChatMsg('user', text, imageBase64 || false);
+    appendChatMsg('user', text, allImages);
     qaInput.value = '';
     qaInput.style.height = 'auto';
 
@@ -1902,7 +2024,7 @@ Now process the following transcript:`;
 
       const response = await apiRequest({
         type: 'CHAT',
-        messages: qaMessages.map(m => ({ role: m.role, content: m.content, ...(m.imageBase64 ? { imageBase64: m.imageBase64 } : {}) })),
+        messages: qaMessages.map(m => ({ role: m.role, content: m.content, ...(m.images?.length ? { images: m.images } : {}) })),
         systemPrompt,
         provider: settings.provider,
         model: settings.model || null,
@@ -2183,23 +2305,29 @@ ${guideBlocksStr}${scriptContext}`;
     qaReplyReadyToast.hidden = false;
   }
 
-  function appendChatMsg(role, content, hasFrame, scrollMode) {
+  function appendChatMsg(role, content, images, scrollMode) {
     const wasFollowing = qaIsFollowingLatest();
     scrollMode = scrollMode || 'default';
     const renderedContent = role === 'assistant'
       ? normalizeLatexForKatex(unescapeMathDelimiters(content))
       : String(content ?? '');
 
-    // hasFrame may be a raw base64 string or a legacy boolean
-    const frameBase64 = typeof hasFrame === 'string' && hasFrame ? hasFrame : null;
+    // images may be an array of data-URLs, a single base64 string (legacy), or falsy
+    let imgList = [];
+    if (Array.isArray(images)) {
+      imgList = images.map(i => i.startsWith('data:') ? i : `data:image/jpeg;base64,${i}`);
+    } else if (typeof images === 'string' && images) {
+      imgList = [`data:image/jpeg;base64,${images}`];
+    }
 
     const div = document.createElement('div');
     div.className = `chat-msg ${role}`;
 
     let bubbleHtml = '';
-    if (role === 'user' && frameBase64) {
-      // Thumbnail — clicks handled via delegation on qaMessages_el
-      bubbleHtml += `<img class="chat-frame-thumb" src="data:image/jpeg;base64,${frameBase64}" alt="Attached video frame" title="Click to preview full image">`;
+    if (role === 'user' && imgList.length) {
+      bubbleHtml += imgList.map(src =>
+        `<img class="chat-frame-thumb" src="${src}" alt="Attached image" title="Click to preview full image">`
+      ).join('');
     }
     bubbleHtml += `<div class="chat-bubble">${renderMarkdown(renderedContent)}</div>`;
     div.innerHTML = bubbleHtml;
