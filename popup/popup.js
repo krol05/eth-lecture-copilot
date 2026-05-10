@@ -5,8 +5,9 @@
 const providerSelect  = document.getElementById('provider-select');
 const onboardingNote  = document.getElementById('onboarding-note');
 const onboardingDismiss = document.getElementById('onboarding-dismiss');
-const modelSelect     = document.getElementById('model-select');
-const modelCustom     = document.getElementById('model-custom');
+const modelSelect       = document.getElementById('model-select');
+const modelCustom       = document.getElementById('model-custom');
+const modelCustomInline = document.getElementById('model-custom-inline');
 const providerNote    = document.getElementById('provider-note');
 const apiKeyGroup     = document.getElementById('apikey-group');
 const apiKeyInput     = document.getElementById('api-key-input');
@@ -80,6 +81,12 @@ function init() {
     });
   });
 
+  modelSelect.addEventListener('change', () => {
+    const isCustom = modelSelect.value === '__custom__';
+    modelCustomInline.style.display = isCustom ? 'block' : 'none';
+    if (isCustom) modelCustomInline.focus();
+  });
+
   localBaseInput.addEventListener('input', () => {
     // Clear detected models when URL changes
     if (modelSelect.dataset.detected === 'true') {
@@ -150,9 +157,10 @@ function populateModels(providerId, selectedModel) {
   if (!cfg) return;
 
   if (cfg.customModel) {
-    // OpenRouter: free text input
-    modelSelect.style.display  = 'none';
-    modelCustom.style.display  = 'block';
+    // OpenRouter: free text input only
+    modelSelect.style.display       = 'none';
+    modelCustom.style.display       = 'block';
+    modelCustomInline.style.display = 'none';
     modelCustom.value = selectedModel || cfg.models[0]?.id || '';
     return;
   }
@@ -164,14 +172,23 @@ function populateModels(providerId, selectedModel) {
     // No models yet — show placeholder
     modelSelect.innerHTML = '<option value="">— click Detect Models —</option>';
     modelSelect.dataset.detected = 'false';
+    modelCustomInline.style.display = 'none';
     return;
   }
 
+  // If saved model isn't in the list, select the custom option
+  const modelInList = cfg.models.some(m => m.id === selectedModel);
+  const isCustom = !!(selectedModel && !modelInList);
+
   modelSelect.innerHTML = cfg.models
     .map(m => `<option value="${m.id}"${m.id === selectedModel ? ' selected' : ''}>${m.label || m.id}</option>`)
-    .join('');
+    .join('') + '<option value="__custom__"' + (isCustom ? ' selected' : '') + '>Custom model…</option>';
+
   if (!selectedModel && cfg.models[0]) modelSelect.value = cfg.models[0].id;
   modelSelect.dataset.detected = 'false';
+
+  modelCustomInline.style.display = isCustom ? 'block' : 'none';
+  if (isCustom) modelCustomInline.value = selectedModel;
 }
 
 // ─── Local model detection ────────────────────────────────────────────────────
@@ -230,7 +247,9 @@ function save() {
 
   const model = cfg?.customModel
     ? modelCustom.value.trim()
-    : modelSelect.value;
+    : modelSelect.value === '__custom__'
+      ? modelCustomInline.value.trim()
+      : modelSelect.value;
 
   const apiKey  = isLocal ? null : apiKeyInput.value.trim();
   const base    = isLocal ? localBaseInput.value.trim() : null;

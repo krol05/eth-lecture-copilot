@@ -55,25 +55,25 @@ const PROVIDER_MAP = {
 // Default model per provider — first/best model in the list
 const DEFAULT_MODELS = {
   anthropic:   'claude-sonnet-4-6',
-  openai:      'gpt-4o',
+  openai:      'gpt-5.4',
   google:      'gemini-2.5-flash',
-  xai:         'grok-4',
+  xai:         'grok-4.3',
   deepseek:    'deepseek-v4-flash',
   mistral:     'mistral-large-latest',
   openrouter:  'anthropic/claude-sonnet-4-6',
-  groq:        'meta-llama/llama-4-maverick-17b-128e-instruct',
-  together:    'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
-  cerebras:    'llama-4-scout-17b-16e-instruct',
-  nvidia_nim:  'meta/llama-4-maverick-17b-128e-instruct',
-  fireworks:   'accounts/fireworks/models/llama-v4-maverick-instruct',
+  groq:        'openai/gpt-oss-120b',
+  together:    'deepseek-ai/DeepSeek-V4-Pro',
+  cerebras:    'gpt-oss-120b',
+  nvidia_nim:  'deepseek-ai/deepseek-v4-pro',
+  fireworks:   'accounts/fireworks/models/kimi-k2p6',
   perplexity:  'sonar-pro',
   cohere:      'command-a-03-2025',
-  huggingface: 'meta-llama/Llama-3.3-70B-Instruct',
-  hyperbolic:  'meta-llama/Llama-3.3-70B-Instruct',
-  sambanova:   'Meta-Llama-4-Maverick-17B-128E-Instruct',
-  moonshot:    'kimi-k2',
-  zhipu:       'glm-4',
-  qwen:        'qwen3-72b'
+  huggingface: 'deepseek-ai/DeepSeek-V4-Pro',
+  hyperbolic:  'deepseek-ai/DeepSeek-R1-0528',
+  sambanova:   'Llama-4-Maverick-17B-128E-Instruct',
+  moonshot:    'kimi-k2.6',
+  zhipu:       'glm-5.1',
+  qwen:        'qwen3.5-plus'
 };
 
 // ─── OpenAI-compatible handler (covers ~80% of providers) ────────────────────
@@ -102,35 +102,69 @@ function providerMaxOutputTokens(provider, model) {
   const m = String(model || '').toLowerCase();
   const p = String(provider || '').toLowerCase();
 
-  if (p === 'google' || isGeminiModel(m)) {
-    if (/gemini-3/.test(m)) return 65536;
+  if (p === 'google' || isGeminiModel(m)) return 65536;
+
+  if (p === 'anthropic' || isClaudeModel(m)) {
+    // Opus 4.7 supports 131072; Sonnet/Haiku cap at 65536
+    if (/opus-4-7/.test(m)) return 131072;
     return 65536;
   }
 
-  if (p === 'anthropic' || isClaudeModel(m)) return 64000;
-
+  // OpenAI GPT-5.x and o-series
   if (/^o[0-9]/.test(m)) return 100000;
-  if (/gpt-5|gpt-4\.1/.test(m)) return 32768;
-  if (/gpt-4o|gpt-oss/.test(m)) return 16384;
+  if (/gpt-5\.(4|5)/.test(m)) return 128000;
+  if (/gpt-5(?:\.|-)mini/.test(m)) return 128000;
+  if (/^gpt-5$/.test(m)) return 128000;
+  if (/gpt-4\.1/.test(m)) return 32768;
+  if (/gpt-4o/.test(m)) return 16384;
+  if (/gpt-oss/.test(m)) return 65536;
 
   if (p === 'openai') return 16384;
-  if (p === 'xai') return 32768;
-  if (p === 'mistral') return 32768;
-  if (p === 'fireworks') return 16384;
-  if (p === 'cohere') return 4096;
 
-  if (p === 'deepseek') return 8192;
-  if (p === 'groq') return 8192;
-  if (p === 'together') return 8192;
-  if (p === 'cerebras') return 8192;
-  if (p === 'nvidia_nim') return 8192;
+  // xAI Grok 4.20 supports 131072 output
+  if (p === 'xai') {
+    if (/4\.20/.test(m)) return 131072;
+    return 32768;
+  }
+
+  if (p === 'mistral') return 32768;
+
+  // DeepSeek V4 supports up to 384000 output tokens
+  if (p === 'deepseek') {
+    if (/v4/.test(m)) return 32768; // conservative safe limit; API supports 384000 but guide use rarely needs that
+    return 8192;
+  }
+
+  // Cohere Command A Reasoning supports 32768
+  if (p === 'cohere') {
+    if (/reasoning/.test(m)) return 32768;
+    return 8192;
+  }
+
+  if (p === 'groq') return 32768;
+  if (p === 'together') return 16384;
+  if (p === 'cerebras') return 40960;
+  if (p === 'fireworks') return 16384;
+  if (p === 'nvidia_nim') return 16384;
   if (p === 'perplexity') return 8192;
-  if (p === 'huggingface') return 8192;
-  if (p === 'hyperbolic') return 8192;
-  if (p === 'sambanova') return 8192;
-  if (p === 'moonshot') return 8192;
-  if (p === 'zhipu') return 8192;
-  if (p === 'qwen') return 8192;
+  if (p === 'huggingface') return 16384;
+  if (p === 'hyperbolic') return 16384;
+  if (p === 'sambanova') return 16384;
+
+  // Moonshot / Kimi K2.6 supports 16K output
+  if (p === 'moonshot') return 16384;
+
+  // Zhipu GLM-5.1 supports 128K output
+  if (p === 'zhipu') {
+    if (/glm-5/.test(m)) return 65536;
+    return 8192;
+  }
+
+  // Qwen 3.5 series supports 65536 output
+  if (p === 'qwen') {
+    if (/qwen3\.5/.test(m)) return 65536;
+    return 8192;
+  }
 
   // Local and proxy providers vary by backend. Start high and let the retry
   // logic below honor provider-reported limits when available.

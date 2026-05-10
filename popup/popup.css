@@ -203,6 +203,8 @@ body {
 
 .field-select:focus, .field-input:focus { border-color: var(--accent); }
 
+#model-custom-inline { margin-top: 6px; }
+
 .field-hint {
   font-size: 11px;
   color: var(--text-muted);
