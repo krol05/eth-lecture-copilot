@@ -851,11 +851,6 @@
 
   function processImageFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
-    const total = (pendingFrameBase64 ? 1 : 0) + pastedImages.length;
-    if (total >= 4) {
-      flashStatus('Maximum 4 images per message');
-      return;
-    }
     const reader = new FileReader();
     reader.onload = e => {
       const original = e.target.result;
@@ -877,18 +872,6 @@
       img.src = original;
     };
     reader.readAsDataURL(file);
-  }
-
-  function flashStatus(msg) {
-    // Reuse the existing status bar for a brief message
-    const prev = statusText.textContent;
-    const prevClass = statusBar.className;
-    statusBar.className = 'status-bar status-warning';
-    statusText.textContent = msg;
-    setTimeout(() => {
-      statusBar.className = prevClass;
-      statusText.textContent = prev;
-    }, 2200);
   }
 
   // ─── Transcript Handling ──────────────────────────────────────────────────
