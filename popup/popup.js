@@ -131,6 +131,12 @@ function renderProviderUI(providerId) {
   localBaseGroup.style.display = isLocal ? 'block' : 'none';
   apiKeyGroup.style.display    = isLocal ? 'none'  : 'block';
   detectBtn.style.display      = isLocal ? 'inline-flex' : 'none';
+  providerNote.textContent = '';
+  providerNote.style.display = 'none';
+  localNote.textContent = '';
+  localNote.style.display = 'none';
+  detectError.textContent = '';
+  detectError.style.display = 'none';
 
   if (isLocal) {
     localNote.textContent = cfg.note || '';
