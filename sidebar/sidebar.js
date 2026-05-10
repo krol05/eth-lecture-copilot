@@ -1935,21 +1935,37 @@ Now process the following transcript:`;
   function humanizeApiError(msg) {
     if (!msg) return 'Something went wrong. Try again.';
     const m = extractApiErrorMessage(String(msg));
-    if (/401|unauthorized|invalid.{0,20}key|api.{0,10}key/i.test(m))
-      return 'Invalid API key — check your key in Settings (popup icon).';
-    if (/403|forbidden/i.test(m))
-      return 'Access denied — your API key may not have permission for this model.';
-    if (/429|rate.?limit|too many/i.test(m))
-      return 'Rate limit hit — wait a moment and try again.';
-    if (/timeout|timed.{0,5}out|network/i.test(m))
-      return 'Request timed out — the server took too long. Try again.';
-    if (/json|parse|syntax/i.test(m))
-      return 'The AI returned an unexpected response. Try a different model or settings.';
-    if (/max(output)?tokens|max_tokens|max_completion_tokens|supported range|token/i.test(m))
-      return 'The provider rejected the token settings. Try Block count -> Custom tokens and lower the manual value, or reduce Thinking.';
-    if (/context.{0,20}length|too.{0,10}long/i.test(m))
-      return 'The request is too long for this model. Use fewer blocks, lower detail, or a model with a larger context window.';
+    switch (classifyApiError(m)) {
+      case 'auth':
+        return 'Invalid API key — check your key in Settings (popup icon).';
+      case 'permission':
+        return 'Access denied — your API key may not have permission for this model.';
+      case 'rate_limit':
+        return 'Rate limit hit — wait a moment and try again.';
+      case 'timeout':
+        return 'Request timed out — the server took too long. Try again.';
+      case 'parse':
+        return 'The AI returned an unexpected response. Try a different model or settings.';
+      case 'context_length':
+        return 'The request is too long for this model. Use fewer blocks, lower detail, or a model with a larger context window.';
+      case 'token_settings':
+        return 'The provider rejected the token settings. Try Block count -> Custom tokens and lower the manual value, or reduce Thinking.';
+    }
     return m.length > 140 ? m.slice(0, 140) + '…' : m;
+  }
+
+  function classifyApiError(msg) {
+    const m = String(msg || '');
+    if (/401|unauthorized|invalid.{0,20}key|api.{0,10}key/i.test(m)) return 'auth';
+    if (/403|forbidden/i.test(m)) return 'permission';
+    if (/429|rate.?limit|too many/i.test(m)) return 'rate_limit';
+    if (/timeout|timed.{0,5}out|network/i.test(m)) return 'timeout';
+    if (/json|parse|syntax/i.test(m)) return 'parse';
+    if (/context.{0,20}length|too.{0,10}long|input.{0,20}tokens|maximum context/i.test(m)) return 'context_length';
+    if (/(max[_ ]?(output[_ ]?)?tokens|max[_ ]?completion[_ ]?tokens|maxOutputTokens|supported range|token cap|token budget|budget_tokens|output token)/i.test(m)) {
+      return 'token_settings';
+    }
+    return 'unknown';
   }
 
   function extractApiErrorMessage(raw) {
@@ -1972,12 +1988,24 @@ Now process the following transcript:`;
   function showGuideError(raw) {
     if (!generateError) return;
     const human = humanizeApiError(raw);
+    const tip = guideErrorTip(raw);
     generateError.innerHTML = `
       <strong>Guide generation failed</strong>
       <span>${escHtml(human)}</span>
-      <small>Tip: choose Block count → Custom tokens and lower the token cap if the provider rejects the request.</small>
+      ${tip ? `<small>${escHtml(tip)}</small>` : ''}
     `;
     generateError.style.display = 'block';
+  }
+
+  function guideErrorTip(raw) {
+    const kind = classifyApiError(extractApiErrorMessage(String(raw || '')));
+    if (kind === 'token_settings') {
+      return 'Tip: choose Block count → Custom tokens and lower the token cap, or reduce Thinking.';
+    }
+    if (kind === 'context_length') {
+      return 'Tip: reduce Block detail or Block count, or switch to a model with a larger context window.';
+    }
+    return '';
   }
 
   /**
