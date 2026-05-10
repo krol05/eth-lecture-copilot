@@ -247,12 +247,15 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
   const normalizedBase = normalizeOAIBase(base);
   opts.onProgress?.('request_sent', normalizedBase);
   const oaiMessages = messages.map(m => {
-    if (m.role === 'user' && m.imageBase64) {
+    const imgs = m.images?.length ? m.images
+               : m.imageBase64   ? [`data:image/jpeg;base64,${m.imageBase64}`]
+               : [];
+    if (m.role === 'user' && imgs.length) {
       return {
         role: 'user',
         content: [
           { type: 'text', text: m.content },
-          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${m.imageBase64}` } }
+          ...imgs.map(url => ({ type: 'image_url', image_url: { url } }))
         ]
       };
     }
@@ -307,11 +310,18 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
 async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
   opts.onProgress?.('request_sent', 'anthropic');
   const anthropicMessages = messages.map(m => {
-    if (m.role === 'user' && m.imageBase64) {
+    const imgs = m.images?.length ? m.images
+               : m.imageBase64   ? [`data:image/jpeg;base64,${m.imageBase64}`]
+               : [];
+    if (m.role === 'user' && imgs.length) {
       return {
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: m.imageBase64 } },
+          ...imgs.map(url => {
+            const [meta, data] = url.split(',');
+            const mimeType = meta.replace('data:', '').replace(';base64', '');
+            return { type: 'image', source: { type: 'base64', media_type: mimeType, data } };
+          }),
           { type: 'text', text: m.content }
         ]
       };
@@ -375,11 +385,17 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
 
   const contents = messages.map(m => {
     // Google docs: image parts must come before text parts for best results
-    const parts = [];
-    if (m.imageBase64) {
-      parts.push({ inlineData: { mimeType: 'image/jpeg', data: m.imageBase64 } });
-    }
-    parts.push({ text: m.content });
+    const imgs = m.images?.length ? m.images
+               : m.imageBase64   ? [`data:image/jpeg;base64,${m.imageBase64}`]
+               : [];
+    const parts = [
+      ...imgs.map(url => {
+        const [meta, data] = url.split(',');
+        const mimeType = meta.replace('data:', '').replace(';base64', '');
+        return { inlineData: { mimeType, data } };
+      }),
+      { text: m.content }
+    ];
     return { role: m.role === 'assistant' ? 'model' : 'user', parts };
   });
 
