@@ -1490,10 +1490,18 @@ body {
 }
 
 .script-strictness-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+}
+
+.script-strictness-row .gen-setting-label {
+  gap: 5px;
+}
+
+.script-strictness-row .setting-hint {
+  margin-left: 0;
 }
 
 .script-file-list {
