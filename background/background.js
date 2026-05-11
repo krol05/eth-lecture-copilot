@@ -430,6 +430,198 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
   return text;
 }
 
+// ─── Streaming helpers ────────────────────────────────────────────────────────
+
+function emitStreamChunk(sender, requestId, text) {
+  const tabId = sender?.tab?.id;
+  if (!tabId || !requestId) return;
+  chrome.tabs.sendMessage(tabId, {
+    type: 'API_STREAM_CHUNK',
+    requestId,
+    text
+  }).catch(() => {});
+}
+
+async function readSSEStream(resp, onChunk) {
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop(); // keep incomplete last line
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed === 'data: [DONE]') continue;
+      if (trimmed.startsWith('data: ')) {
+        try {
+          const json = JSON.parse(trimmed.slice(6));
+          onChunk(json);
+        } catch {}
+      }
+    }
+  }
+  // flush remaining
+  if (buf.trim() && buf.trim() !== 'data: [DONE]' && buf.trim().startsWith('data: ')) {
+    try { onChunk(JSON.parse(buf.trim().slice(6))); } catch {}
+  }
+}
+
+async function callOAICompatStream(base, model, apiKey, messages, systemPrompt, opts = {}) {
+  const normalizedBase = normalizeOAIBase(base);
+  opts.onProgress?.('request_sent', normalizedBase);
+
+  const oaiMessages = messages.map(m => {
+    const imgs = m.images?.length ? m.images
+               : m.imageBase64   ? [`data:image/jpeg;base64,${m.imageBase64}`]
+               : [];
+    if (m.role === 'user' && imgs.length) {
+      return { role: 'user', content: [
+        { type: 'text', text: m.content },
+        ...imgs.map(url => ({ type: 'image_url', image_url: { url } }))
+      ]};
+    }
+    return { role: m.role, content: m.content };
+  });
+
+  const isOSeries = /^o[0-9]/.test(model);
+  const maxTokensKey = isOSeries ? 'max_completion_tokens' : 'max_tokens';
+  const body = {
+    model,
+    messages: [{ role: 'system', content: systemPrompt }, ...oaiMessages],
+    stream: true,
+    ...(opts.maxTokens ? { [maxTokensKey]: opts.maxTokens } : {})
+  };
+  if (!isOSeries) body.temperature = opts.temperature ?? 0.1;
+
+  const authHeader = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};
+  const resp = await fetch(`${normalizedBase}/chat/completions`, {
+    method: 'POST',
+    ...(maybeTimeoutSignal(opts.timeoutMs) ? { signal: maybeTimeoutSignal(opts.timeoutMs) } : {}),
+    headers: { 'Content-Type': 'application/json', ...authHeader, ...(opts.extraHeaders || {}) },
+    body: JSON.stringify(body)
+  });
+  opts.onProgress?.('provider_responding', String(resp.status));
+  if (!resp.ok) throw new Error(`${normalizedBase} → ${resp.status}: ${await resp.text()}`);
+
+  let fullText = '';
+  await readSSEStream(resp, chunk => {
+    const delta = chunk.choices?.[0]?.delta?.content;
+    if (delta) {
+      fullText += delta;
+      opts.onChunk?.(delta, fullText);
+    }
+  });
+  return fullText;
+}
+
+async function callAnthropicStream(model, apiKey, messages, systemPrompt, opts = {}) {
+  opts.onProgress?.('request_sent', 'anthropic');
+  const anthropicMessages = messages.map(m => {
+    const imgs = m.images?.length ? m.images
+               : m.imageBase64   ? [`data:image/jpeg;base64,${m.imageBase64}`]
+               : [];
+    if (m.role === 'user' && imgs.length) {
+      return { role: 'user', content: [
+        ...imgs.map(url => {
+          const [meta, data] = url.split(',');
+          const mimeType = meta.replace('data:', '').replace(';base64', '');
+          return { type: 'image', source: { type: 'base64', media_type: mimeType, data } };
+        }),
+        { type: 'text', text: m.content }
+      ]};
+    }
+    return { role: m.role, content: m.content };
+  });
+
+  const body = {
+    model,
+    max_tokens: opts.maxTokens ?? 8192,
+    system: systemPrompt,
+    messages: anthropicMessages,
+    stream: true,
+    temperature: opts.temperature ?? 0.1
+  };
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    ...(maybeTimeoutSignal(opts.timeoutMs) ? { signal: maybeTimeoutSignal(opts.timeoutMs) } : {}),
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify(body)
+  });
+  opts.onProgress?.('provider_responding', String(resp.status));
+  if (!resp.ok) throw new Error(`Anthropic → ${resp.status}: ${await resp.text()}`);
+
+  let fullText = '';
+  await readSSEStream(resp, chunk => {
+    // Anthropic stream event types: content_block_delta, message_delta, etc.
+    if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
+      const delta = chunk.delta.text || '';
+      if (delta) {
+        fullText += delta;
+        opts.onChunk?.(delta, fullText);
+      }
+    }
+  });
+  return fullText;
+}
+
+async function callGoogleStream(model, apiKey, messages, systemPrompt, opts = {}) {
+  opts.onProgress?.('request_sent', 'google');
+  // Google uses streamGenerateContent endpoint
+  const url = `https://generativelanguage.googleapis.com/v1/models/${model}:streamGenerateContent?key=${apiKey}&alt=sse`;
+
+  const contents = messages.map(m => {
+    const imgs = m.images?.length ? m.images
+               : m.imageBase64   ? [`data:image/jpeg;base64,${m.imageBase64}`]
+               : [];
+    const parts = [
+      ...imgs.map(url => {
+        const [meta, data] = url.split(',');
+        const mimeType = meta.replace('data:', '').replace(';base64', '');
+        return { inlineData: { mimeType, data } };
+      }),
+      { text: m.content }
+    ];
+    return { role: m.role === 'assistant' ? 'model' : 'user', parts };
+  });
+
+  const body = {
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents,
+    generationConfig: {
+      temperature: opts.temperature ?? 0.1,
+      ...(opts.maxTokens ? { maxOutputTokens: opts.maxTokens } : {}),
+      thinkingConfig: geminiThinkingConfig(model, 'none')
+    }
+  };
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    ...(maybeTimeoutSignal(opts.timeoutMs) ? { signal: maybeTimeoutSignal(opts.timeoutMs) } : {}),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  opts.onProgress?.('provider_responding', String(resp.status));
+  if (!resp.ok) throw new Error(`Google → ${resp.status}: ${await resp.text()}`);
+
+  let fullText = '';
+  await readSSEStream(resp, chunk => {
+    const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (text) {
+      fullText += text;
+      opts.onChunk?.(text, fullText);
+    }
+  });
+  return fullText;
+}
+
 // ─── Unified call dispatcher ──────────────────────────────────────────────────
 
 async function callAI(provider, model, apiKey, messages, systemPrompt, opts = {}) {
@@ -447,6 +639,21 @@ async function callAI(provider, model, apiKey, messages, systemPrompt, opts = {}
     // local: base URL comes from opts.localBase (user-configurable per provider)
     case 'local':        return callOAICompat(opts.localBase, model, null, messages, systemPrompt, opts);
     default: throw new Error(`Unknown provider type: ${cfg.type}`);
+  }
+}
+
+async function callAIStream(provider, model, apiKey, messages, systemPrompt, opts = {}) {
+  let cfg = PROVIDER_MAP[provider];
+  if (!cfg && String(provider || '').startsWith('local_')) cfg = { type: 'local' };
+  if (!cfg) throw new Error(`Unknown provider: ${provider}`);
+
+  switch (cfg.type) {
+    case 'anthropic':    return callAnthropicStream(model, apiKey, messages, systemPrompt, opts);
+    case 'google':       return callGoogleStream(model, apiKey, messages, systemPrompt, opts);
+    case 'openai_compat':return callOAICompatStream(cfg.base, model, apiKey, messages, systemPrompt, opts);
+    case 'local':        return callOAICompatStream(opts.localBase, model, null, messages, systemPrompt, opts);
+    // Fallback: non-streaming for unsupported provider types
+    default:             return callAI(provider, model, apiKey, messages, systemPrompt, opts);
   }
 }
 
@@ -516,6 +723,7 @@ async function handleMessage(msg, progress = () => {}) {
       progress('queued', 'Guide request received');
       const { transcriptText, systemPrompt } = msg;
       const useFallback = !!msg.guideFallback;
+      const useStream   = !!msg.useStream;
       const maxGuideTokens = guideMaxTokensFor(provider, model, msg.guideMaxTokens);
 
       let guideTemp, guideThinking;
@@ -533,26 +741,30 @@ async function handleMessage(msg, progress = () => {}) {
         temperature: guideTemp,
         maxTokens: maxGuideTokens,
         timeoutMs: null,
-        jsonMode: true,
+        jsonMode: !useStream,   // streaming: skip json_mode since we parse at the end
         onProgress: progress,
-        thinking: guideThinking
+        thinking: guideThinking,
+        ...(useStream ? { onChunk: (delta, full) => emitStreamChunk(sender, requestId, delta) } : {})
       };
 
       let raw;
       try {
-        raw = await callAI(provider, model, apiKey,
-          [{ role: 'user', content: transcriptText }], systemPrompt, opts);
+        raw = useStream
+          ? await callAIStream(provider, model, apiKey,
+              [{ role: 'user', content: transcriptText }], systemPrompt, opts)
+          : await callAI(provider, model, apiKey,
+              [{ role: 'user', content: transcriptText }], systemPrompt, opts);
       } catch (err) {
         const reportedMax = providerReportedMaxTokens(err);
         if (!reportedMax || reportedMax >= opts.maxTokens) throw err;
         const retryTokens = guideMaxTokensFor(provider, model, reportedMax);
         if (retryTokens >= opts.maxTokens) throw err;
         progress('queued', `Retrying with provider max output ${retryTokens}`);
-        raw = await callAI(provider, model, apiKey,
-          [{ role: 'user', content: transcriptText }], systemPrompt, {
-            ...opts,
-            maxTokens: retryTokens
-          });
+        raw = useStream
+          ? await callAIStream(provider, model, apiKey,
+              [{ role: 'user', content: transcriptText }], systemPrompt, { ...opts, maxTokens: retryTokens })
+          : await callAI(provider, model, apiKey,
+              [{ role: 'user', content: transcriptText }], systemPrompt, { ...opts, maxTokens: retryTokens });
       }
       progress('provider_finished', 'Response body received');
       return parseGuideResponse(raw);
@@ -578,7 +790,69 @@ async function handleMessage(msg, progress = () => {}) {
       return resp.json();
     }
 
+    case 'FLASHCARDS_REQUEST': {
+      const { guideJson, systemPrompt } = msg;
+      const maxTok = outputTokensFor(provider, model, 8192);
+      const raw = await callAI(provider, model, apiKey,
+        [{ role: 'user', content: JSON.stringify(guideJson) }],
+        systemPrompt,
+        { ...baseOpts, provider, temperature: 0.45, maxTokens: maxTok, timeoutMs: 120000, jsonMode: true }
+      );
+      return safeParseJson(raw);
+    }
+
+    case 'QUIZ_REQUEST': {
+      const { guideJson, systemPrompt } = msg;
+      const maxTok = outputTokensFor(provider, model, 10000);
+      const raw = await callAI(provider, model, apiKey,
+        [{ role: 'user', content: JSON.stringify(guideJson) }],
+        systemPrompt,
+        { ...baseOpts, provider, temperature: 0.45, maxTokens: maxTok, timeoutMs: 120000, jsonMode: true }
+      );
+      return safeParseJson(raw);
+    }
+
+    case 'EXAM_QUESTIONS_REQUEST': {
+      const { guideJson, systemPrompt } = msg;
+      const maxTok = outputTokensFor(provider, model, 12000);
+      const raw = await callAI(provider, model, apiKey,
+        [{ role: 'user', content: JSON.stringify(guideJson) }],
+        systemPrompt,
+        { ...baseOpts, provider, temperature: 0.5, maxTokens: maxTok, timeoutMs: 120000, jsonMode: true }
+      );
+      return safeParseJson(raw);
+    }
+
+    case 'CROSS_LECTURE_EXAM_REQUEST': {
+      const { guidesJson, systemPrompt } = msg;
+      const maxTok = outputTokensFor(provider, model, 16000);
+      const raw = await callAI(provider, model, apiKey,
+        [{ role: 'user', content: JSON.stringify(guidesJson) }],
+        systemPrompt,
+        { ...baseOpts, provider, temperature: 0.5, maxTokens: maxTok, timeoutMs: 180000, jsonMode: true }
+      );
+      return safeParseJson(raw);
+    }
+
     default:
       throw new Error(`Unknown message type: ${type}`);
   }
+}
+
+function safeParseJson(raw) {
+  if (typeof raw === 'object' && raw !== null) return raw;
+  const s = String(raw || '');
+  try { return JSON.parse(s); } catch {}
+  // Strip markdown fences
+  const stripped = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+  try { return JSON.parse(stripped); } catch {}
+  // Find the first { or [ and try from there
+  const start = Math.min(
+    s.indexOf('{') >= 0 ? s.indexOf('{') : Infinity,
+    s.indexOf('[') >= 0 ? s.indexOf('[') : Infinity
+  );
+  if (start < Infinity) {
+    try { return JSON.parse(s.slice(start)); } catch {}
+  }
+  throw new Error('Failed to parse JSON from AI response: ' + s.slice(0, 200));
 }

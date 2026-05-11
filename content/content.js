@@ -93,6 +93,13 @@
           detail: msg.detail || ''
         });
       }
+      if (msg.type === 'API_STREAM_CHUNK' && msg.requestId) {
+        postToSidebar({
+          type: 'API_STREAM_CHUNK',
+          requestId: msg.requestId,
+          text: msg.text || ''
+        });
+      }
     });
   }
 

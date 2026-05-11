@@ -77,6 +77,7 @@
         "sidebar/print-guide.js",
         "lib/ui-settings.js",
         "lib/fuzzy-retrieval.js",
+        "lib/prompts.js",
         "lib/providers-config.js",
         "lib/katex/katex.min.js",
         "lib/katex/katex.min.css",

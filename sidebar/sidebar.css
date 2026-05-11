@@ -2650,7 +2650,8 @@ body {
   white-space: nowrap;
 }
 
-.history-course-hide-btn {
+.history-course-hide-btn,
+.history-course-predict-btn {
   font-size: 10px;
   padding: 2px 7px;
   border-radius: var(--radius-sm);
@@ -2666,6 +2667,13 @@ body {
   color: var(--text-secondary);
   background: var(--bg-2);
   border-color: var(--text-muted);
+}
+.history-course-predict-btn {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.history-course-predict-btn:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 /* ── Lecture items ─────────────────────────────────────────────────── */
@@ -3167,4 +3175,738 @@ body {
   .script-panel-body {
     transition: none !important;
   }
+}
+
+/* ── Feature Modal (shared base for flashcards / quiz / exam) ──────────────── */
+
+.feature-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 9000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12px 8px;
+  overflow-y: auto;
+}
+
+.feature-modal {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.28);
+  overflow: hidden;
+  margin: auto;
+}
+
+.feature-modal-wide {
+  max-width: 480px;
+}
+
+.feature-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.feature-modal-header strong {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.feature-modal-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  max-height: calc(100vh - 140px);
+}
+
+.feature-modal-hint {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.feature-result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.feature-result-count {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.feature-result-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.feature-back-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.feature-back-btn:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+/* ── Pill group (shared) ─────────────────────────────────────────────────────── */
+
+.pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.pill {
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  line-height: 1.6;
+}
+
+.pill:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.pill.pill-active,
+.pill[aria-pressed="true"] {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* ── Flashcards ──────────────────────────────────────────────────────────────── */
+
+.flashcards-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.flashcard-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.flashcard-side {
+  padding: 10px 12px;
+}
+
+.flashcard-front {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.flashcard-back {
+  background: var(--surface-1);
+}
+
+.flashcard-side-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.flashcard-text {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  outline: none;
+  min-height: 1.5em;
+  border-radius: 3px;
+  padding: 2px 3px;
+  margin: -2px -3px;
+}
+
+.flashcard-text[contenteditable="true"]:focus {
+  background: var(--surface-hover);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.flashcard-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 5px 10px 7px;
+  background: var(--surface-1);
+  border-top: 1px solid var(--border);
+}
+
+.flashcard-delete-btn {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.flashcard-delete-btn:hover {
+  color: var(--error, #e53e3e);
+  background: var(--surface-2);
+}
+
+/* ── Quiz ────────────────────────────────────────────────────────────────────── */
+
+.quiz-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.quiz-q-counter {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  min-width: 44px;
+}
+
+.quiz-progress-track {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.quiz-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+.quiz-question-area {
+  margin-bottom: 14px;
+}
+
+.quiz-question-text {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.55;
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+}
+
+.quiz-mc-options {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.quiz-mc-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  background: var(--surface-2);
+  text-align: left;
+  line-height: 1.45;
+  transition: background 0.12s, border-color 0.12s;
+  width: 100%;
+}
+
+.quiz-mc-option:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+}
+
+.quiz-mc-option.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+}
+
+.quiz-mc-option.correct {
+  border-color: #38a169;
+  background: rgba(56, 161, 105, 0.12);
+}
+
+.quiz-mc-option.wrong {
+  border-color: #e53e3e;
+  background: rgba(229, 62, 62, 0.10);
+}
+
+.quiz-sa-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  background: var(--surface-2);
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.quiz-sa-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.quiz-action-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.quiz-answer-reveal {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quiz-model-answer {
+  background: var(--surface-2);
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+
+.quiz-answer-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+
+.quiz-answer-text {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.quiz-explanation {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  font-style: italic;
+}
+
+.quiz-grade-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quiz-grade-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 120px;
+}
+
+.quiz-grade-btn {
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.quiz-grade-correct {
+  background: rgba(56, 161, 105, 0.12);
+  color: #38a169;
+  border-color: #38a169;
+}
+
+.quiz-grade-correct:hover {
+  background: rgba(56, 161, 105, 0.22);
+}
+
+.quiz-grade-wrong {
+  background: rgba(229, 62, 62, 0.10);
+  color: #e53e3e;
+  border-color: #e53e3e;
+}
+
+.quiz-grade-wrong:hover {
+  background: rgba(229, 62, 62, 0.20);
+}
+
+/* Quiz results */
+.quiz-score-display {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 0 8px;
+}
+
+.quiz-score-circle {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 4px solid var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.quiz-score-pct {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.quiz-score-text {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.quiz-score-encouragement {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.quiz-missed-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.quiz-missed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quiz-missed-item {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.quiz-missed-q {
+  font-weight: 500;
+  margin-bottom: 5px;
+}
+
+.quiz-missed-a {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
+.quiz-results-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ── Exam questions ─────────────────────────────────────────────────────────── */
+
+.exam-block-select-area {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 10px;
+  max-height: 160px;
+  overflow-y: auto;
+  background: var(--surface-2);
+}
+
+.exam-block-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.exam-block-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.exam-block-checkbox-row input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.exam-section-heading {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.exam-question-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.exam-question-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.exam-question-head {
+  background: var(--surface-2);
+  padding: 10px 12px 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.exam-question-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.exam-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  border: 1px solid currentColor;
+}
+
+.exam-badge-easy    { color: #38a169; }
+.exam-badge-medium  { color: #d69e2e; }
+.exam-badge-hard    { color: #e53e3e; }
+.exam-badge-type    { color: var(--text-secondary); }
+.exam-badge-block   { color: var(--accent); border-color: var(--accent); }
+
+.exam-question-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin: 0;
+  flex: 1;
+  white-space: pre-wrap;
+}
+
+.exam-mc-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px 4px;
+  background: var(--surface-2);
+}
+
+.exam-mc-option {
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+}
+
+.exam-mc-option.exam-correct-option {
+  background: rgba(56, 161, 105, 0.12);
+  color: #38a169;
+  font-weight: 500;
+}
+
+.exam-answer-section {
+  padding: 10px 12px;
+  background: var(--surface-1);
+}
+
+.exam-answer-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+.exam-answer-toggle:hover {
+  text-decoration: underline;
+}
+
+.exam-answer-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+/* ── Cross-lecture exam ─────────────────────────────────────────────────────── */
+
+.cross-exam-lecture-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px;
+  background: var(--surface-2);
+}
+
+.cross-exam-lecture-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 3px 0;
+}
+
+.cross-exam-lecture-row input[type="checkbox"] {
+  flex-shrink: 0;
+  margin-top: 1px;
+  cursor: pointer;
+}
+
+.cross-exam-lecture-title {
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.cross-exam-lecture-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cross-exam-topics-section {
+  margin-bottom: 10px;
+}
+
+.cross-exam-topics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.cross-exam-topic-item {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 9px 12px;
+  background: var(--surface-2);
+}
+
+.cross-exam-topic-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+
+.cross-exam-topic-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.cross-exam-confidence {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+
+.cross-exam-confidence-high   { background: rgba(56,161,105,0.15); color: #38a169; }
+.cross-exam-confidence-medium { background: rgba(214,158,46,0.15); color: #d69e2e; }
+.cross-exam-confidence-low    { background: rgba(160,174,192,0.15); color: var(--text-muted); }
+
+.cross-exam-topic-rationale {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* ── Streaming indicator ─────────────────────────────────────────────────────── */
+
+.guide-streaming-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.guide-streaming-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
 }
