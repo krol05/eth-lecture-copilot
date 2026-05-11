@@ -770,19 +770,31 @@ body {
 /* ─── Guide Progress ─────────────────────────────────────────────────────── */
 .guide-toolbar {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
   padding: 6px 14px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
+/* Row 1: counter + progress bar */
 .guide-progress {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 1;
   min-width: 0;
+}
+
+/* Row 2: action icon buttons — one horizontal strip */
+.guide-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-wrap: wrap;
+  /* Separate the action strip from progress with a subtle divider */
+  padding-top: 2px;
+  border-top: 1px solid var(--border);
+  margin: 0 -2px; /* bleed slightly to align with toolbar edges */
 }
 
 .regen-btn {
@@ -1003,6 +1015,143 @@ body {
   flex-direction: column;
   gap: 16px;
   animation: fadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: max-height 0.2s cubic-bezier(0.16,1,0.3,1);
+}
+
+/* When inline tool panel is open, guide block still fills remaining space.
+   flex: 1 is kept (from the #guide-block rule) — only enforce a minimum so it
+   doesn't collapse to zero when the panel is dragged very large. */
+#guide-content.inline-tool-open #guide-block {
+  min-height: 80px;
+}
+
+/* ── Inline tool panel ───────────────────────────────────────────────────── */
+
+/* Default: hidden. The HTML [hidden] attribute sets display:none at UA level
+   but an explicit CSS display overrides it — so we must handle it here. */
+.guide-inline-tool {
+  display: none;          /* hidden by default */
+  flex-direction: column;
+  flex: 0 0 auto;
+  /* No CSS min-height — height is content-driven on first open.
+     After the user drags the handle, panel.style.height is set explicitly.
+     max-height prevents overflow if content is unusually tall. */
+  max-height: 68%;
+  border-top: 2px solid var(--accent);
+  background: var(--bg-1);
+  overflow: hidden;
+}
+
+/* Only shown when the [hidden] attribute is removed */
+.guide-inline-tool:not([hidden]) {
+  display: flex;
+  animation: slideUpIn 0.22s cubic-bezier(0.16,1,0.3,1);
+}
+
+@keyframes slideUpIn {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.guide-inline-resize {
+  height: 5px;
+  background: var(--bg-2);
+  cursor: ns-resize;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.guide-inline-resize:hover { background: var(--accent-dim); }
+
+.guide-inline-tool-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 7px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  flex-shrink: 0;
+}
+
+.guide-inline-tool-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.guide-inline-close-btn {
+  width: 22px;
+  height: 22px;
+  padding: 3px;
+}
+
+.guide-inline-tool-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Active indicator on guide toolbar buttons when their panel is open */
+.guide-toolbar-actions .icon-btn.inline-tool-active {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* ── Inline tool panel: inner components ─────────────────────────────────── */
+
+/* Hint / description text at top of panel */
+.inline-tool-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Label + control row */
+.inline-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.inline-tool-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  min-width: 52px;
+}
+
+/* Inline text "link" button */
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-btn:hover { color: var(--accent-hover); }
+
+/* Flashcard results header inside inline panel */
+.inline-fc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.inline-fc-count {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 #guide-block > * {
@@ -1735,7 +1884,7 @@ body {
 .chat-msg.assistant { align-items: flex-start; }
 
 .chat-bubble {
-  max-width: 90%;
+  max-width: 92%;
   padding: 9px 12px;
   border-radius: var(--radius-md);
   font-size: 12.5px;
@@ -1749,10 +1898,62 @@ body {
 }
 
 .chat-msg.assistant .chat-bubble {
+  max-width: 100%; /* assistant replies get full width so wide equations don't overflow */
   background: var(--bg-2);
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-bottom-left-radius: 4px;
+  overflow-x: auto; /* allow horizontal scroll only when absolutely necessary */
+}
+
+/* ── Streaming bubble: per-chunk fade-in + cursor ─────────────────────────── */
+
+/*
+ * KaTeX zone — holds text up to the last complete $$...$$ block.
+ * white-space: pre-wrap is essential: the entire text is set as a single text
+ * node via textContent so renderMathInElement can find multi-line $$...$$ blocks.
+ * pre-wrap makes the \n characters render as visible line breaks.
+ * After KaTeX runs and replaces the text node with rendered nodes, the prose
+ * text parts still look correct because pre-wrap wraps at container width.
+ */
+.qa-katex-zone {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Hide the zone (takes no space) when empty */
+.qa-katex-zone:empty { display: none; }
+
+/*
+ * Each text chunk appended during streaming gets this class.
+ * It fades in from invisible over 0.28s — gives the "materialising text"
+ * effect seen in ChatGPT / Gemini.  Because we APPEND (never replace) existing
+ * spans, old text stays stable while only new content animates.
+ */
+.qa-chunk {
+  animation: qa-chunk-in 0.28s ease forwards;
+}
+
+@keyframes qa-chunk-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Blinking caret shown while streaming */
+.qa-stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  background: var(--accent);
+  margin-left: 2px;
+  vertical-align: -0.1em;
+  border-radius: 1px;
+  animation: qa-cursor-blink 0.75s step-start infinite;
+}
+
+@keyframes qa-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
 }
 
 .chat-msg-error .error-bubble {
@@ -1814,6 +2015,22 @@ body {
 [data-theme="dark"] .chat-bubble code {
   background: rgba(0,0,0,0.25);
 }
+/* Horizontal rule */
+.chat-bubble hr.md-hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 7px 0;
+}
+/* Lists */
+.chat-bubble ul, .chat-bubble ol {
+  margin: 2px 0 6px 0;
+  padding-left: 20px;
+}
+.chat-bubble ul { list-style: disc; }
+.chat-bubble ol { list-style: decimal; }
+.chat-bubble li { margin-bottom: 2px; line-height: 1.5; }
+/* Math blocks that span multiple lines — keep raw text in one node for KaTeX */
+.chat-bubble .math-block { white-space: pre-wrap; word-break: break-word; margin: 0 0 6px; }
 
 /* Frame thumbnail — inline in user message, above the text bubble */
 .chat-frame-thumb {
@@ -2045,10 +2262,16 @@ body {
 }
 
 .qa-temp-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 68px 1fr auto;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+/* Thinking row: label + select only — let select span the last two columns */
+.qa-temp-row:has(select) {
+  grid-template-columns: 68px 1fr;
 }
 
 .qa-temp-label {
@@ -2059,7 +2282,7 @@ body {
 }
 
 .qa-temp-row input[type="range"] {
-  flex: 1;
+  width: 100%;
   min-width: 0;
   height: 3px;
   -webkit-appearance: none;
@@ -2216,7 +2439,7 @@ body {
   width: 64px;
   height: 64px;
   border-radius: 7px;
-  overflow: hidden;
+  overflow: visible;  /* allow remove button to render outside bounds */
   border: 1px solid var(--border);
   flex-shrink: 0;
   cursor: zoom-in;
@@ -2227,6 +2450,7 @@ body {
   height: 100%;
   object-fit: cover;
   display: block;
+  border-radius: 7px;  /* clip the image itself */
 }
 
 .qa-image-remove {
@@ -3295,6 +3519,8 @@ body {
   background: var(--bg-2);
   color: var(--text-secondary);
   font-size: 11.5px;
+  font-weight: 500;
+  text-transform: capitalize;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
   line-height: 1.6;
@@ -3321,6 +3547,24 @@ body {
   margin-top: 4px;
 }
 
+/* ─── Flashcard pagination nav ───────────────────────────────────────────── */
+.flashcard-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 6px 0 8px;
+}
+
+.flashcard-nav-counter {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 48px;
+  text-align: center;
+}
+
+/* ─── Flashcard single-card ──────────────────────────────────────────────── */
 .flashcard-item {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -3353,6 +3597,7 @@ body {
   font-size: 12.5px;
   color: var(--text-primary);
   white-space: pre-wrap;
+  overflow-x: auto;
   word-break: break-word;
   outline: none;
   min-height: 1.5em;
@@ -3387,6 +3632,39 @@ body {
 .flashcard-delete-btn:hover {
   color: var(--error, #e53e3e);
   background: var(--bg-2);
+}
+
+/* Flashcard undo toast — appears at bottom of flashcard panel */
+.flashcard-undo-toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  animation: fadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.flashcard-undo-btn {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.flashcard-undo-btn:hover {
+  background: var(--accent-dim);
 }
 
 /* ── Quiz ────────────────────────────────────────────────────────────────────── */
@@ -3662,7 +3940,60 @@ body {
   margin-top: 12px;
 }
 
+/* "Next question →" button shown after answer reveal */
+.quiz-next-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-end;
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.14s, transform 0.1s;
+}
+
+.quiz-next-btn:hover  { background: var(--accent-hover); }
+.quiz-next-btn:active { transform: scale(0.97); }
+
+.quiz-next-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: #fff;
+  flex-shrink: 0;
+}
+
 /* ── Exam questions ─────────────────────────────────────────────────────────── */
+
+/* Current-block indicator shown when "Current block" scope is active */
+.current-block-info-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: -2px;
+}
+.current-block-info-icon {
+  font-size: 13px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.current-block-info-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-weight: 500;
+}
 
 .exam-block-select-area {
   border: 1px solid var(--border);
@@ -3714,85 +4045,206 @@ body {
   overflow: hidden;
 }
 
+/* Question head: number badge + main content */
 .exam-question-head {
   background: var(--bg-2);
-  padding: 10px 12px 8px;
+  padding: 10px 12px 10px;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Circular question number */
+.exam-question-num {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  letter-spacing: 0;
+}
+
+/* Main content column: badges + question text */
+.exam-question-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
 }
 
 .exam-question-badges {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
-  margin-bottom: 6px;
 }
 
 .exam-badge {
   font-size: 10px;
   font-weight: 600;
-  padding: 1px 6px;
+  text-transform: capitalize;
+  padding: 2px 7px;
   border-radius: 10px;
   border: 1px solid currentColor;
+  letter-spacing: 0.01em;
 }
 
-.exam-badge-easy    { color: #38a169; }
-.exam-badge-medium  { color: #d69e2e; }
-.exam-badge-hard    { color: #e53e3e; }
-.exam-badge-type    { color: var(--text-secondary); }
-.exam-badge-block   { color: var(--accent); border-color: var(--accent); }
+/* Softer, more muted badge colors — no harsh red */
+.exam-badge-easy    { color: #3a9e6e; background: rgba(58,158,110,0.08); }
+.exam-badge-medium  { color: #b07c20; background: rgba(176,124,32,0.09); }
+.exam-badge-hard    { color: #b35a30; background: rgba(179,90,48,0.09); }
+.exam-badge-type    { color: var(--text-secondary); background: var(--bg-3); border-color: var(--border-strong); }
+.exam-badge-block   { color: var(--accent); background: var(--accent-dim); border-color: var(--accent); }
 
 .exam-question-text {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
-  line-height: 1.5;
+  line-height: 1.55;
   margin: 0;
-  flex: 1;
   white-space: pre-wrap;
 }
 
+/* Multiple-choice options */
 .exam-mc-options {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 12px 4px;
+  gap: 5px;
+  padding: 10px 12px 8px 12px;
   background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
 }
 
 .exam-mc-option {
-  font-size: 12px;
-  padding: 3px 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  transition: background 0.12s;
+  cursor: default;
+}
+
+.exam-mc-letter {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
   border-radius: 4px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  font-size: 10.5px;
+  font-weight: 700;
   color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.exam-mc-text {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  flex: 1;
 }
 
 .exam-mc-option.exam-correct-option {
-  background: rgba(56, 161, 105, 0.12);
-  color: #38a169;
+  background: rgba(58, 158, 110, 0.10);
+  border-color: rgba(58, 158, 110, 0.30);
+}
+
+.exam-mc-option.exam-correct-option .exam-mc-letter {
+  background: rgba(58, 158, 110, 0.18);
+  border-color: #3a9e6e;
+  color: #3a9e6e;
+}
+
+.exam-mc-option.exam-correct-option .exam-mc-text {
+  color: #2d7d57;
   font-weight: 500;
 }
 
+[data-theme="dark"] .exam-mc-option.exam-correct-option .exam-mc-text,
+[data-theme="dark-blue"] .exam-mc-option.exam-correct-option .exam-mc-text {
+  color: #5dc993;
+}
+
+/* Answer section — toggle + optional revealed content */
 .exam-answer-section {
-  padding: 10px 12px;
+  padding: 0;
   background: var(--bg-1);
+  border-top: none;
 }
 
 .exam-answer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
   background: none;
   border: none;
-  color: var(--accent);
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  padding: 0;
-  margin-bottom: 6px;
+  padding: 8px 12px;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
 }
 
 .exam-answer-toggle:hover {
-  text-decoration: underline;
+  background: var(--bg-2);
+  color: var(--accent);
 }
 
+.exam-toggle-chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  color: var(--text-muted);
+}
+
+/* New answer content container */
+.exam-answer-content {
+  padding: 2px 14px 14px 14px;
+  background: var(--bg-1);
+}
+
+.exam-answer-body {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  line-height: 1.65;
+}
+
+/* Markdown inside answer body */
+.exam-answer-body p { margin: 0 0 6px; }
+.exam-answer-body p:last-child { margin-bottom: 0; }
+.exam-answer-body ul, .exam-answer-body ol {
+  padding-left: 18px;
+  margin: 4px 0 6px;
+}
+.exam-answer-body li { margin-bottom: 3px; }
+.exam-answer-body strong { font-weight: 600; color: var(--text-primary); }
+.exam-answer-body code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: var(--formula-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* Legacy fallback — old code used .exam-answer-text */
 .exam-answer-text {
   font-size: 12px;
   color: var(--text-secondary);
@@ -3805,8 +4257,8 @@ body {
 .cross-exam-lecture-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  max-height: 200px;
+  gap: 6px;
+  max-height: 240px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -3814,30 +4266,143 @@ body {
   background: var(--bg-2);
 }
 
+/* ── Cross-exam picker: grouped course layout ──────────────────────────────── */
+
+/* Custom checkbox appearance — hides the native control, renders a clean one */
+.cross-exam-cb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  border: 1.5px solid var(--border-strong, #b0a090);
+  border-radius: 3px;
+  background: var(--bg-0);
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.12s, background 0.12s;
+  flex-shrink: 0;
+}
+.cross-exam-cb:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.cross-exam-cb:indeterminate {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+/* Checkmark via clip-path */
+.cross-exam-cb:checked::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6l3 3 5-5' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E") center/10px no-repeat;
+}
+.cross-exam-cb:indeterminate::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* dash line — stroke color matches accent (hardcoded, CSS vars don't work in data URIs) */
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cline x1='3' y1='6' x2='9' y2='6' stroke='%23a07040' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center/10px no-repeat;
+}
+.cross-exam-cb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Grouped course sections */
+.cross-exam-course-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.cross-exam-course-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px 5px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.cross-exam-course-selall {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 1px;
+}
+
+.cross-exam-course-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cross-exam-course-count {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  background: var(--bg-3, var(--bg-1));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0px 6px;
+}
+
+.cross-exam-course-rows {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0 4px 4px;
+  gap: 1px;
+}
+
 .cross-exam-lecture-row {
   display: flex;
   align-items: flex-start;
-  gap: 7px;
+  gap: 8px;
   font-size: 12px;
   color: var(--text-primary);
   cursor: pointer;
-  padding: 3px 0;
+  padding: 5px 8px;
+  border-radius: 5px;
+  transition: background 0.1s;
+  user-select: none;
 }
 
-.cross-exam-lecture-row input[type="checkbox"] {
-  flex-shrink: 0;
-  margin-top: 1px;
-  cursor: pointer;
+.cross-exam-lecture-row:hover {
+  background: var(--bg-2);
+}
+
+.cross-exam-lecture-row:has(input:checked) {
+  background: var(--accent-dim);
+}
+
+.cross-exam-lecture-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
 }
 
 .cross-exam-lecture-title {
   font-weight: 500;
   line-height: 1.4;
+  white-space: normal;
 }
 
 .cross-exam-lecture-meta {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .cross-exam-topics-section {

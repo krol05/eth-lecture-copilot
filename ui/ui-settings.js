@@ -29,6 +29,42 @@
   const restoreAllBtn = document.getElementById('restore-all');
   const saveBtn       = document.getElementById('save');
 
+  // Custom prompts
+  const promptGuideTA      = document.getElementById('prompt-guide');
+  const promptQaTA         = document.getElementById('prompt-qa');
+  const promptFlashcardsTA = document.getElementById('prompt-flashcards');
+  const promptQuizTA       = document.getElementById('prompt-quiz');
+  const promptExamTA       = document.getElementById('prompt-exam');
+  const restorePromptsBtn  = document.getElementById('restore-prompts');
+
+  const PROMPT_EXTRAS_KEY = 'customPromptExtras';
+  const PROMPT_KEYS = ['guide', 'qa', 'flashcards', 'quiz', 'exam'];
+  const promptTAs   = { guide: promptGuideTA, qa: promptQaTA, flashcards: promptFlashcardsTA, quiz: promptQuizTA, exam: promptExamTA };
+
+  let workingPrompts = { guide: '', qa: '', flashcards: '', quiz: '', exam: '' };
+
+  // Load saved custom prompts
+  chrome.storage.local.get([PROMPT_EXTRAS_KEY], (r) => {
+    if (r[PROMPT_EXTRAS_KEY] && typeof r[PROMPT_EXTRAS_KEY] === 'object') {
+      workingPrompts = { ...workingPrompts, ...r[PROMPT_EXTRAS_KEY] };
+    }
+    for (const k of PROMPT_KEYS) {
+      if (promptTAs[k]) promptTAs[k].value = workingPrompts[k] || '';
+    }
+  });
+
+  function collectPrompts() {
+    for (const k of PROMPT_KEYS) {
+      workingPrompts[k] = (promptTAs[k]?.value || '').trim();
+    }
+  }
+
+  restorePromptsBtn?.addEventListener('click', () => {
+    workingPrompts = { guide: '', qa: '', flashcards: '', quiz: '', exam: '' };
+    for (const k of PROMPT_KEYS) { if (promptTAs[k]) promptTAs[k].value = ''; }
+    setStatus('Custom prompt instructions cleared');
+  });
+
   const FIELD_CONFIG = [
     ['bg0',          'Background 0',       'color'],
     ['bg1',          'Background 1',       'color'],
@@ -180,7 +216,9 @@
   });
 
   saveBtn.addEventListener('click', async () => {
+    collectPrompts();
     working = await UISettings.save(working);
+    await new Promise((resolve) => chrome.storage.local.set({ [PROMPT_EXTRAS_KEY]: workingPrompts }, resolve));
     setStatus('Saved. Reopen sidebar to confirm changes.');
   });
 

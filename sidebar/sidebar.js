@@ -28,6 +28,18 @@
   let pendingFrameBase64 = null;   // frame captured when checkbox is ticked, used at send time
   let pastedImages = [];           // base64 data-URLs from paste / drag-drop / file-picker
   let activeGuideRequestId = null;
+  let activeQaRequestId = null;   // requestId of the active streaming QA request
+  let isQaStreaming = false;       // true while QA stream is in flight
+  let qaStreamBuffer = '';         // accumulated text for the active QA stream
+  let qaStreamEl = null;           // the streaming assistant message div
+  let qaStreamBubble = null;       // .chat-bubble inside qaStreamEl
+  let qaKatexThrottle = null;      // setTimeout for throttled KaTeX re-render
+  let qaRafPending = false;        // rAF gate for Q&A stream rendering
+  let qaStreamDollarCount = 0;     // tracks how many $$ seen so far (even = complete blocks)
+  let qaStreamStableEnd = 0;       // buffer index up to which chars have been appended to DOM as plain spans
+  let qaStreamKatexEnd  = 0;       // buffer index up to which chars have been rendered in the KaTeX zone
+  let customPromptExtras = { guide: '', qa: '', flashcards: '', quiz: '', exam: '' };
+  let flashcardIndex = 0;          // current card index in paginated flashcard view
   let requestIdCounter = 0;
   const pendingRequests = {};
   let currentLectureUrl = null;
@@ -229,9 +241,7 @@
     qaMessages_el?.addEventListener('scroll', onQaMessagesScroll);
 
     qaReplyReadyToastAction?.addEventListener('click', () => {
-      if (qaReplyReadyTargetEl && qaReplyReadyTargetEl.isConnected) {
-        qaScrollMessagesToShowElementTop(qaReplyReadyTargetEl);
-      }
+      qaScrollToBottom();
       hideQaReplyReadyToast();
     });
     qaReplyReadyToastDismiss?.addEventListener('click', (e) => {
@@ -339,10 +349,15 @@
     // Export MD button
     document.getElementById('export-md-btn')?.addEventListener('click', exportGuideAsMarkdown);
 
-    // Feature buttons
-    flashcardsBtn?.addEventListener('click', openFlashcardsModal);
-    quizBtn?.addEventListener('click', openQuizModal);
-    examBtn?.addEventListener('click', openExamModal);
+    // Feature buttons — open inline split panel within Guide tab (no tab switch)
+    flashcardsBtn?.addEventListener('click', () =>
+      openInlineToolPanel('flashcards', 'Flashcards', _buildInlineFlashcards));
+    quizBtn?.addEventListener('click', () =>
+      openInlineToolPanel('quiz', 'Practice Quiz', _buildInlineQuiz));
+    examBtn?.addEventListener('click', () =>
+      openInlineToolPanel('exam', 'Exam Questions', _buildInlineExam));
+
+    document.getElementById('guide-inline-tool-close')?.addEventListener('click', closeInlineToolPanel);
 
     // Flashcards tool
     document.getElementById('flashcards-generate-btn')?.addEventListener('click', generateFlashcards);
@@ -507,6 +522,13 @@
     currentLectureUrl = lectureUrl;
     initScriptsForCourse(lectureUrl);
     const normNew = normalizeLectureUrl(lectureUrl);
+
+    // Load custom prompt extras (non-blocking, best-effort)
+    chrome.storage?.local?.get(['customPromptExtras'], (r) => {
+      if (r.customPromptExtras && typeof r.customPromptExtras === 'object') {
+        customPromptExtras = { ...customPromptExtras, ...r.customPromptExtras };
+      }
+    });
 
     chrome.storage?.local?.get(
       ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages', 'guideHistory'],
@@ -736,8 +758,8 @@
   }
 
   function apiRequest(payload) {
-    return new Promise((resolve, reject) => {
-      const id = makeRequestId();
+    const id = makeRequestId();
+    const promise = new Promise((resolve, reject) => {
       const isGuideRequest = payload?.type === 'GENERATE_GUIDE';
       let settled = false;
       let timeoutTimer = null;
@@ -790,6 +812,9 @@
       };
       postToContent({ type: 'API_REQUEST', requestId: id, payload });
     });
+    // Expose the requestId on the promise so callers that need streaming context can read it
+    promise._requestId = id;
+    return promise;
   }
 
   function handleApiProgress(msg) {
@@ -858,8 +883,17 @@
   }
 
   function handleStreamChunk(msg) {
+    const reqId = msg?.requestId;
+    if (!reqId) return;
+
+    // Route to QA stream handler first (isChatting is still true during stream)
+    if (isQaStreaming && reqId === activeQaRequestId) {
+      handleQaStreamChunk(msg);
+      return;
+    }
+
     if (!isGenerating) return;
-    if (!msg?.requestId || msg.requestId !== activeGuideRequestId) return;
+    if (reqId !== activeGuideRequestId) return;
     streamBuffer += msg.text || '';
 
     const blocks = extractStreamedBlocks(streamBuffer);
@@ -871,15 +905,18 @@
       if (!guide) guide = { guide: [], lecture_title: '', total_duration_seconds: 0 };
       guide.guide = blocks;
 
-      // On first block: transition from empty state to guide content
       if (prevCount === 0) {
+        // First block: transition from empty to guide view + do the initial full render
         guideEmpty.style.display = 'none';
         guideContent.style.display = 'flex';
         currentBlockIndex = 0;
+        renderBlock(0);
+      } else {
+        // More blocks arrived — current block content hasn't changed, so only update
+        // the counter and progress bar.  Calling renderBlock() here causes the block
+        // to flash/animate on every incoming chunk, which looks terrible.
+        updateGuideStreamCounter(blockCount);
       }
-
-      // Re-render the currently displayed block (also updates counter + progress bar)
-      renderBlock(currentBlockIndex);
     }
 
     // Show / update streaming status bar
@@ -916,6 +953,138 @@
     const bar = document.getElementById('guide-streaming-bar');
     if (bar) bar.remove();
     streamBuffer = '';
+  }
+
+  /** Update only the block counter and progress bar during streaming.
+   *  Does NOT touch guideBlock.innerHTML — avoids the per-chunk flash/animation. */
+  function updateGuideStreamCounter(totalBlocks) {
+    const idx = currentBlockIndex;
+    if (blockJumpInput) blockJumpInput.max = String(totalBlocks);
+    if (blockCounter) blockCounter.textContent = totalBlocks;
+    const pct = Math.round(((idx + 1) / totalBlocks) * 100);
+    if (progressFill) {
+      progressFill.style.width = `${pct}%`;
+      progressFill.parentElement?.setAttribute('aria-valuenow', String(pct));
+    }
+  }
+
+  // ─── Q&A stream chunk handler ─────────────────────────────────────────────
+  // One DOM write per animation frame (≤60 fps) for smooth text appearance.
+  // KaTeX is intentionally NOT applied during streaming — re-rendering LaTeX on
+  // every chunk causes a visible flicker (rendered → raw → rendered → raw…).
+  // KaTeX runs exactly once when the stream completes (see sendQaMessage).
+
+  function handleQaStreamChunk(msg) {
+    qaStreamBuffer += msg.text || '';
+    if (!qaStreamBubble) return;
+    // Gate DOM writes to one per animation frame — prevents layout thrashing
+    if (!qaRafPending) {
+      qaRafPending = true;
+      requestAnimationFrame(flushQaStream);
+    }
+  }
+
+  /**
+   * Two-layer streaming renderer.
+   *
+   *  Layer A — .qa-katex-zone (a single <div> at the top of the bubble)
+   *    Contains text up to the end of the last COMPLETE $$...$$ block.
+   *    Set via element.textContent so the raw $$ delimiters survive inside one
+   *    text node (critical — renderMathInElement only scans within a text node;
+   *    splitting on \n into separate nodes would break multi-line equations).
+   *    KaTeX is applied once per newly-closed block and never re-runs.
+   *
+   *  Layer B — appended .qa-chunk <span> nodes
+   *    Contains text AFTER the last complete math block (the live tail).
+   *    Each rAF frame we APPEND only the new characters as fresh spans that
+   *    fade in via CSS.  Nothing is ever replaced, so old text stays stable.
+   *
+   *  On stream completion both layers are replaced by a full markdown+KaTeX
+   *  render with a smooth opacity crossfade.
+   */
+  function flushQaStream() {
+    qaRafPending = false;
+    if (!qaStreamBubble) return;
+
+    const buf    = qaStreamBuffer;
+    const cursor = qaStreamBubble.querySelector('.qa-stream-cursor');
+    const katexZ = qaStreamBubble.querySelector('.qa-katex-zone');
+
+    // ── Layer A: detect newly-closed $$...$$ blocks ──────────────────────────
+    let katexCutoff = qaStreamKatexEnd;
+    let i = katexCutoff;
+    while (i < buf.length - 1) {
+      if (buf[i] === '$' && buf[i + 1] === '$') {
+        const closeIdx = buf.indexOf('$$', i + 2);
+        if (closeIdx !== -1) {
+          katexCutoff = closeIdx + 2;
+          i = closeIdx + 2;
+        } else {
+          break; // block still open — leave for later
+        }
+      } else {
+        i++;
+      }
+    }
+
+    if (katexCutoff > qaStreamKatexEnd && katexZ) {
+      // New complete math block(s) found.
+      // Set the zone's textContent so the $$ delimiters live in a SINGLE text
+      // node — renderMathInElement can then find multi-line equations.
+      katexZ.textContent = buf.slice(0, katexCutoff);
+      if (typeof renderMathInElement === 'function') {
+        renderMathInElement(katexZ, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$',  right: '$',  display: false }
+          ],
+          throwOnError: false,
+          trust: false
+        });
+      }
+      qaStreamKatexEnd = katexCutoff;
+
+      // Remove all existing plain spans/brs (now covered by the katex zone).
+      Array.from(qaStreamBubble.childNodes).forEach(node => {
+        if (node !== katexZ && node !== cursor) node.remove();
+      });
+      // Plain-span pointer resets to the katex cutoff.
+      qaStreamStableEnd = katexCutoff;
+    }
+
+    // ── Layer B: append the live tail as fading plain-text spans ─────────────
+    const newText = buf.slice(qaStreamStableEnd);
+    if (newText) {
+      newText.split('\n').forEach((line, idx) => {
+        if (idx > 0) {
+          const br = document.createElement('br');
+          cursor ? qaStreamBubble.insertBefore(br, cursor) : qaStreamBubble.appendChild(br);
+        }
+        if (line.length > 0) {
+          const span = document.createElement('span');
+          span.className = 'qa-chunk';
+          span.innerHTML = applyStreamingLineMarkdown(line);
+          cursor ? qaStreamBubble.insertBefore(span, cursor) : qaStreamBubble.appendChild(span);
+        }
+      });
+      qaStreamStableEnd = buf.length;
+    }
+  }
+
+  // runQaStreamKatex kept as no-op shim so any stale references don't crash
+  function runQaStreamKatex() {}
+
+  /** Apply KaTeX to an element — shared helper used by streaming, flashcards, etc. */
+  function applyKatex(el) {
+    if (!el || typeof renderMathInElement !== 'function') return;
+    renderMathInElement(el, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$',  right: '$',  display: false }
+      ],
+      throwOnError: false,
+      trust: false
+    });
   }
 
   function showGuideTimeoutDialog({ onRetry, onKeepGoing }) {
@@ -1172,10 +1341,11 @@
 
     const guideLang = getSelectedLanguage();
     const systemPrompt = buildGuidePrompt(guideDetail, guideCount, guideLang);
-    // Enable streaming for cloud providers that support SSE (not local by default)
-    const supportsStream = settings.provider &&
-      !String(settings.provider).startsWith('local_') &&
-      settings.provider !== 'google'; // Google streaming handled but disable for fallback path
+    // All providers support SSE streaming:
+    //   - OAI-compat / local (LiteLLM, Ollama, etc.) → callOAICompatStream
+    //   - Anthropic → callAnthropicStream
+    //   - Google → callGoogleStream
+    const supportsStream = !!settings.provider;
 
     streamBuffer = '';
     const payload = {
@@ -1411,11 +1581,12 @@
   function buildGuidePrompt(detail, count, lang) {
     const d = GUIDE_DETAIL_PROFILES[detail] || GUIDE_DETAIL_PROFILES.very_high;
     const c = GUIDE_COUNT_PROFILES[count] || GUIDE_COUNT_PROFILES.very_high;
+    const extraPrefix = customPromptExtras.guide ? customPromptExtras.guide.trim() + '\n\n' : '';
     const langInstruction = lang
       ? `\n\nLANGUAGE: Write ALL text content (titles, key_concepts, definitions, notes) in ${lang}. Keep JSON keys, LaTeX, and technical notation unchanged.`
       : `\n\nLANGUAGE: Detect the dominant natural language of the transcript and write ALL text content (lecture_title, titles, key_concepts, definitions, notes) in that same language. Do not default to English unless the transcript itself is mainly English. Keep JSON keys, LaTeX, and technical notation unchanged.`;
 
-    return `You are an expert academic assistant that converts lecture transcripts into structured study guides.
+    return `${extraPrefix}You are an expert academic assistant that converts lecture transcripts into structured study guides.
 
 Your task: Read the provided lecture transcript and produce a JSON lecture guide. The guide divides the lecture into logical topic blocks (not fixed time intervals). Each block covers one coherent topic or subtopic.${langInstruction}
 
@@ -1656,6 +1827,17 @@ Now process the following transcript:`;
     if (!block) return;
 
     currentBlockIndex = idx;
+
+    // Keep exam-tool "current block" label fresh whenever the user navigates
+    const _examScopeVal = getActivePillValue('exam-scope-pills');
+    if (_examScopeVal === 'current') {
+      const _infoLabel = document.getElementById('exam-current-block-label');
+      if (_infoLabel) {
+        _infoLabel.textContent = block?.title
+          ? `Block ${idx + 1}: ${block.title}`
+          : 'No block selected yet';
+      }
+    }
 
     // Update counter + progress
     if (blockJumpInput) blockJumpInput.value = idx + 1;
@@ -2181,17 +2363,40 @@ Now process the following transcript:`;
     qaInput.value = '';
     qaInput.style.height = 'auto';
 
-    // Show typing indicator
-    const typingEl = appendTypingIndicator();
+    // All providers support SSE streaming; use it for progressive rendering
+    const useStream = !!settings.provider;
 
     // Build system prompt with context (including script chunks if available)
     const systemPrompt = await buildQAPrompt(text);
+
+    // Prepare streaming message element or typing indicator
+    let typingEl = null;
+    if (useStream) {
+      // Create a live-updating assistant bubble; no auto-scroll during generation
+      qaStreamBuffer = '';
+      qaStreamDollarCount = 0;
+      qaStreamStableEnd = 0;
+      qaStreamKatexEnd  = 0;
+      qaRafPending = false;
+      qaStreamEl = document.createElement('div');
+      qaStreamEl.className = 'chat-msg assistant';
+      // .qa-katex-zone receives KaTeX-rendered text for complete $$...$$ blocks.
+      // Plain-text .qa-chunk spans are appended after it.
+      qaStreamEl.innerHTML = '<div class="chat-bubble"><div class="qa-katex-zone"></div><span class="qa-stream-cursor" aria-hidden="true"></span></div>';
+      qaMessages_el.appendChild(qaStreamEl);
+      qaStreamBubble = qaStreamEl.querySelector('.chat-bubble');
+      // Always scroll to bottom when the stream bubble first appears —
+      // the user just sent a message so they want to see the AI reply.
+      qaScrollToBottom();
+    } else {
+      typingEl = appendTypingIndicator();
+    }
 
     try {
       const qaTemp = qaTempSlider ? qaTempSlider.value / 100 : 0.35;
       const qaThinking = qaThinkingSel?.value || 'none';
 
-      const response = await apiRequest({
+      const req = apiRequest({
         type: 'CHAT',
         messages: qaMessages.map(m => ({ role: m.role, content: m.content, ...(m.images?.length ? { images: m.images } : {}) })),
         systemPrompt,
@@ -2200,20 +2405,95 @@ Now process the following transcript:`;
         apiKey: settings.apiKey,
         localBase: getLocalBase(),
         chatTemperature: qaTemp,
-        chatThinking: qaThinking
+        chatThinking: qaThinking,
+        useStream
       });
 
-      typingEl.remove();
+      // Register as active QA stream so handleQaStreamChunk can find it
+      if (useStream) {
+        activeQaRequestId = req._requestId;
+        isQaStreaming = true;
+      }
+
+      const response = await req;
 
       if (!response.success) throw new Error(response.error);
 
       const assistantText = response.data;
       qaMessages.push({ role: 'assistant', content: assistantText });
-      appendChatMsg('assistant', assistantText, false);
-      persistChat();
+
+      if (useStream) {
+        // Stream complete — stop accepting new chunks
+        isQaStreaming = false;
+        activeQaRequestId = null;
+        if (qaKatexThrottle) { clearTimeout(qaKatexThrottle); qaKatexThrottle = null; }
+
+        // Final render: crossfade from plain-text spans → full markdown + KaTeX.
+        // Capture bubble in a local var because qaStreamBubble is nulled right after.
+        if (qaStreamBubble) {
+          const bubble    = qaStreamBubble;
+          const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(assistantText));
+
+          // Step 1: fade out the raw plain-text version
+          bubble.style.transition = 'opacity 0.12s ease';
+          bubble.style.opacity    = '0.2';
+
+          setTimeout(() => {
+            // Step 2: swap in the formatted content while invisible
+            bubble.innerHTML = renderMarkdown(finalNorm);
+            if (typeof renderMathInElement === 'function') {
+              renderMathInElement(bubble, {
+                delimiters: [
+                  { left: '$$', right: '$$', display: true },
+                  { left: '$',  right: '$',  display: false }
+                ],
+                throwOnError: false,
+                trust: false
+              });
+            }
+            // Step 3: fade the formatted content back in
+            bubble.style.opacity = '1';
+            setTimeout(() => { bubble.style.transition = ''; }, 180);
+          }, 120);
+        }
+
+        persistChat();
+
+        // Scroll / notify: on QA tab → scroll to bottom; away → cross-tab notify
+        if (qaStreamEl) {
+          if (_currentTab !== 'qa') {
+            showCrossTabNotify(qaStreamEl);
+          } else {
+            // Always scroll to bottom when generation completes (per user request)
+            qaScrollToBottom();
+          }
+        }
+        qaStreamEl = null;
+        qaStreamBubble = null;
+
+      } else {
+        // Non-streaming path
+        typingEl?.remove();
+        appendChatMsg('assistant', assistantText, false);
+        persistChat();
+      }
 
     } catch (err) {
-      typingEl.remove();
+      // Clean up streaming state on error
+      isQaStreaming = false;
+      activeQaRequestId = null;
+      if (qaKatexThrottle) { clearTimeout(qaKatexThrottle); qaKatexThrottle = null; }
+
+      if (useStream && qaStreamEl) {
+        qaStreamEl.remove();
+        qaStreamEl = null;
+        qaStreamBubble = null;
+        qaStreamStableEnd = 0;
+        qaStreamKatexEnd  = 0;
+      } else {
+        typingEl?.remove();
+      }
+
       const humanError = humanizeApiError(err.message);
       appendErrorMsg(humanError);
     } finally {
@@ -2365,8 +2645,9 @@ Now process the following transcript:`;
     }
 
     const hasScript = !!scriptContext;
+    const qaExtraPrefix = customPromptExtras.qa ? customPromptExtras.qa.trim() + '\n\n' : '';
 
-    return `You are a helpful study assistant for the ETH Zürich lecture: "${title}".
+    return `${qaExtraPrefix}You are a helpful study assistant for the ETH Zürich lecture: "${title}".
 The student is currently at [${fmtSec(currentTime)}] in the video.
 
 Answer based on the transcript excerpt and guide blocks below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display) whenever math appears. Markdown formatting (e.g., #/## headings, short bullet lists) is allowed when it improves readability, but do not force markdown when plain text is clearer. If the question is about a different part of the lecture, reference the lecture structure to guide the student.
@@ -2555,7 +2836,7 @@ ${guideBlocksStr}${scriptContext}`;
       showCrossTabNotify(div);
     } else if (wasFollowing) {
       hideQaReplyReadyToast();
-      qaScrollMessagesToShowElementTop(div);
+      qaScrollToBottom();
     } else if (scrollMode === 'default') {
       showQaReplyReadyToast(div, content);
     }
@@ -2577,7 +2858,7 @@ ${guideBlocksStr}${scriptContext}`;
     if (_currentTab !== 'qa') {
       showCrossTabNotify(div);
     } else if (wasFollowing) {
-      qaScrollMessagesToShowElementTop(div);
+      qaScrollToBottom();
     } else {
       showQaReplyReadyToast(div, content);
     }
@@ -2598,51 +2879,159 @@ ${guideBlocksStr}${scriptContext}`;
     return div;
   }
 
-  // Lightweight markdown renderer for chat (headings, inline styles, paragraphs, timestamps)
+  // Lightweight markdown renderer for chat (headings, lists, hr, inline styles, paragraphs, math protection)
   function renderMarkdown(text) {
     const src = String(text || '').replace(/\r\n/g, '\n');
+    const lines = src.split('\n');
     const out = [];
     let para = [];
+    let listType = null;   // 'ul' | 'ol' | null
+    let mathOpen = false;  // true while collecting a cross-line $...$ block
+    let mathBuf  = [];
+    let mathDollarParity = 0;
+
+    // Count $ delimiters treating $$ as one unit
+    const countDollars = (str) => {
+      let n = 0, i = 0;
+      while (i < str.length) {
+        if (str[i] === '$') { n++; i += (str[i + 1] === '$' ? 2 : 1); } else { i++; }
+      }
+      return n;
+    };
 
     const flushPara = () => {
       if (!para.length) return;
-      out.push(`<p>${para.map(line => renderMarkdownInline(line)).join('<br>')}</p>`);
+      out.push(`<p>${para.map(l => renderMarkdownInline(l)).join('<br>')}</p>`);
       para = [];
     };
+    const flushList = () => {
+      if (!listType) return;
+      out.push(`</${listType}>`);
+      listType = null;
+    };
 
-    for (const rawLine of src.split('\n')) {
-      const line = rawLine.trimEnd();
-      const heading = line.match(/^\s*(#{1,4})\s+(.+)$/);
-      if (!line.trim()) {
-        flushPara();
+    for (const rawLine of lines) {
+      const line    = rawLine.trimEnd();
+      const trimmed = line.trim();
+
+      // ── Collecting a cross-line math block ───────────────────────────────
+      if (mathOpen) {
+        mathBuf.push(line);
+        mathDollarParity = (mathDollarParity + countDollars(line)) % 2;
+        if (mathDollarParity === 0) {
+          // block closed — emit as one element so KaTeX finds complete delimiters
+          out.push(`<p class="math-block">${escHtml(mathBuf.join('\n'))}</p>`);
+          mathBuf = []; mathOpen = false;
+        }
         continue;
       }
+
+      // ── Horizontal rule ───────────────────────────────────────────────────
+      if (/^[-*_]{3,}\s*$/.test(trimmed)) {
+        flushPara(); flushList();
+        out.push('<hr class="md-hr">');
+        continue;
+      }
+
+      // ── Empty line ────────────────────────────────────────────────────────
+      if (!trimmed) { flushPara(); flushList(); continue; }
+
+      // ── Heading ───────────────────────────────────────────────────────────
+      const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
       if (heading) {
-        flushPara();
+        flushPara(); flushList();
         const level = Math.min(4, heading[1].length);
         out.push(`<h${level}>${renderMarkdownInline(heading[2])}</h${level}>`);
         continue;
       }
+
+      // ── Unordered list item ───────────────────────────────────────────────
+      const ulM = trimmed.match(/^[-*+]\s+(.+)$/);
+      if (ulM) {
+        flushPara();
+        if (listType === 'ol') flushList();
+        if (!listType) { out.push('<ul>'); listType = 'ul'; }
+        out.push(`<li>${renderMarkdownInline(ulM[1])}</li>`);
+        continue;
+      }
+
+      // ── Ordered list item ─────────────────────────────────────────────────
+      const olM = trimmed.match(/^\d+[.)]\s+(.+)$/);
+      if (olM) {
+        flushPara();
+        if (listType === 'ul') flushList();
+        if (!listType) { out.push('<ol>'); listType = 'ol'; }
+        out.push(`<li>${renderMarkdownInline(olM[1])}</li>`);
+        continue;
+      }
+
+      // ── Detect opening of a cross-line math block ─────────────────────────
+      if (countDollars(line) % 2 === 1) {
+        flushPara(); flushList();
+        mathBuf = [line]; mathDollarParity = 1; mathOpen = true;
+        continue;
+      }
+
+      // ── Regular paragraph line ────────────────────────────────────────────
+      if (listType) flushList();
       para.push(line);
     }
+
+    // Flush any remaining state
+    if (mathOpen) out.push(`<p class="math-block">${escHtml(mathBuf.join('\n'))}</p>`);
     flushPara();
+    flushList();
     return out.join('');
+  }
+
+  /**
+   * Apply inline markdown to a single streaming text chunk.
+   * Used by Layer B of flushQaStream so users see formatted text
+   * while the response is still being generated.
+   */
+  function applyStreamingLineMarkdown(line) {
+    const t = line.trim();
+    if (!t) return '';
+    // Horizontal rule
+    if (/^[-*_]{3,}\s*$/.test(t)) return '<hr class="md-hr">';
+    // Unordered list item — render as bullet
+    const ulM = t.match(/^[-*+]\s+(.+)$/);
+    if (ulM) return '• ' + renderMarkdownInline(ulM[1]);
+    // Ordered list item
+    const olM = t.match(/^(\d+)[.)]\s+(.+)$/);
+    if (olM) return olM[1] + '. ' + renderMarkdownInline(olM[2]);
+    // Default: inline markdown (bold, italic, timestamps, code spans)
+    return renderMarkdownInline(line);
   }
 
   function renderMarkdownInline(text) {
     let s = escHtml(String(text || ''));
-    const codeSpans = [];
-    s = s.replace(/`([^`]+)`/g, (_, inner) => {
-      const i = codeSpans.push(`<code>${inner}</code>`) - 1;
-      return `@@CODE_${i}@@`;
-    });
+
+    // Stash spans that must not be touched by bold/italic substitution.
+    // Uses null-byte delimiters (\x00) which never appear in normal text.
+    const stash = [];
+    const protect = (raw) => { const i = stash.push(raw) - 1; return `\x00S${i}\x00`; };
+
+    // 1. Inline code  (highest priority)
+    s = s.replace(/`([^`]+)`/g, (_, inner) => protect(`<code>${inner}</code>`));
+
+    // 2. Inline math  $$...$$ then $...$
+    //    After escHtml, $ is unchanged; protect math so * inside doesn't become <em>.
+    s = s.replace(/\$\$([^$][\s\S]*?)\$\$/g, (m) => protect(m));
+    s = s.replace(/\$([^$\n]+)\$/g, (m) => protect(m));
+
+    // 3. Bold / italic — now safe, math is stashed
     s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    // 4. Timestamps
     s = s.replace(/\[(\d{2}):([0-5]\d):([0-5]\d)\]/g, (_, hh, mm, ss) => {
       const seconds = Number(hh) * 3600 + Number(mm) * 60 + Number(ss);
       return `<button type="button" class="qa-timestamp-link" data-seconds="${seconds}">[${hh}:${mm}:${ss}]</button>`;
     });
-    s = s.replace(/@@CODE_(\d+)@@/g, (_, idx) => codeSpans[Number(idx)] || '');
+
+    // 5. Restore stash
+    s = s.replace(/\x00S(\d+)\x00/g, (_, idx) => stash[Number(idx)] || '');
     return s;
   }
 
@@ -2749,15 +3138,33 @@ ${guideBlocksStr}${scriptContext}`;
         return;
       }
 
-      // One-time repair: fix bad courseNames (season/year/dept artifacts)
-      const _BAD_NAME_RE = /^(spring|fall|autumn|winter|summer|herbst|früh?ling|sommer|lectures?|d-\w{1,8}|\d{4}|lecture)$/i;
-      const _isBadName  = n => !n || _BAD_NAME_RE.test(n.trim());
+      // ── Repair pass: fix courseNames that don't match the lecture ──────────
+      // Bug: extractCourseName() used 'nav a' which grabbed the alphabetically
+      // first entry in the ETH course-list sidebar nav (e.g. "Building Control
+      // and Automation") for every lecture, regardless of the actual course.
+      // Heuristic: if the stored courseName does not appear anywhere in the
+      // lectureTitle, re-derive it by stripping the "– Lecture N" suffix.
+      const _BAD_NAME_RE  = /^(spring|fall|autumn|winter|summer|herbst|früh?ling|sommer|lectures?|d-\w{1,8}|\d{4}|lecture)$/i;
+      const _isBadName    = n => !n || _BAD_NAME_RE.test(n.trim());
+      const _deriveName   = e => {
+        const t = (e.lectureTitle || '').trim();
+        return t.replace(/[\s—–-]+lecture\s*\d+.*/i, '').replace(/[\s—–-]+\d{4}.*/i, '').trim() || t || 'Lecture';
+      };
+      const _nameConflict = e => {
+        if (_isBadName(e.courseName)) return true;
+        if (!e.courseName || !e.lectureTitle) return false;
+        // If the stored course name (first 12 chars) does not appear in the
+        // lecture title, it's stale data from the wrong nav element.
+        const cn = e.courseName.toLowerCase();
+        const lt = e.lectureTitle.toLowerCase();
+        return !lt.includes(cn.slice(0, Math.min(cn.length, 12)));
+      };
       const patchedHistory = history.map(e => ({
         ...e,
         courseKey:  e.courseKey  || deriveCourseKeyFromUrl(e.lectureUrl),
-        courseName: _isBadName(e.courseName) ? (e.lectureTitle || 'Lecture') : e.courseName,
+        courseName: _nameConflict(e) ? _deriveName(e) : e.courseName,
       }));
-      if (history.some(e => _isBadName(e.courseName))) {
+      if (history.some(e => _nameConflict(e))) {
         storageSet({ guideHistory: patchedHistory });
       }
 
@@ -3332,7 +3739,16 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   function normalizeLatexForKatex(str) {
-    return String(str || '').replace(
+    // ── Step 1: Collapse multi-line display math ──────────────────────────────
+    // AI often outputs:   $$\n<math>\n$$   (opening/closing $$ on their own line)
+    // Our renderMarkdown splits on newlines → the opening $$ and content end up
+    // in separate <p> elements → KaTeX never finds the delimiters.
+    // Fix: if $$ appears alone on a line, merge the whole block to one span.
+    str = String(str || '').replace(/\$\$[ \t]*\n([\s\S]*?)\n[ \t]*\$\$/g, (_m, inner) =>
+      '$$' + inner + '$$'
+    );
+    // ── Step 2: \sideset transformation ──────────────────────────────────────
+    return str.replace(
       /\\sideset\s*\{([^{}]*)\}\s*\{([^{}]*)\}\s*([\\a-zA-Z]+|\{[^{}]+\})/g,
       (_m, left, right, op) => {
         const l = parseScriptSpec(left);
@@ -3664,9 +4080,337 @@ ${guideBlocksStr}${scriptContext}`;
     const section = document.getElementById(sectionId);
     if (section) {
       section.open = true;
-      // Small delay to let the tab switch render before scrolling
       setTimeout(() => section.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
     }
+  }
+
+  // ─── Inline guide tool panel ──────────────────────────────────────────────
+  // Opens a split-panel within the Guide tab instead of switching to Tools tab.
+
+  let _inlineToolActive = null;   // 'flashcards' | 'quiz' | 'exam' | null
+
+  /**
+   * Open (or toggle) the inline tool panel at the bottom of the Guide tab.
+   * @param {'flashcards'|'quiz'|'exam'} toolKey
+   * @param {string} titleText   Panel header label
+   * @param {Function} buildFn   Called with the body element to populate it
+   */
+  function openInlineToolPanel(toolKey, titleText, buildFn) {
+    if (!guide?.guide?.length) { setStatus('warning', 'Generate a guide first'); return; }
+
+    const guideContent = document.getElementById('guide-content');
+    const panel        = document.getElementById('guide-inline-tool');
+    const nameEl       = document.getElementById('guide-inline-tool-name');
+    const bodyEl       = document.getElementById('guide-inline-tool-body');
+    if (!panel || !bodyEl) return;
+
+    // Toggle off if same tool clicked again
+    if (_inlineToolActive === toolKey) {
+      closeInlineToolPanel();
+      return;
+    }
+
+    _inlineToolActive = toolKey;
+    nameEl.textContent = titleText;
+    bodyEl.innerHTML   = '';
+    buildFn(bodyEl);
+
+    // Clear any height left from a previous resize — let content drive the size.
+    // The panel will be exactly as tall as its content (the settings form / results).
+    // CSS max-height caps it if content is very long.
+    panel.style.height = '';
+
+    panel.hidden = false;
+    guideContent?.classList.add('inline-tool-open');
+
+    // Highlight the active toolbar button
+    document.querySelectorAll('.guide-toolbar-actions .icon-btn').forEach(btn => {
+      btn.classList.toggle('inline-tool-active', btn.dataset.inlineTool === toolKey);
+    });
+
+    // Wire resize handle
+    _wireInlineResize();
+  }
+
+  function closeInlineToolPanel() {
+    const guideContent = document.getElementById('guide-content');
+    const panel        = document.getElementById('guide-inline-tool');
+    if (panel) {
+      panel.hidden = true;
+      panel.style.height = '';   // clear JS-set height so CSS rules take over next open
+    }
+    guideContent?.classList.remove('inline-tool-open');
+    _inlineToolActive = null;
+    document.querySelectorAll('.guide-toolbar-actions .icon-btn').forEach(btn => {
+      btn.classList.remove('inline-tool-active');
+    });
+  }
+
+  function _wireInlineResize() {
+    const handle = document.getElementById('guide-inline-resize');
+    const panel  = document.getElementById('guide-inline-tool');
+    if (!handle || !panel || handle.dataset.wired) return;
+    handle.dataset.wired = '1';
+
+    let startY = 0, startH = 0;
+    handle.addEventListener('mousedown', e => {
+      startY = e.clientY;
+      startH = panel.offsetHeight;
+      const onMove = ev => {
+        // Handle is at the TOP of the panel (bottom-anchored panel).
+        // Drag UP (ev.clientY decreases) → delta positive → panel grows.
+        // Drag DOWN (ev.clientY increases) → delta negative → panel shrinks.
+        const delta = startY - ev.clientY;
+        const container = panel.parentElement;
+        const maxH = (container ? container.offsetHeight : window.innerHeight) - 80;
+        const newH = Math.min(Math.max(startH + delta, 120), maxH);
+        panel.style.height = `${newH}px`;
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      e.preventDefault();
+    });
+  }
+
+  /** Build the Flashcards inline panel body */
+  function _buildInlineFlashcards(body) {
+    if (flashcardData.length) {
+      // Already have cards — show them directly
+      _renderInlineFlashcardResults(body);
+    } else {
+      // Settings form (minimal — count + style)
+      const countVal = getActivePillValue('flashcards-count-pills') || 'auto';
+      const styleVal = getActivePillValue('flashcards-style-pills') || 'mixed';
+      body.innerHTML = `
+        <p class="inline-tool-hint">Generates flashcards from this lecture guide.</p>
+        <div class="inline-tool-row">
+          <span class="inline-tool-label">Count</span>
+          <div class="pill-group" id="it-fc-count-pills">
+            ${['auto','10','20','30'].map(v => `<button class="pill${v===countVal?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+          </div>
+        </div>
+        <div class="inline-tool-row">
+          <span class="inline-tool-label">Style</span>
+          <div class="pill-group" id="it-fc-style-pills">
+            ${['mixed','definition','formula','concept'].map(v => `<button class="pill${v===styleVal?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+          </div>
+        </div>
+        <button id="it-fc-generate-btn" class="primary-btn" type="button">
+          <span class="btn-text">Generate Flashcards</span>
+          <span class="btn-spinner" style="display:none"></span>
+        </button>
+        <p class="error-msg" id="it-fc-error" style="display:none"></p>
+      `;
+      initPillGroup('it-fc-count-pills');
+      initPillGroup('it-fc-style-pills');
+      body.querySelector('#it-fc-generate-btn').addEventListener('click', async () => {
+        const btn  = body.querySelector('#it-fc-generate-btn');
+        const errEl = body.querySelector('#it-fc-error');
+        setFeatureBtnLoading(btn, true);
+        errEl.style.display = 'none';
+        try {
+          const count  = getActivePillValue('it-fc-count-pills') || 'auto';
+          const style  = getActivePillValue('it-fc-style-pills') || 'mixed';
+          const systemPrompt = buildFlashcardsPrompt(guide, { count, style, includeFormulas: true });
+          const payload = { ...buildApiPayloadBase(), type: 'FLASHCARDS_REQUEST', guideJson: guide, systemPrompt };
+          const resp = await apiRequest(payload);
+          if (!resp.success) throw new Error(resp.error);
+          flashcardData = resp.data?.flashcards || [];
+          if (!flashcardData.length) throw new Error('No flashcards returned.');
+          flashcardIndex = 0;
+          body.innerHTML = '';
+          _renderInlineFlashcardResults(body);
+        } catch (err) {
+          errEl.textContent = err.message;
+          errEl.style.display = '';
+        } finally {
+          setFeatureBtnLoading(btn, false);
+        }
+      });
+    }
+  }
+
+  function _renderInlineFlashcardResults(body) {
+    body.innerHTML = `
+      <div class="inline-fc-header">
+        <span id="it-fc-count-label" class="inline-fc-count">${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}</span>
+        <div style="display:flex;gap:6px">
+          <button id="it-fc-tsv-btn" class="history-load-btn" type="button">Export TSV</button>
+          <button id="it-fc-anki-btn" class="history-load-btn" type="button">Send to Anki</button>
+          <button id="it-fc-regen-btn" class="history-load-btn" type="button">Regenerate</button>
+        </div>
+      </div>
+      <div class="flashcard-nav">
+        <button id="it-fc-prev-btn" class="block-nav-btn" type="button" disabled aria-label="Previous card">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span id="it-fc-counter" class="flashcard-nav-counter">1 / ${flashcardData.length}</span>
+        <button id="it-fc-next-btn" class="block-nav-btn" type="button" aria-label="Next card">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+      <div id="it-fc-card" class="flashcard-item"></div>
+    `;
+    const renderCard = idx => {
+      flashcardIndex = Math.max(0, Math.min(idx, flashcardData.length - 1));
+      const card = flashcardData[flashcardIndex];
+      const counter = body.querySelector('#it-fc-counter');
+      if (counter) counter.textContent = `${flashcardIndex + 1} / ${flashcardData.length}`;
+      body.querySelector('#it-fc-prev-btn').disabled = flashcardIndex === 0;
+      body.querySelector('#it-fc-next-btn').disabled = flashcardIndex === flashcardData.length - 1;
+      const el = body.querySelector('#it-fc-card');
+      el.innerHTML = `
+        <div class="flashcard-side flashcard-front">
+          <div class="flashcard-side-label">Front</div>
+          <div class="flashcard-text" contenteditable="true" spellcheck="false">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(card.front)))}</div>
+        </div>
+        <div class="flashcard-side flashcard-back">
+          <div class="flashcard-side-label">Back</div>
+          <div class="flashcard-text" contenteditable="true" spellcheck="false">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(card.back)))}</div>
+        </div>
+      `;
+      el.querySelectorAll('.flashcard-text').forEach(t => applyKatex(t));
+    };
+    renderCard(flashcardIndex);
+    body.querySelector('#it-fc-prev-btn').addEventListener('click', () => renderCard(flashcardIndex - 1));
+    body.querySelector('#it-fc-next-btn').addEventListener('click', () => renderCard(flashcardIndex + 1));
+    body.querySelector('#it-fc-tsv-btn').addEventListener('click', exportFlashcardsAsTSV);
+    body.querySelector('#it-fc-anki-btn').addEventListener('click', sendFlashcardsToAnki);
+    body.querySelector('#it-fc-regen-btn').addEventListener('click', () => {
+      flashcardData = [];
+      body.innerHTML = '';
+      _buildInlineFlashcards(body);
+    });
+  }
+
+  /** Build the Quiz inline panel body */
+  function _buildInlineQuiz(body) {
+    if (quizState) {
+      // Quiz in progress — render the active state
+      body.innerHTML = `<p style="color:var(--text-muted);font-size:12px">Quiz is in progress in the Tools tab.</p>
+        <button class="primary-btn" type="button" id="it-quiz-goto">Open Quiz →</button>`;
+      body.querySelector('#it-quiz-goto')?.addEventListener('click', () => { openToolSection('tool-quiz'); closeInlineToolPanel(); });
+      return;
+    }
+    const scopeVal = getActivePillValue('quiz-type-pills') || 'mixed';
+    const countVal = getActivePillValue('quiz-count-pills') || '10';
+    body.innerHTML = `
+      <p class="inline-tool-hint">Quick quiz from this guide. Full settings in the <button class="link-btn" id="it-quiz-fullsettings">Tools tab</button>.</p>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Type</span>
+        <div class="pill-group" id="it-quiz-type-pills">
+          ${['mixed','mc','open'].map(v => `<button class="pill${v===scopeVal?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+        </div>
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Questions</span>
+        <div class="pill-group" id="it-quiz-count-pills">
+          ${['5','10','15'].map(v => `<button class="pill${v===countVal?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+        </div>
+      </div>
+      <button id="it-quiz-start-btn" class="primary-btn" type="button">
+        <span class="btn-text">Start Quiz</span><span class="btn-spinner" style="display:none"></span>
+      </button>
+      <p class="error-msg" id="it-quiz-error" style="display:none"></p>
+    `;
+    initPillGroup('it-quiz-type-pills');
+    initPillGroup('it-quiz-count-pills');
+    body.querySelector('#it-quiz-fullsettings')?.addEventListener('click', () => { openToolSection('tool-quiz'); closeInlineToolPanel(); });
+    body.querySelector('#it-quiz-start-btn').addEventListener('click', async () => {
+      const btn   = body.querySelector('#it-quiz-start-btn');
+      const errEl = body.querySelector('#it-quiz-error');
+      setFeatureBtnLoading(btn, true);
+      errEl.style.display = 'none';
+      try {
+        const type  = getActivePillValue('it-quiz-type-pills') || 'mixed';
+        const count = parseInt(getActivePillValue('it-quiz-count-pills') || '10', 10);
+        const scope = 'whole';
+        const systemPrompt = buildQuizPrompt(guide, { count, type, scope });
+        const payload = { ...buildApiPayloadBase(), type: 'QUIZ_REQUEST', guideJson: guide, systemPrompt };
+        const resp  = await apiRequest(payload);
+        if (!resp.success) throw new Error(resp.error);
+        const questions = resp.data?.questions || [];
+        if (!questions.length) throw new Error('No questions returned.');
+        // Open full quiz in Tools tab for the interactive quiz experience
+        quizData = questions;
+        quizState = { questions, currentIndex: 0, scores: questions.map(() => null), done: false };
+        openToolSection('tool-quiz');
+        showQuizPanel('active');
+        renderQuizQuestion();
+        closeInlineToolPanel();
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = '';
+      } finally {
+        setFeatureBtnLoading(btn, false);
+      }
+    });
+  }
+
+  /** Build the Exam Questions inline panel body */
+  function _buildInlineExam(body) {
+    body.innerHTML = `
+      <p class="inline-tool-hint">Generate exam-style questions from this guide. Full settings in the <button class="link-btn" id="it-exam-fullsettings">Tools tab</button>.</p>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Scope</span>
+        <div class="pill-group" id="it-exam-scope-pills">
+          ${['whole','current'].map(v => `<button class="pill${v==='whole'?' pill-active':''}" data-value="${v}" type="button">${v==='whole'?'Whole guide':'Current block'}</button>`).join('')}
+        </div>
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Format</span>
+        <div class="pill-group" id="it-exam-format-pills">
+          ${['open','mc','mixed'].map(v => `<button class="pill${v==='open'?' pill-active':''}" data-value="${v}" type="button">${v.charAt(0).toUpperCase()+v.slice(1)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Count</span>
+        <div class="pill-group" id="it-exam-count-pills">
+          ${['3','5','10'].map(v => `<button class="pill${v==='5'?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+        </div>
+      </div>
+      <button id="it-exam-gen-btn" class="primary-btn" type="button">
+        <span class="btn-text">Generate Questions</span><span class="btn-spinner" style="display:none"></span>
+      </button>
+      <p class="error-msg" id="it-exam-error" style="display:none"></p>
+      <div id="it-exam-results"></div>
+    `;
+    initPillGroup('it-exam-scope-pills');
+    initPillGroup('it-exam-format-pills');
+    initPillGroup('it-exam-count-pills');
+    body.querySelector('#it-exam-fullsettings')?.addEventListener('click', () => { openToolSection('tool-exam'); closeInlineToolPanel(); });
+    body.querySelector('#it-exam-gen-btn').addEventListener('click', async () => {
+      const btn    = body.querySelector('#it-exam-gen-btn');
+      const errEl  = body.querySelector('#it-exam-error');
+      const resDiv = body.querySelector('#it-exam-results');
+      setFeatureBtnLoading(btn, true);
+      errEl.style.display = 'none';
+      resDiv.innerHTML = '';
+      try {
+        const scope      = getActivePillValue('it-exam-scope-pills') || 'whole';
+        const format     = getActivePillValue('it-exam-format-pills') || 'open';
+        const count      = getActivePillValue('it-exam-count-pills') || '5';
+        const blocks     = scope === 'current'
+          ? (guide.guide[Math.max(0, currentBlockIndex)] ? [guide.guide[Math.max(0, currentBlockIndex)].title] : guide.guide.map(b => b.title))
+          : guide.guide.map(b => b.title);
+        const systemPrompt = buildExamPrompt(guide, { count, format, difficulty: 'mixed', answerLength: 'medium', selectedBlockTitles: blocks });
+        const payload = { ...buildApiPayloadBase(), type: 'EXAM_REQUEST', guideJson: guide, systemPrompt };
+        const resp = await apiRequest(payload);
+        if (!resp.success) throw new Error(resp.error);
+        const questions = resp.data?.questions || [];
+        if (!questions.length) throw new Error('No questions returned.');
+        renderExamQuestionList('it-exam-results', questions);
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = '';
+      } finally {
+        setFeatureBtnLoading(btn, false);
+      }
+    });
   }
 
   // ─── Flashcards feature ───────────────────────────────────────────────────
@@ -3716,6 +4460,7 @@ ${guideBlocksStr}${scriptContext}`;
       if (!resp.success) throw new Error(resp.error);
       flashcardData = resp.data?.flashcards || [];
       if (!flashcardData.length) throw new Error('No flashcards returned. Try different settings.');
+      flashcardIndex = 0;
       renderFlashcardList(flashcardData);
       const countLabel = document.getElementById('flashcards-count-label');
       if (countLabel) countLabel.textContent = `${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}`;
@@ -3728,44 +4473,136 @@ ${guideBlocksStr}${scriptContext}`;
     }
   }
 
+  /** Show all cards in paginated single-card view.  Wires up prev/next nav. */
   function renderFlashcardList(cards) {
+    flashcardIndex = Math.min(flashcardIndex, Math.max(0, cards.length - 1));
+    _wireFlashcardNav();
+    renderFlashcard(flashcardIndex);
+  }
+
+  /** Render the card at `idx` into the card-list container. */
+  function renderFlashcard(idx) {
     const list = document.getElementById('flashcards-card-list');
-    if (!list) return;
+    if (!list || !flashcardData.length) return;
+    idx = Math.max(0, Math.min(idx, flashcardData.length - 1));
+    flashcardIndex = idx;
+
+    // Update nav counter
+    const counter = document.getElementById('flashcard-nav-counter');
+    if (counter) counter.textContent = `${idx + 1} / ${flashcardData.length}`;
+    const prevBtn = document.getElementById('flashcard-prev-btn');
+    const nextBtn = document.getElementById('flashcard-next-btn');
+    if (prevBtn) prevBtn.disabled = idx === 0;
+    if (nextBtn) nextBtn.disabled = idx === flashcardData.length - 1;
+
+    // Build card HTML
+    const card = flashcardData[idx];
     list.innerHTML = '';
-    cards.forEach((card, i) => {
-      const item = document.createElement('div');
-      item.className = 'flashcard-item';
-      item.dataset.index = i;
-      item.innerHTML = `
-        <div class="flashcard-side flashcard-front">
-          <div class="flashcard-side-label">Front</div>
-          <div class="flashcard-text" contenteditable="true" spellcheck="false">${escHtml(card.front)}</div>
-        </div>
-        <div class="flashcard-side flashcard-back">
-          <div class="flashcard-side-label">Back</div>
-          <div class="flashcard-text" contenteditable="true" spellcheck="false">${escHtml(card.back)}</div>
-        </div>
-        <div class="flashcard-actions">
-          <button class="flashcard-delete-btn" type="button" data-index="${i}" title="Delete this card">Delete</button>
-        </div>
-      `;
-      item.querySelector('.flashcard-delete-btn').addEventListener('click', () => {
-        flashcardData.splice(i, 1);
-        renderFlashcardList(flashcardData);
-        const countLabel = document.getElementById('flashcards-count-label');
-        if (countLabel) countLabel.textContent = `${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}`;
-      });
-      list.appendChild(item);
+    const item = document.createElement('div');
+    item.className = 'flashcard-item';
+    item.innerHTML = `
+      <div class="flashcard-side flashcard-front">
+        <div class="flashcard-side-label">Front</div>
+        <div class="flashcard-text" contenteditable="true" spellcheck="false">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(card.front)))}</div>
+      </div>
+      <div class="flashcard-side flashcard-back">
+        <div class="flashcard-side-label">Back</div>
+        <div class="flashcard-text" contenteditable="true" spellcheck="false">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(card.back)))}</div>
+      </div>
+      <div class="flashcard-actions">
+        <button class="flashcard-delete-btn" type="button" title="Delete this card">Delete card</button>
+      </div>
+    `;
+    item.querySelector('.flashcard-delete-btn').addEventListener('click', () => {
+      // Save deleted card for undo
+      const deletedCard = { ...flashcardData[idx] };
+      const deletedIdx  = idx;
+      flashcardData.splice(idx, 1);
+      const countLabel = document.getElementById('flashcards-count-label');
+      if (countLabel) countLabel.textContent = `${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}`;
+
+      // Show undo toast
+      _showFlashcardUndoToast(deletedCard, deletedIdx);
+
+      if (!flashcardData.length) {
+        list.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:8px 0">All cards deleted.</p>';
+        const c = document.getElementById('flashcard-nav-counter');
+        if (c) c.textContent = '0 / 0';
+        return;
+      }
+      renderFlashcard(Math.min(idx, flashcardData.length - 1));
+    });
+    list.appendChild(item);
+
+    // Apply KaTeX to the rendered card
+    item.querySelectorAll('.flashcard-text').forEach(el => applyKatex(el));
+  }
+
+  let _flashcardNavWired = false;
+  function _wireFlashcardNav() {
+    if (_flashcardNavWired) return;
+    _flashcardNavWired = true;
+    document.getElementById('flashcard-prev-btn')?.addEventListener('click', () => {
+      if (flashcardIndex > 0) renderFlashcard(flashcardIndex - 1);
+    });
+    document.getElementById('flashcard-next-btn')?.addEventListener('click', () => {
+      if (flashcardIndex < flashcardData.length - 1) renderFlashcard(flashcardIndex + 1);
     });
   }
 
   function getEditedFlashcards() {
+    // Paginated view: only the current card is in the DOM.
+    // Flush any contenteditable edits from the visible card back into flashcardData,
+    // then return the full array (all cards, not just the visible one).
     const list = document.getElementById('flashcards-card-list');
-    if (!list) return flashcardData;
-    return [...list.querySelectorAll('.flashcard-item')].map(item => ({
-      front: item.querySelector('.flashcard-front .flashcard-text')?.textContent?.trim() || '',
-      back:  item.querySelector('.flashcard-back  .flashcard-text')?.textContent?.trim() || ''
-    }));
+    if (list && flashcardData.length) {
+      const item = list.querySelector('.flashcard-item');
+      if (item) {
+        const frontEl = item.querySelector('.flashcard-front .flashcard-text');
+        const backEl  = item.querySelector('.flashcard-back  .flashcard-text');
+        if (frontEl) flashcardData[flashcardIndex] = {
+          ...flashcardData[flashcardIndex],
+          front: frontEl.textContent?.trim() || flashcardData[flashcardIndex].front
+        };
+        if (backEl) flashcardData[flashcardIndex] = {
+          ...flashcardData[flashcardIndex],
+          back: backEl.textContent?.trim()  || flashcardData[flashcardIndex].back
+        };
+      }
+    }
+    return flashcardData;
+  }
+
+  let _flashcardUndoTimeout = null;
+  function _showFlashcardUndoToast(card, atIndex) {
+    // Remove any existing undo toast
+    document.getElementById('flashcard-undo-toast')?.remove();
+    if (_flashcardUndoTimeout) clearTimeout(_flashcardUndoTimeout);
+
+    const toast = document.createElement('div');
+    toast.id = 'flashcard-undo-toast';
+    toast.className = 'flashcard-undo-toast';
+    toast.innerHTML = `
+      <span>Card deleted</span>
+      <button class="flashcard-undo-btn" type="button">Undo</button>
+    `;
+    toast.querySelector('.flashcard-undo-btn').addEventListener('click', () => {
+      // Restore card at original position (or end if out of range)
+      const insertAt = Math.min(atIndex, flashcardData.length);
+      flashcardData.splice(insertAt, 0, card);
+      const countLabel = document.getElementById('flashcards-count-label');
+      if (countLabel) countLabel.textContent = `${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}`;
+      renderFlashcard(insertAt);
+      toast.remove();
+      if (_flashcardUndoTimeout) clearTimeout(_flashcardUndoTimeout);
+    });
+
+    // Append inside the flashcards results panel
+    const panel = document.getElementById('flashcards-results');
+    if (panel) panel.appendChild(toast);
+
+    // Auto-dismiss after 5 seconds
+    _flashcardUndoTimeout = setTimeout(() => toast.remove(), 5000);
   }
 
   function exportFlashcardsAsTSV() {
@@ -3895,7 +4732,10 @@ ${guideBlocksStr}${scriptContext}`;
     if (fill) fill.style.width = `${pct}%`;
 
     const qText = document.getElementById('quiz-question-text');
-    if (qText) qText.textContent = q.question;
+    if (qText) {
+      qText.textContent = normalizeLatexForKatex(unescapeMathDelimiters(q.question));
+      applyKatex(qText);
+    }
 
     const mcArea = document.getElementById('quiz-mc-options');
     const saArea = document.getElementById('quiz-sa-area');
@@ -3904,6 +4744,8 @@ ${guideBlocksStr}${scriptContext}`;
     const answerReveal = document.getElementById('quiz-answer-reveal');
 
     if (answerReveal) answerReveal.style.display = 'none';
+    const nextBtn = document.getElementById('quiz-next-btn');
+    if (nextBtn) nextBtn.style.display = 'none';
 
     if (q.type === 'mc') {
       saArea.style.display = 'none';
@@ -3911,17 +4753,20 @@ ${guideBlocksStr}${scriptContext}`;
       submitMcBtn.style.display = '';
       mcArea.style.display = 'flex';
       mcArea.innerHTML = '';
+      const _LETTERS = ['A','B','C','D','E','F'];
       (q.options || []).forEach((opt, i) => {
         const btn = document.createElement('button');
         btn.className = 'quiz-mc-option';
-        btn.textContent = opt;
         btn.dataset.optionIndex = i;
         btn.type = 'button';
+        btn.innerHTML = `<span class="quiz-mc-letter">${_LETTERS[i] || i+1}</span><span class="quiz-mc-text"></span>`;
+        btn.querySelector('.quiz-mc-text').textContent = normalizeLatexForKatex(unescapeMathDelimiters(opt));
         btn.addEventListener('click', () => {
           mcArea.querySelectorAll('.quiz-mc-option').forEach(b => b.classList.remove('selected'));
           btn.classList.add('selected');
         });
         mcArea.appendChild(btn);
+        applyKatex(btn.querySelector('.quiz-mc-text'));
       });
     } else {
       mcArea.style.display = 'none';
@@ -3970,10 +4815,14 @@ ${guideBlocksStr}${scriptContext}`;
     const gradeRow = document.querySelector('.quiz-grade-row');
 
     const answer = q.answer || (q.options?.[q.correct] ? q.options[q.correct].replace(/^[A-D]\) /, '') : '');
-    if (answerText) answerText.textContent = answer;
+    if (answerText) {
+      answerText.textContent = normalizeLatexForKatex(unescapeMathDelimiters(answer));
+      applyKatex(answerText);
+    }
     if (explanationText) {
-      explanationText.textContent = q.explanation || '';
+      explanationText.textContent = normalizeLatexForKatex(unescapeMathDelimiters(q.explanation || ''));
       explanationText.style.display = q.explanation ? '' : 'none';
+      if (q.explanation) applyKatex(explanationText);
     }
 
     // For MC, grade is already determined; hide grade buttons
@@ -3985,10 +4834,11 @@ ${guideBlocksStr}${scriptContext}`;
 
     if (answerReveal) answerReveal.style.display = 'flex';
 
-    // If MC — auto-advance prompt via grading
-    if (q.type === 'mc' && isCorrect !== undefined) {
-      // Automatically advance after short delay
-      setTimeout(() => quizGrade(isCorrect), 800);
+    // Show Next button instead of auto-advancing — let user read the answer
+    const nextBtn = document.getElementById('quiz-next-btn');
+    if (nextBtn) {
+      nextBtn.style.display = '';
+      nextBtn.onclick = () => quizGrade(isCorrect ?? true);
     }
   }
 
@@ -4045,9 +4895,10 @@ ${guideBlocksStr}${scriptContext}`;
         item.className = 'quiz-missed-item';
         const answer = q.answer || (q.options?.[q.correct] ? q.options[q.correct].replace(/^[A-D]\) /, '') : '');
         item.innerHTML = `
-          <div class="quiz-missed-q">${escHtml(q.question)}</div>
-          <div class="quiz-missed-a">Answer: ${escHtml(answer)}</div>
+          <div class="quiz-missed-q">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(q.question)))}</div>
+          <div class="quiz-missed-a">Answer: ${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(answer)))}</div>
         `;
+        applyKatex(item);
         missedList.appendChild(item);
       });
     } else if (missedSection) {
@@ -4082,6 +4933,20 @@ ${guideBlocksStr}${scriptContext}`;
   function onExamScopeChange(value) {
     const selectArea = document.getElementById('exam-block-select-area');
     if (selectArea) selectArea.style.display = value === 'select' ? '' : 'none';
+
+    const infoRow   = document.getElementById('exam-current-block-info');
+    const infoLabel = document.getElementById('exam-current-block-label');
+    if (infoRow && infoLabel) {
+      if (value === 'current') {
+        const b = guide?.guide?.[Math.max(0, currentBlockIndex)];
+        infoLabel.textContent = b?.title
+          ? `Block ${currentBlockIndex + 1}: ${b.title}`
+          : 'No block selected yet';
+        infoRow.style.display = '';
+      } else {
+        infoRow.style.display = 'none';
+      }
+    }
   }
 
   function populateExamBlockCheckboxes() {
@@ -4162,43 +5027,92 @@ ${guideBlocksStr}${scriptContext}`;
     const container = document.getElementById(containerId);
     if (!container) return;
     container.innerHTML = '';
+
+    const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+
     questions.forEach((q, i) => {
       const item = document.createElement('div');
       item.className = 'exam-question-item';
 
-      const diffClass = `exam-badge-${q.difficulty || 'medium'}`;
+      // Badges — capitalized, with softer colors via CSS classes
       const badges = [
-        q.difficulty ? `<span class="exam-badge ${diffClass}">${q.difficulty}</span>` : '',
-        q.type       ? `<span class="exam-badge exam-badge-type">${q.type}</span>` : '',
+        q.difficulty ? `<span class="exam-badge exam-badge-${q.difficulty}">${cap(q.difficulty)}</span>` : '',
+        q.type       ? `<span class="exam-badge exam-badge-type">${q.type.toUpperCase()}</span>` : '',
         q.relevant_block ? `<span class="exam-badge exam-badge-block" title="Source block">${escHtml(q.relevant_block)}</span>` : ''
       ].filter(Boolean).join('');
 
-      const mcOptionsHtml = q.type === 'mc' && q.options?.length
-        ? `<div class="exam-mc-options">${q.options.map((o, oi) =>
-            `<div class="exam-mc-option${oi === q.correct ? ' exam-correct-option' : ''}">${escHtml(o)}</div>`
-          ).join('')}</div>`
-        : '';
+      // MC options — lettered (A, B, C…) with NO correct-answer class yet (prevents spoiler)
+      // Correct index stored in data attr; applied only when answer is revealed.
+      let mcOptionsHtml = '';
+      if (q.type === 'mc' && q.options?.length) {
+        const opts = q.options.map((o, oi) =>
+          `<div class="exam-mc-option" data-idx="${oi}">
+             <span class="exam-mc-letter">${LETTERS[oi] || (oi + 1)}</span>
+             <span class="exam-mc-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(o)))}</span>
+           </div>`
+        ).join('');
+        mcOptionsHtml = `<div class="exam-mc-options" data-correct="${q.correct ?? -1}">${opts}</div>`;
+      }
+
+      // Answer text rendered as markdown (supports bold, bullet lists, etc.) + LaTeX
+      const answerHtml = renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(q.sample_answer || '')));
 
       item.innerHTML = `
         <div class="exam-question-head">
-          <div style="flex:1">
+          <div class="exam-question-num">${i + 1}</div>
+          <div class="exam-question-main">
             ${badges ? `<div class="exam-question-badges">${badges}</div>` : ''}
-            <p class="exam-question-text">${escHtml(q.question)}</p>
+            <div class="exam-question-text"></div>
           </div>
         </div>
         ${mcOptionsHtml}
         <div class="exam-answer-section">
-          <button class="exam-answer-toggle" type="button">▶ Show model answer</button>
-          <div class="exam-answer-text" style="display:none">${escHtml(q.sample_answer || '')}</div>
+          <button class="exam-answer-toggle" type="button" aria-expanded="false">
+            <svg class="exam-toggle-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+            Show model answer
+          </button>
+          <div class="exam-answer-content" hidden>
+            <div class="exam-answer-body">${answerHtml}</div>
+          </div>
         </div>
       `;
 
-      const toggle = item.querySelector('.exam-answer-toggle');
-      const answerEl = item.querySelector('.exam-answer-text');
+      // Set question text via textContent first to escape, then apply KaTeX
+      const qTextEl = item.querySelector('.exam-question-text');
+      qTextEl.textContent = normalizeLatexForKatex(unescapeMathDelimiters(q.question));
+      applyKatex(qTextEl);
+
+      // Apply KaTeX to each MC option text span
+      item.querySelectorAll('.exam-mc-text').forEach(el => applyKatex(el));
+
+      const toggle      = item.querySelector('.exam-answer-toggle');
+      const answerContent = item.querySelector('.exam-answer-content');
+      const mcOptions   = item.querySelector('.exam-mc-options');
+      const chevron     = toggle?.querySelector('.exam-toggle-chevron');
+
       toggle?.addEventListener('click', () => {
-        const isShown = answerEl.style.display !== 'none';
-        answerEl.style.display = isShown ? 'none' : '';
-        toggle.textContent = isShown ? '▶ Show model answer' : '▼ Hide model answer';
+        const isShown = !answerContent.hidden;
+        answerContent.hidden = isShown;
+        toggle.setAttribute('aria-expanded', String(!isShown));
+        toggle.querySelector('.exam-toggle-chevron').style.transform = isShown ? '' : 'rotate(180deg)';
+        toggle.childNodes[toggle.childNodes.length - 1].textContent =
+          isShown ? ' Show model answer' : ' Hide model answer';
+
+        // Reveal / hide the correct MC option highlight
+        if (mcOptions) {
+          const correctIdx = parseInt(mcOptions.dataset.correct ?? '-1', 10);
+          mcOptions.querySelectorAll('.exam-mc-option').forEach((opt, idx) => {
+            opt.classList.toggle('exam-correct-option', !isShown && idx === correctIdx);
+          });
+        }
+
+        // Apply KaTeX to answer body on first reveal
+        const answerBody = answerContent.querySelector('.exam-answer-body');
+        if (!isShown && answerBody && !answerBody.dataset.katexDone) {
+          answerBody.dataset.katexDone = '1';
+          applyKatex(answerBody);
+        }
       });
 
       container.appendChild(item);
@@ -4207,41 +5121,19 @@ ${guideBlocksStr}${scriptContext}`;
 
   // ─── Cross-lecture exam prediction (Part 3B) ──────────────────────────────
 
-  /** Open cross-exam section pre-filtered to entries from a course group */
+  /** Open cross-exam section pre-filtered to a course group (called from history "Predict" button). */
   function openCrossExamModalForCourse(courseEntries) {
     showCrossExamPanel('settings');
     openToolSection('tool-cross-exam');
-    // Populate from course entries
-    const listEl = document.getElementById('cross-exam-lecture-list');
-    if (!listEl) return;
-    const validEntries = (courseEntries || []).filter(e => e?.guide?.guide?.length && e?.lectureTitle);
-    if (!validEntries.length) {
-      listEl.innerHTML = '<p style="color:var(--text-muted);font-size:11.5px">No guides with content in this course yet.</p>';
-      return;
-    }
-    listEl.innerHTML = '';
-    listEl._history = validEntries;
-    validEntries.forEach((entry, idx) => {
-      const row = document.createElement('label');
-      row.className = 'cross-exam-lecture-row';
-      const dateStr = entry.lectureDate ? new Date(entry.lectureDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-      row.innerHTML = `
-        <input type="checkbox" data-idx="${idx}" value="${idx}" checked>
-        <div>
-          <div class="cross-exam-lecture-title">${escHtml(entry.lectureTitle)}</div>
-          <div class="cross-exam-lecture-meta">${dateStr}</div>
-        </div>
-      `;
-      row.querySelector('input').addEventListener('change', updateCrossExamGenerateBtn);
-      listEl.appendChild(row);
-    });
-    updateCrossExamGenerateBtn();
+    // Load full history, render grouped, then auto-check only entries in courseEntries
+    const targetUrls = new Set((courseEntries || []).map(e => normalizeLectureUrl(e.lectureUrl)));
+    _populateCrossExamGrouped({ preselectUrls: targetUrls });
   }
 
   /** Open the cross-lecture section and populate lecture list from history */
   function openCrossExamModal() {
     showCrossExamPanel('settings');
-    populateCrossExamLectureList();
+    _populateCrossExamGrouped({});
     openToolSection('tool-cross-exam');
   }
 
@@ -4260,47 +5152,144 @@ ${guideBlocksStr}${scriptContext}`;
     }
   }
 
-  function populateCrossExamLectureList() {
+  /**
+   * Render the cross-exam lecture picker as a grouped (by course) list,
+   * mirroring the History panel layout.
+   * @param {{ preselectUrls?: Set<string> }} opts
+   *   preselectUrls — if provided, only those lecture URLs will be pre-checked.
+   *                   If omitted, nothing is pre-checked.
+   */
+  function _populateCrossExamGrouped({ preselectUrls } = {}) {
     const listEl = document.getElementById('cross-exam-lecture-list');
     if (!listEl) return;
     listEl.innerHTML = '<p style="color:var(--text-muted);font-size:11.5px">Loading…</p>';
 
     chrome.storage.local.get(['guideHistory'], res => {
-      const history = Array.isArray(res.guideHistory) ? res.guideHistory : [];
+      const history      = Array.isArray(res.guideHistory) ? res.guideHistory : [];
       const validEntries = history.filter(e => e?.guide?.guide?.length && e?.lectureTitle);
 
       if (!validEntries.length) {
-        listEl.innerHTML = '<p style="color:var(--text-muted);font-size:11.5px">No guides in history yet. Generate guides for multiple lectures first.</p>';
+        listEl.innerHTML = '<p style="color:var(--text-muted);font-size:11.5px">No guides in history yet. Generate guides for at least 2 lectures first.</p>';
         return;
       }
 
-      listEl.innerHTML = '';
-      validEntries.forEach((entry, idx) => {
-        const row = document.createElement('label');
-        row.className = 'cross-exam-lecture-row';
-        const dateStr = entry.lectureDate ? new Date(entry.lectureDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-        row.innerHTML = `
-          <input type="checkbox" data-idx="${idx}" value="${idx}">
-          <div>
-            <div class="cross-exam-lecture-title">${escHtml(entry.lectureTitle)}</div>
-            <div class="cross-exam-lecture-meta">${escHtml(entry.courseName || '')}${dateStr ? ' · ' + dateStr : ''}</div>
-          </div>
-        `;
-        row.querySelector('input').addEventListener('change', updateCrossExamGenerateBtn);
-        listEl.appendChild(row);
+      // Store flat array for lookup during generation
+      listEl._allHistory = validEntries;
+
+      // ── Group by courseKey ──────────────────────────────────────────────
+      const groups = {};
+      validEntries.forEach((entry, globalIdx) => {
+        const k = entry.courseKey || deriveCourseKeyFromUrl(entry.lectureUrl) || 'other';
+        if (!groups[k]) groups[k] = { courseName: entry.courseName || k, entries: [] };
+        groups[k].entries.push({ entry, globalIdx });
       });
 
-      // Store for later use
-      listEl.dataset.historyCount = validEntries.length;
-      listEl._history = validEntries;
+      // Sort courses: current-lecture's course first, then alpha
+      const activeCourseKey = transcript?.courseKey || deriveCourseKeyFromUrl(currentLectureUrl);
+      const sortedKeys = Object.keys(groups).sort((a, b) => {
+        if (a === activeCourseKey) return -1;
+        if (b === activeCourseKey) return  1;
+        return groups[a].courseName.localeCompare(groups[b].courseName);
+      });
+
+      listEl.innerHTML = '';
+
+      for (const k of sortedKeys) {
+        const g = groups[k];
+        // Sort entries newest-first within course
+        g.entries.sort((a, b) => {
+          const da = a.entry.lectureDate || a.entry.date || '';
+          const db = b.entry.lectureDate || b.entry.date || '';
+          return db.localeCompare(da);
+        });
+
+        const groupDiv = document.createElement('div');
+        groupDiv.className = 'cross-exam-course-group';
+
+        // Course header with "Select all" checkbox
+        const header = document.createElement('div');
+        header.className = 'cross-exam-course-header';
+        const selectAllId = `cross-exam-selall-${k}`;
+        header.innerHTML = `
+          <label class="cross-exam-course-selall" title="Select / deselect all in this course">
+            <input type="checkbox" id="${escHtml(selectAllId)}" class="cross-exam-selall-cb cross-exam-cb">
+          </label>
+          <span class="cross-exam-course-name">${escHtml(g.courseName)}</span>
+          <span class="cross-exam-course-count">${g.entries.length} lecture${g.entries.length !== 1 ? 's' : ''}</span>
+        `;
+        groupDiv.appendChild(header);
+
+        const rowsDiv = document.createElement('div');
+        rowsDiv.className = 'cross-exam-course-rows';
+
+        const rowCheckboxes = [];
+
+        g.entries.forEach(({ entry, globalIdx }) => {
+          const isPreselected = preselectUrls
+            ? preselectUrls.has(normalizeLectureUrl(entry.lectureUrl))
+            : false;
+          const dateStr = entry.lectureDate
+            ? new Date(entry.lectureDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+            : (entry.guideDate ? new Date(entry.guideDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+          const numLabel = entry.lectureNumber ? `#${entry.lectureNumber} · ` : '';
+          const cbId = `cross-exam-cb-${globalIdx}`;
+
+          const row = document.createElement('label');
+          row.className = 'cross-exam-lecture-row';
+          row.setAttribute('for', cbId);
+          row.innerHTML = `
+            <input type="checkbox" id="${cbId}" class="cross-exam-cb" data-idx="${globalIdx}"${isPreselected ? ' checked' : ''}>
+            <div class="cross-exam-lecture-info">
+              <div class="cross-exam-lecture-title">${escHtml(entry.lectureTitle)}</div>
+              ${dateStr ? `<div class="cross-exam-lecture-meta">${numLabel}${escHtml(dateStr)}</div>` : ''}
+            </div>
+          `;
+          const cb = row.querySelector('input');
+          cb.addEventListener('change', () => {
+            _syncCrossExamGroupHeader(header, rowCheckboxes);
+            updateCrossExamGenerateBtn();
+          });
+          rowCheckboxes.push(cb);
+          rowsDiv.appendChild(row);
+        });
+
+        // Wire select-all checkbox and set initial header state
+        const selectAllCb = header.querySelector('.cross-exam-selall-cb');
+        selectAllCb.addEventListener('change', () => {
+          rowCheckboxes.forEach(cb => { cb.checked = selectAllCb.checked; });
+          updateCrossExamGenerateBtn();
+        });
+
+        groupDiv.appendChild(rowsDiv);
+        listEl.appendChild(groupDiv);
+
+        // Sync indeterminate/checked state based on current row selections
+        _syncCrossExamGroupHeader(header, rowCheckboxes);
+      }
+
       updateCrossExamGenerateBtn();
     });
+  }
+
+  /** Sync the "select all" checkbox state (checked/indeterminate) based on row states */
+  function _syncCrossExamGroupHeader(header, rowCheckboxes) {
+    const selAllCb = header.querySelector('.cross-exam-selall-cb');
+    if (!selAllCb) return;
+    const total   = rowCheckboxes.length;
+    const checked = rowCheckboxes.filter(c => c.checked).length;
+    selAllCb.checked       = checked === total;
+    selAllCb.indeterminate = checked > 0 && checked < total;
+  }
+
+  /** Kept for backward compatibility (called from Tools tab click) */
+  function populateCrossExamLectureList() {
+    _populateCrossExamGrouped({});
   }
 
   function updateCrossExamGenerateBtn() {
     const generateBtn = document.getElementById('cross-exam-generate-btn');
     if (!generateBtn) return;
-    const checked = document.querySelectorAll('#cross-exam-lecture-list input[type=checkbox]:checked').length;
+    const checked = document.querySelectorAll('#cross-exam-lecture-list input[data-idx]:checked').length;
     generateBtn.disabled = checked < 2;
     const btnText = generateBtn.querySelector('.btn-text');
     if (btnText) btnText.textContent = checked < 2
@@ -4312,10 +5301,11 @@ ${guideBlocksStr}${scriptContext}`;
     if (!hasUsableSettings()) return;
 
     const listEl = document.getElementById('cross-exam-lecture-list');
-    const history = listEl?._history;
+    const history = listEl?._allHistory;
     if (!history) return;
 
-    const checkedInputs = [...document.querySelectorAll('#cross-exam-lecture-list input[type=checkbox]:checked')];
+    // Only count checkboxes that have data-idx (lecture rows, not "select all" checkboxes)
+    const checkedInputs = [...document.querySelectorAll('#cross-exam-lecture-list input[data-idx]:checked')];
     const selectedIndices = checkedInputs.map(inp => parseInt(inp.dataset.idx, 10));
     if (selectedIndices.length < 2) return;
 
@@ -4404,15 +5394,27 @@ ${guideBlocksStr}${scriptContext}`;
   // sidebar.js code can call them without worrying about global vs module scope.
 
   function buildFlashcardsPrompt(guide, opts) {
-    if (typeof window.buildFlashcardsPrompt === 'function') return window.buildFlashcardsPrompt(guide, opts);
+    if (typeof window.buildFlashcardsPrompt === 'function') {
+      const base = window.buildFlashcardsPrompt(guide, opts);
+      const extra = customPromptExtras.flashcards?.trim();
+      return extra ? extra + '\n\n' + base : base;
+    }
     throw new Error('buildFlashcardsPrompt not loaded');
   }
   function buildQuizPrompt(guide, opts) {
-    if (typeof window.buildQuizPrompt === 'function') return window.buildQuizPrompt(guide, opts);
+    if (typeof window.buildQuizPrompt === 'function') {
+      const base = window.buildQuizPrompt(guide, opts);
+      const extra = customPromptExtras.quiz?.trim();
+      return extra ? extra + '\n\n' + base : base;
+    }
     throw new Error('buildQuizPrompt not loaded');
   }
   function buildExamQuestionsPrompt(guide, blocks, opts) {
-    if (typeof window.buildExamQuestionsPrompt === 'function') return window.buildExamQuestionsPrompt(guide, blocks, opts);
+    if (typeof window.buildExamQuestionsPrompt === 'function') {
+      const base = window.buildExamQuestionsPrompt(guide, blocks, opts);
+      const extra = customPromptExtras.exam?.trim();
+      return extra ? extra + '\n\n' + base : base;
+    }
     throw new Error('buildExamQuestionsPrompt not loaded');
   }
   function buildCrossLecturePredictionPrompt(lectures, opts) {

@@ -312,6 +312,52 @@ button.primary:hover {
   background: rgba(200, 144, 96, 0.22);
 }
 
+/* ─── Custom prompts ─────────────────────────────────────────────────────── */
+.warn--yellow {
+  border-color: rgba(180, 120, 0, 0.35);
+  background: rgba(180, 120, 0, 0.07);
+  color: #7a5700;
+  margin-bottom: 14px;
+}
+[data-theme="dark"] .warn--yellow {
+  color: #d4a830;
+  background: rgba(180, 120, 0, 0.1);
+}
+.prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.prompt-row label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+.prompt-hint {
+  font-weight: 400;
+  color: var(--muted);
+}
+.prompt-textarea {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 10px;
+  resize: vertical;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+}
+.prompt-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.prompt-textarea::placeholder { color: var(--muted); }
+
 /* ─── Sticky save bar ────────────────────────────────────────────────────── */
 .sticky {
   margin-top: 16px;

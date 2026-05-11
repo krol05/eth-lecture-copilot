@@ -111,11 +111,47 @@
       </section>
 
       <!-- Clean White Theme Colors -->
-      <section class="section section--last">
+      <section class="section">
         <h2>Clean White Colors</h2>
         <div id="light-white-color-grid" class="grid"></div>
         <div class="actions">
           <button id="restore-light-white" type="button">Restore white defaults</button>
+        </div>
+      </section>
+
+      <!-- Custom Prompts -->
+      <section class="section section--last">
+        <h2>Custom Prompts</h2>
+        <div class="warn warn--yellow">
+          <strong>Warning:</strong> The extension depends on strict JSON output from the AI.
+          Changing prompts can break guide generation, flashcards, quizzes, and exam questions.
+          These extra instructions are <em>prepended</em> to each prompt — the JSON format
+          rules and context injection remain intact. Leave a field empty to use the default.
+        </div>
+        <div class="prompt-list">
+          <div class="prompt-row">
+            <label for="prompt-guide">Guide generation <span class="prompt-hint">— controls how the lecture study guide is built</span></label>
+            <textarea id="prompt-guide" class="prompt-textarea" rows="4" placeholder="e.g. Always write section titles in German. Focus extra attention on proofs and theorems."></textarea>
+          </div>
+          <div class="prompt-row">
+            <label for="prompt-qa">Q&amp;A assistant <span class="prompt-hint">— controls how the chat assistant answers questions</span></label>
+            <textarea id="prompt-qa" class="prompt-textarea" rows="4" placeholder="e.g. Always answer in German. Keep answers very concise (max 3 sentences)."></textarea>
+          </div>
+          <div class="prompt-row">
+            <label for="prompt-flashcards">Flashcards <span class="prompt-hint">— controls flashcard generation style and focus</span></label>
+            <textarea id="prompt-flashcards" class="prompt-textarea" rows="4" placeholder="e.g. Include more example-based cards alongside the theorem cards."></textarea>
+          </div>
+          <div class="prompt-row">
+            <label for="prompt-quiz">Practice quiz <span class="prompt-hint">— controls quiz question style and difficulty</span></label>
+            <textarea id="prompt-quiz" class="prompt-textarea" rows="4" placeholder="e.g. Avoid multiple-choice questions. Focus on derivation and proof tasks."></textarea>
+          </div>
+          <div class="prompt-row">
+            <label for="prompt-exam">Exam questions <span class="prompt-hint">— controls exam-style question generation</span></label>
+            <textarea id="prompt-exam" class="prompt-textarea" rows="4" placeholder="e.g. Write questions in the style of the ETH Analysis exam from 2023."></textarea>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="restore-prompts" type="button">Clear all custom instructions</button>
         </div>
       </section>
 
