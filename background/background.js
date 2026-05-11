@@ -682,14 +682,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   const requestId = message?._copilotRequestId || null;
   const progress = (stage, detail = '') => emitApiProgress(sender, requestId, stage, detail);
-  handleMessage(message, progress).then(
+  handleMessage(message, progress, sender, requestId).then(
     result => sendResponse({ success: true, data: result }),
     err    => sendResponse({ success: false, error: err.message })
   );
   return true;
 });
 
-async function handleMessage(msg, progress = () => {}) {
+async function handleMessage(msg, progress = () => {}, sender = null, requestId = null) {
   if (msg.type === 'PING') return 'pong';
 
   const { type, provider, apiKey, localBase } = msg;
@@ -744,7 +744,7 @@ async function handleMessage(msg, progress = () => {}) {
         jsonMode: !useStream,   // streaming: skip json_mode since we parse at the end
         onProgress: progress,
         thinking: guideThinking,
-        ...(useStream ? { onChunk: (delta, full) => emitStreamChunk(sender, requestId, delta) } : {})
+        ...(useStream ? { onChunk: (delta) => emitStreamChunk(sender, requestId, delta) } : {})
       };
 
       let raw;

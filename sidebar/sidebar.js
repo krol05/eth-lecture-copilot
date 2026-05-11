@@ -3527,8 +3527,6 @@ ${guideBlocksStr}${scriptContext}`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
 
-    // ── Offer Obsidian open ───────────────────────────────────────────────
-    openObsidianIfPossible(filename, md);
     setStatus('ready', 'Markdown exported');
   }
 
