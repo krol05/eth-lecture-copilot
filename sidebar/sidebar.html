@@ -83,6 +83,12 @@
     </button>
   </nav>
 
+  <!-- Tools hint bar — shown only when Tools tab is active -->
+  <div id="tools-hint-bar" class="tools-hint-bar" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="11" height="11" style="flex-shrink:0;opacity:0.7"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+    <span>Tools run in the background — switch tabs freely while generating. Requires an active guide.</span>
+  </div>
+
   <!-- ── GUIDE TAB ── -->
   <div id="tab-guide" class="tab-content active">
 
@@ -490,10 +496,6 @@
 
   <!-- ── TOOLS TAB ── -->
   <div id="tab-tools" class="tab-content">
-    <div class="info-banner tools-global-banner">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
-      <span>All tools run in the background — switch to Guide or Q&amp;A freely while generating. Results remain here until you load a new guide. All tools require an active guide.</span>
-    </div>
 
     <!-- Anki Flashcards -->
     <details class="tool-section" id="tool-flashcards">

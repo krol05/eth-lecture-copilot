@@ -3917,6 +3917,25 @@ body {
   50%       { opacity: 0.4; transform: scale(0.7); }
 }
 
+/* ── Tools hint bar (below tab bar) ─────────────────────────────────────────── */
+
+.tools-hint-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.tools-hint-bar[hidden] {
+  display: none;
+}
+
 /* ── Tools tab button (smaller / secondary) ─────────────────────────────────── */
 
 .tab-btn-tools {
@@ -3943,10 +3962,6 @@ body {
   overflow-y: auto;
 }
 
-.tools-global-banner {
-  margin: 10px 10px 6px;
-  border-radius: var(--radius-sm);
-}
 
 /* ── Tool section (details accordion) ───────────────────────────────────────── */
 
