@@ -344,9 +344,7 @@
     quizBtn?.addEventListener('click', openQuizModal);
     examBtn?.addEventListener('click', openExamModal);
 
-    // Flashcards modal
-    document.getElementById('flashcards-modal-close')?.addEventListener('click', closeFlashcardsModal);
-    document.getElementById('flashcards-modal')?.addEventListener('click', e => { if (e.target.id === 'flashcards-modal') closeFlashcardsModal(); });
+    // Flashcards tool
     document.getElementById('flashcards-generate-btn')?.addEventListener('click', generateFlashcards);
     document.getElementById('flashcards-back-btn')?.addEventListener('click', () => showFlashcardsPanel('settings'));
     document.getElementById('flashcards-export-tsv')?.addEventListener('click', exportFlashcardsAsTSV);
@@ -354,9 +352,7 @@
     initPillGroup('flashcards-count-pills');
     initPillGroup('flashcards-style-pills');
 
-    // Quiz modal
-    document.getElementById('quiz-modal-close')?.addEventListener('click', closeQuizModal);
-    document.getElementById('quiz-modal')?.addEventListener('click', e => { if (e.target.id === 'quiz-modal') closeQuizModal(); });
+    // Quiz tool
     document.getElementById('quiz-generate-btn')?.addEventListener('click', generateQuiz);
     document.getElementById('quiz-reveal-btn')?.addEventListener('click', quizRevealAnswer);
     document.getElementById('quiz-submit-mc-btn')?.addEventListener('click', quizSubmitMC);
@@ -364,13 +360,11 @@
     document.getElementById('quiz-grade-wrong')?.addEventListener('click', () => quizGrade(false));
     document.getElementById('quiz-quit-btn')?.addEventListener('click', () => showQuizPanel('settings'));
     document.getElementById('quiz-restart-btn')?.addEventListener('click', () => showQuizPanel('settings'));
-    document.getElementById('quiz-results-close-btn')?.addEventListener('click', closeQuizModal);
+    document.getElementById('quiz-results-close-btn')?.addEventListener('click', () => { quizState = null; showQuizPanel('settings'); });
     initPillGroup('quiz-count-pills');
     initPillGroup('quiz-type-pills');
 
-    // Exam modal
-    document.getElementById('exam-modal-close')?.addEventListener('click', closeExamModal);
-    document.getElementById('exam-modal')?.addEventListener('click', e => { if (e.target.id === 'exam-modal') closeExamModal(); });
+    // Exam tool
     document.getElementById('exam-generate-btn')?.addEventListener('click', generateExamQuestions);
     document.getElementById('exam-back-btn')?.addEventListener('click', () => showExamPanel('settings'));
     initPillGroup('exam-scope-pills', onExamScopeChange);
@@ -379,14 +373,17 @@
     initPillGroup('exam-answer-pills');
     initPillGroup('exam-count-pills');
 
-    // Cross-exam modal
-    document.getElementById('cross-exam-modal-close')?.addEventListener('click', closeCrossExamModal);
-    document.getElementById('cross-exam-modal')?.addEventListener('click', e => { if (e.target.id === 'cross-exam-modal') closeCrossExamModal(); });
+    // Cross-exam tool
     document.getElementById('cross-exam-generate-btn')?.addEventListener('click', generateCrossLecturePrediction);
     document.getElementById('cross-exam-back-btn')?.addEventListener('click', () => showCrossExamPanel('settings'));
     initPillGroup('cross-exam-difficulty-pills');
     initPillGroup('cross-exam-format-pills');
     initPillGroup('cross-exam-count-pills');
+
+    // Populate cross-exam lecture list whenever Tools tab opens
+    document.querySelector('[data-tab="tools"]')?.addEventListener('click', () => {
+      populateCrossExamLectureList();
+    });
 
     // Escape key: dismiss modals
     document.addEventListener('keydown', e => {
@@ -394,14 +391,6 @@
       if (latexSelectModal && !latexSelectModal.hidden) { closeLatexSelectModal(); return; }
       const timeoutDialog = document.getElementById('guide-timeout-dialog');
       if (timeoutDialog && !timeoutDialog.hidden) { timeoutDialog.hidden = true; return; }
-      const flashcardsModal = document.getElementById('flashcards-modal');
-      if (flashcardsModal && flashcardsModal.style.display !== 'none') { closeFlashcardsModal(); return; }
-      const quizModal = document.getElementById('quiz-modal');
-      if (quizModal && quizModal.style.display !== 'none') { closeQuizModal(); return; }
-      const examModal = document.getElementById('exam-modal');
-      if (examModal && examModal.style.display !== 'none') { closeExamModal(); return; }
-      const crossExamModal = document.getElementById('cross-exam-modal');
-      if (crossExamModal && crossExamModal.style.display !== 'none') { closeCrossExamModal(); return; }
     });
 
     // History search + clear button
@@ -822,41 +811,104 @@
     }
   }
 
+  /**
+   * Parse complete block objects from a partial guide JSON string.
+   * Looks for "guide":[ and extracts fully balanced {...} objects one by one.
+   */
+  function extractStreamedBlocks(jsonStr) {
+    const guideMatch = /"guide"\s*:\s*\[/.exec(jsonStr);
+    if (!guideMatch) return [];
+
+    const blocks = [];
+    let i = guideMatch.index + guideMatch[0].length;
+
+    while (i < jsonStr.length) {
+      // Skip whitespace and commas between objects
+      while (i < jsonStr.length && /[\s,]/.test(jsonStr[i])) i++;
+      if (i >= jsonStr.length || jsonStr[i] !== '{') break;
+
+      let depth = 0;
+      let inStr = false;
+      let esc = false;
+      const objStart = i;
+
+      while (i < jsonStr.length) {
+        const ch = jsonStr[i];
+        if (esc) { esc = false; i++; continue; }
+        if (ch === '\\' && inStr) { esc = true; i++; continue; }
+        if (ch === '"') { inStr = !inStr; i++; continue; }
+        if (inStr) { i++; continue; }
+        if (ch === '{') { depth++; i++; continue; }
+        if (ch === '}') {
+          depth--;
+          i++;
+          if (depth === 0) {
+            try { blocks.push(JSON.parse(jsonStr.slice(objStart, i))); } catch (_) {}
+            break;
+          }
+          continue;
+        }
+        i++;
+      }
+
+      if (depth > 0) break; // Incomplete block — stop here
+    }
+
+    return blocks;
+  }
+
   function handleStreamChunk(msg) {
     if (!isGenerating) return;
     if (!msg?.requestId || msg.requestId !== activeGuideRequestId) return;
     streamBuffer += msg.text || '';
 
-    // Count approximate blocks received so far
-    const blockMatches = streamBuffer.match(/"start_time"\s*:/g);
-    const blockCount = blockMatches ? blockMatches.length : 0;
+    const blocks = extractStreamedBlocks(streamBuffer);
+    const blockCount = blocks.length;
+    const prevCount  = guide?.guide?.length ?? 0;
 
+    // Progressive rendering: update guide as new complete blocks arrive
+    if (blockCount > prevCount) {
+      if (!guide) guide = { guide: [], lecture_title: '', total_duration_seconds: 0 };
+      guide.guide = blocks;
+
+      // On first block: transition from empty state to guide content
+      if (prevCount === 0) {
+        guideEmpty.style.display = 'none';
+        guideContent.style.display = 'flex';
+        currentBlockIndex = 0;
+      }
+
+      // Re-render the currently displayed block (also updates counter + progress bar)
+      renderBlock(currentBlockIndex);
+    }
+
+    // Show / update streaming status bar
+    const kbReceived = Math.round(streamBuffer.length / 1024);
     if (blockCount > 0) {
       setStatus('loading', `Streaming guide… ${blockCount} block${blockCount !== 1 ? 's' : ''} received`);
     } else {
-      const kbReceived = Math.round(streamBuffer.length / 1024);
       setStatus('loading', kbReceived > 0
         ? `Streaming guide… ${kbReceived} KB received`
         : 'Streaming guide…'
       );
     }
 
-    // Show streaming bar inside guide content area if not yet shown
+    // Show streaming indicator bar (inserted right before guide-block so toolbar stays usable)
     if (!document.getElementById('guide-streaming-bar')) {
       const bar = document.createElement('div');
       bar.id = 'guide-streaming-bar';
       bar.className = 'guide-streaming-bar';
-      bar.innerHTML = '<div class="guide-streaming-pulse"></div><span id="guide-streaming-text">Receiving guide from AI…</span>';
-      guideEmpty.style.display = 'none';
-      guideContent.style.display = 'flex';
-      guideContent.insertBefore(bar, guideContent.firstChild);
+      bar.innerHTML = '<div class="guide-streaming-pulse"></div><span id="guide-streaming-text"></span>';
+      const guideBlockEl = document.getElementById('guide-block');
+      if (guideBlockEl) guideBlockEl.before(bar);
+      else guideContent.appendChild(bar);
     }
 
     const streamText = document.getElementById('guide-streaming-text');
     if (streamText) {
       streamText.textContent = blockCount > 0
-        ? `Receiving guide from AI… ${blockCount} block${blockCount !== 1 ? 's' : ''} so far`
-        : 'Receiving guide from AI…';
+        ? `Streaming… ${blockCount} block${blockCount !== 1 ? 's' : ''} received — more incoming`
+        : `Receiving guide from AI…${kbReceived > 0 ? ` (${kbReceived} KB)` : ''}`;
     }
   }
 
@@ -1098,6 +1150,12 @@
   async function onGenerateClick() {
     if (isGenerating || !transcript || !hasUsableSettings()) return;
     isGenerating = true;
+
+    // Reset streaming state so incremental rendering starts fresh
+    streamBuffer = '';
+    clearStreamingBar();
+    // If a previous partial/streamed guide exists, clear it so the new stream starts from block 0
+    if (guide && guide.guide) guide.guide = [];
 
     generateBtn.disabled = true;
     generateBtn.querySelector('.btn-text').textContent = 'Generating…';
@@ -3596,27 +3654,46 @@ ${guideBlocksStr}${scriptContext}`;
     };
   }
 
+  // ─── Tool section helpers ─────────────────────────────────────────────────
+
+  /** Switch to the Tools tab and open a specific tool section (details element). */
+  function openToolSection(sectionId) {
+    switchTab('tools');
+    const section = document.getElementById(sectionId);
+    if (section) {
+      section.open = true;
+      // Small delay to let the tab switch render before scrolling
+      setTimeout(() => section.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+    }
+  }
+
   // ─── Flashcards feature ───────────────────────────────────────────────────
 
   function openFlashcardsModal() {
     if (!guide?.guide?.length) { setStatus('warning', 'Generate a guide first'); return; }
     showFlashcardsPanel('settings');
-    document.getElementById('flashcards-modal').style.display = 'flex';
+    openToolSection('tool-flashcards');
   }
 
   function closeFlashcardsModal() {
-    document.getElementById('flashcards-modal').style.display = 'none';
+    // Results persist — no-op; user can collapse the section manually
   }
 
   function showFlashcardsPanel(panel) {
-    document.getElementById('flashcards-settings').style.display = panel === 'settings' ? 'flex' : 'none';
-    document.getElementById('flashcards-results').style.display  = panel === 'results'  ? 'flex' : 'none';
+    const s = document.getElementById('flashcards-settings');
+    const r = document.getElementById('flashcards-results');
+    if (s) s.style.display = panel === 'settings' ? 'flex' : 'none';
+    if (r) r.style.display = panel === 'results'  ? 'flex' : 'none';
   }
 
   async function generateFlashcards() {
     if (!guide?.guide?.length || !hasUsableSettings()) return;
 
-    const count  = getActivePillValue('flashcards-count-pills') || 'auto';
+    const customCountEl = document.getElementById('flashcards-custom-count');
+    const customCountRaw = parseInt(customCountEl?.value?.trim() || '', 10);
+    const count = (!isNaN(customCountRaw) && customCountRaw > 0)
+      ? String(customCountRaw)
+      : getActivePillValue('flashcards-count-pills') || 'auto';
     const style  = getActivePillValue('flashcards-style-pills') || 'mixed';
     const formulas = !!document.getElementById('flashcards-formulas-cb')?.checked;
 
@@ -3735,27 +3812,35 @@ ${guideBlocksStr}${scriptContext}`;
   function openQuizModal() {
     if (!guide?.guide?.length) { setStatus('warning', 'Generate a guide first'); return; }
     showQuizPanel('settings');
-    document.getElementById('quiz-modal').style.display = 'flex';
+    openToolSection('tool-quiz');
   }
 
   function closeQuizModal() {
-    document.getElementById('quiz-modal').style.display = 'none';
     quizState = null;
+    showQuizPanel('settings');
   }
 
   function showQuizPanel(panel) {
-    document.getElementById('quiz-settings').style.display = panel === 'settings' ? 'flex' : 'none';
-    document.getElementById('quiz-active').style.display   = panel === 'active'   ? 'flex' : 'none';
-    document.getElementById('quiz-results').style.display  = panel === 'results'  ? 'flex' : 'none';
+    const qs = document.getElementById('quiz-settings');
+    const qa = document.getElementById('quiz-active');
+    const qr = document.getElementById('quiz-results');
+    if (qs) qs.style.display = panel === 'settings' ? 'flex' : 'none';
+    if (qa) qa.style.display = panel === 'active'   ? 'flex' : 'none';
+    if (qr) qr.style.display = panel === 'results'  ? 'flex' : 'none';
     if (panel === 'settings') {
-      document.getElementById('quiz-error').style.display = 'none';
+      const errEl = document.getElementById('quiz-error');
+      if (errEl) errEl.style.display = 'none';
     }
   }
 
   async function generateQuiz() {
     if (!guide?.guide?.length || !hasUsableSettings()) return;
 
-    const count = parseInt(getActivePillValue('quiz-count-pills') || '10', 10);
+    const customCountEl = document.getElementById('quiz-custom-count');
+    const customCountRaw = parseInt(customCountEl?.value?.trim() || '', 10);
+    const count = (!isNaN(customCountRaw) && customCountRaw > 0)
+      ? customCountRaw
+      : parseInt(getActivePillValue('quiz-count-pills') || '10', 10);
     const type  = getActivePillValue('quiz-type-pills') || 'mixed';
 
     const btn = document.getElementById('quiz-generate-btn');
@@ -3974,17 +4059,22 @@ ${guideBlocksStr}${scriptContext}`;
     if (!guide?.guide?.length) { setStatus('warning', 'Generate a guide first'); return; }
     showExamPanel('settings');
     populateExamBlockCheckboxes();
-    document.getElementById('exam-modal').style.display = 'flex';
+    openToolSection('tool-exam');
   }
 
   function closeExamModal() {
-    document.getElementById('exam-modal').style.display = 'none';
+    // No-op — results persist in Tools tab
   }
 
   function showExamPanel(panel) {
-    document.getElementById('exam-settings').style.display = panel === 'settings' ? 'flex' : 'none';
-    document.getElementById('exam-results').style.display  = panel === 'results'  ? 'flex' : 'none';
-    if (panel === 'settings') document.getElementById('exam-error').style.display = 'none';
+    const es = document.getElementById('exam-settings');
+    const er = document.getElementById('exam-results');
+    if (es) es.style.display = panel === 'settings' ? 'flex' : 'none';
+    if (er) er.style.display = panel === 'results'  ? 'flex' : 'none';
+    if (panel === 'settings') {
+      const errEl = document.getElementById('exam-error');
+      if (errEl) errEl.style.display = 'none';
+    }
   }
 
   function onExamScopeChange(value) {
@@ -4028,7 +4118,11 @@ ${guideBlocksStr}${scriptContext}`;
     const answerLen   = getActivePillValue('exam-answer-pills') || 'medium';
     const countPill   = getActivePillValue('exam-count-pills') || '5';
     const perBlock    = countPill === 'per-block';
-    const count       = perBlock ? 2 : parseInt(countPill, 10) || 5;
+    const customCountEl = document.getElementById('exam-custom-count');
+    const customCountRaw = parseInt(customCountEl?.value?.trim() || '', 10);
+    const count = perBlock ? 2
+      : (!isNaN(customCountRaw) && customCountRaw > 0) ? customCountRaw
+      : parseInt(countPill, 10) || 5;
     const selectedBlocks = getSelectedExamBlocks();
 
     const btn = document.getElementById('exam-generate-btn');
@@ -4111,11 +4205,10 @@ ${guideBlocksStr}${scriptContext}`;
 
   // ─── Cross-lecture exam prediction (Part 3B) ──────────────────────────────
 
-  /** Open cross-exam modal pre-filtered to entries from a course group */
+  /** Open cross-exam section pre-filtered to entries from a course group */
   function openCrossExamModalForCourse(courseEntries) {
-    switchTab('history');
     showCrossExamPanel('settings');
-    document.getElementById('cross-exam-modal').style.display = 'flex';
+    openToolSection('tool-cross-exam');
     // Populate from course entries
     const listEl = document.getElementById('cross-exam-lecture-list');
     if (!listEl) return;
@@ -4143,21 +4236,26 @@ ${guideBlocksStr}${scriptContext}`;
     updateCrossExamGenerateBtn();
   }
 
-  /** Open the cross-lecture modal and populate lecture list from history */
+  /** Open the cross-lecture section and populate lecture list from history */
   function openCrossExamModal() {
     showCrossExamPanel('settings');
     populateCrossExamLectureList();
-    document.getElementById('cross-exam-modal').style.display = 'flex';
+    openToolSection('tool-cross-exam');
   }
 
   function closeCrossExamModal() {
-    document.getElementById('cross-exam-modal').style.display = 'none';
+    // No-op — results persist in Tools tab
   }
 
   function showCrossExamPanel(panel) {
-    document.getElementById('cross-exam-settings').style.display = panel === 'settings' ? 'flex' : 'none';
-    document.getElementById('cross-exam-results').style.display  = panel === 'results'  ? 'flex' : 'none';
-    if (panel === 'settings') document.getElementById('cross-exam-error').style.display = 'none';
+    const cs = document.getElementById('cross-exam-settings');
+    const cr = document.getElementById('cross-exam-results');
+    if (cs) cs.style.display = panel === 'settings' ? 'flex' : 'none';
+    if (cr) cr.style.display = panel === 'results'  ? 'flex' : 'none';
+    if (panel === 'settings') {
+      const errEl = document.getElementById('cross-exam-error');
+      if (errEl) errEl.style.display = 'none';
+    }
   }
 
   function populateCrossExamLectureList() {
@@ -4224,7 +4322,11 @@ ${guideBlocksStr}${scriptContext}`;
 
     const difficulty = getActivePillValue('cross-exam-difficulty-pills') || 'mixed';
     const format     = getActivePillValue('cross-exam-format-pills') || 'open';
-    const count      = parseInt(getActivePillValue('cross-exam-count-pills') || '5', 10);
+    const customCountEl = document.getElementById('cross-exam-custom-count');
+    const customCountRaw = parseInt(customCountEl?.value?.trim() || '', 10);
+    const count = (!isNaN(customCountRaw) && customCountRaw > 0)
+      ? customCountRaw
+      : parseInt(getActivePillValue('cross-exam-count-pills') || '5', 10);
 
     const btn = document.getElementById('cross-exam-generate-btn');
     const errEl = document.getElementById('cross-exam-error');

@@ -75,6 +75,12 @@
       </svg>
       History
     </button>
+    <button class="tab-btn tab-btn-tools" data-tab="tools">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+      </svg>
+      Tools
+    </button>
   </nav>
 
   <!-- ── GUIDE TAB ── -->
@@ -482,6 +488,322 @@
     </div>
   </div>
 
+  <!-- ── TOOLS TAB ── -->
+  <div id="tab-tools" class="tab-content">
+    <div class="info-banner tools-global-banner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+      <span>All tools run in the background — switch to Guide or Q&amp;A freely while generating. Results remain here until you load a new guide. All tools require an active guide.</span>
+    </div>
+
+    <!-- Anki Flashcards -->
+    <details class="tool-section" id="tool-flashcards">
+      <summary class="tool-section-summary">
+        <div class="tool-section-title-row">
+          <svg class="tool-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
+          </svg>
+          <span>Anki Flashcards</span>
+        </div>
+        <svg class="tool-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="tool-section-body">
+        <div class="info-banner tool-feature-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+          <span>Generation runs in the background — browse the guide while waiting. Requesting far more cards than the lecture has content will reduce quality. A good baseline is 1–3 cards per guide block.</span>
+        </div>
+        <div id="flashcards-settings" class="tool-panel">
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Count</label>
+            <div class="pill-count-row">
+              <div class="pill-group" id="flashcards-count-pills">
+                <button class="pill" data-value="5" type="button">5</button>
+                <button class="pill" data-value="10" type="button">10</button>
+                <button class="pill pill-active" data-value="20" type="button">20</button>
+                <button class="pill" data-value="auto" type="button">Auto</button>
+              </div>
+              <input type="number" id="flashcards-custom-count" class="custom-count-input" min="1" max="200" placeholder="or exact #">
+            </div>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Style</label>
+            <div class="pill-group" id="flashcards-style-pills">
+              <button class="pill" data-value="recall" type="button">Recall</button>
+              <button class="pill" data-value="definition" type="button">Definition</button>
+              <button class="pill pill-active" data-value="mixed" type="button">Mixed</button>
+            </div>
+          </div>
+          <label class="gen-fallback-toggle" style="margin-top:6px">
+            <input type="checkbox" id="flashcards-formulas-cb" checked>
+            <span class="toggle-thumb"></span>
+            <span class="toggle-label">Include formula cards</span>
+          </label>
+          <p class="feature-modal-hint">Cards are editable before export. You can remove individual cards after generation.</p>
+          <button id="flashcards-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
+            <span class="btn-text">Generate Flashcards</span>
+            <span class="btn-spinner" style="display:none"></span>
+          </button>
+          <p id="flashcards-error" class="error-msg" style="display:none"></p>
+        </div>
+        <div id="flashcards-results" class="tool-panel" style="display:none">
+          <div class="feature-result-header">
+            <button id="flashcards-back-btn" class="feature-back-btn" type="button">← Settings</button>
+            <span id="flashcards-count-label" class="feature-result-count"></span>
+            <div class="feature-result-actions">
+              <button id="flashcards-export-tsv" class="history-load-btn" type="button" title="Export as TSV for Anki manual import">TSV</button>
+              <button id="flashcards-export-anki" class="history-load-btn" type="button" title="Send directly to Anki via AnkiConnect">Anki</button>
+            </div>
+          </div>
+          <div id="flashcards-card-list" class="flashcards-card-list"></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- Practice Quiz -->
+    <details class="tool-section" id="tool-quiz">
+      <summary class="tool-section-summary">
+        <div class="tool-section-title-row">
+          <svg class="tool-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+          </svg>
+          <span>Practice Quiz</span>
+        </div>
+        <svg class="tool-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="tool-section-body">
+        <div class="info-banner tool-feature-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+          <span>Quiz generation runs in the background. Switch tabs freely — the quiz will be ready when you return. You can navigate the guide between questions.</span>
+        </div>
+        <div id="quiz-settings" class="tool-panel">
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Questions</label>
+            <div class="pill-count-row">
+              <div class="pill-group" id="quiz-count-pills">
+                <button class="pill" data-value="5" type="button">5</button>
+                <button class="pill pill-active" data-value="10" type="button">10</button>
+                <button class="pill" data-value="20" type="button">20</button>
+              </div>
+              <input type="number" id="quiz-custom-count" class="custom-count-input" min="1" max="50" placeholder="or exact #">
+            </div>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Type</label>
+            <div class="pill-group" id="quiz-type-pills">
+              <button class="pill" data-value="mc" type="button">Multiple Choice</button>
+              <button class="pill" data-value="sa" type="button">Short Answer</button>
+              <button class="pill pill-active" data-value="mixed" type="button">Mixed</button>
+            </div>
+          </div>
+          <button id="quiz-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
+            <span class="btn-text">Start Quiz</span>
+            <span class="btn-spinner" style="display:none"></span>
+          </button>
+          <p id="quiz-error" class="error-msg" style="display:none"></p>
+        </div>
+        <div id="quiz-active" class="tool-panel" style="display:none">
+          <div class="quiz-progress-row">
+            <span id="quiz-q-counter" class="quiz-q-counter">1 / 10</span>
+            <div class="quiz-progress-track"><div id="quiz-progress-fill" class="quiz-progress-fill"></div></div>
+            <button id="quiz-quit-btn" class="feature-back-btn" type="button" title="Quit quiz">✕ Quit</button>
+          </div>
+          <div id="quiz-question-area" class="quiz-question-area">
+            <p id="quiz-question-text" class="quiz-question-text"></p>
+            <div id="quiz-mc-options" class="quiz-mc-options" style="display:none"></div>
+            <div id="quiz-sa-area" style="display:none">
+              <textarea id="quiz-sa-input" class="quiz-sa-input" placeholder="Type your answer…" rows="4"></textarea>
+            </div>
+          </div>
+          <div id="quiz-action-row" class="quiz-action-row">
+            <button id="quiz-reveal-btn" class="primary-btn" type="button">Show Answer</button>
+            <button id="quiz-submit-mc-btn" class="primary-btn" type="button" style="display:none">Submit</button>
+          </div>
+          <div id="quiz-answer-reveal" class="quiz-answer-reveal" style="display:none">
+            <div class="quiz-model-answer">
+              <div class="quiz-answer-label">Model answer</div>
+              <div id="quiz-answer-text" class="quiz-answer-text"></div>
+            </div>
+            <div id="quiz-explanation-text" class="quiz-explanation"></div>
+            <div class="quiz-grade-row">
+              <span class="quiz-grade-label">Did you get it right?</span>
+              <button id="quiz-grade-correct" class="quiz-grade-btn quiz-grade-correct" type="button">✓ Yes</button>
+              <button id="quiz-grade-wrong" class="quiz-grade-btn quiz-grade-wrong" type="button">✗ No</button>
+            </div>
+          </div>
+        </div>
+        <div id="quiz-results" class="tool-panel" style="display:none">
+          <div class="quiz-score-display">
+            <div id="quiz-score-circle" class="quiz-score-circle">
+              <span id="quiz-score-pct" class="quiz-score-pct">0%</span>
+            </div>
+            <div class="quiz-score-detail">
+              <div id="quiz-score-text" class="quiz-score-text"></div>
+              <div id="quiz-score-encouragement" class="quiz-score-encouragement"></div>
+            </div>
+          </div>
+          <div id="quiz-missed-section" style="display:none">
+            <div class="quiz-missed-header">Missed questions</div>
+            <div id="quiz-missed-list" class="quiz-missed-list"></div>
+          </div>
+          <div class="quiz-results-actions">
+            <button id="quiz-restart-btn" class="primary-btn" type="button">New Quiz</button>
+            <button id="quiz-results-close-btn" class="history-load-btn" type="button">Done</button>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <!-- Exam Questions -->
+    <details class="tool-section" id="tool-exam">
+      <summary class="tool-section-summary">
+        <div class="tool-section-title-row">
+          <svg class="tool-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <span>Exam Questions</span>
+        </div>
+        <svg class="tool-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="tool-section-body">
+        <div class="info-banner tool-feature-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+          <span>Questions are generated at ETH exam rigor — expect multi-part problems, formal proofs, and derivations. Generation runs in the background; switch tabs freely.</span>
+        </div>
+        <div id="exam-settings" class="tool-panel">
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Scope</label>
+            <div class="pill-group" id="exam-scope-pills">
+              <button class="pill pill-active" data-value="whole" type="button">Whole guide</button>
+              <button class="pill" data-value="current" type="button">Current block</button>
+              <button class="pill" data-value="select" type="button">Select blocks…</button>
+            </div>
+          </div>
+          <div id="exam-block-select-area" class="exam-block-select-area" style="display:none">
+            <div id="exam-block-checkboxes" class="exam-block-checkboxes"></div>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Difficulty</label>
+            <div class="pill-group" id="exam-difficulty-pills">
+              <button class="pill" data-value="easy" type="button">Easy</button>
+              <button class="pill pill-active" data-value="mixed" type="button">Mixed</button>
+              <button class="pill" data-value="hard" type="button">Hard</button>
+            </div>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Format</label>
+            <div class="pill-group" id="exam-format-pills">
+              <button class="pill pill-active" data-value="open" type="button">Open</button>
+              <button class="pill" data-value="mc" type="button">MC</button>
+              <button class="pill" data-value="proof" type="button">Proof</button>
+              <button class="pill" data-value="mixed" type="button">Mixed</button>
+            </div>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Answer length</label>
+            <div class="pill-group" id="exam-answer-pills">
+              <button class="pill" data-value="short" type="button">Short</button>
+              <button class="pill pill-active" data-value="medium" type="button">Medium</button>
+              <button class="pill" data-value="long" type="button">Long</button>
+            </div>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Questions</label>
+            <div class="pill-count-row">
+              <div class="pill-group" id="exam-count-pills">
+                <button class="pill" data-value="3" type="button">3</button>
+                <button class="pill pill-active" data-value="5" type="button">5</button>
+                <button class="pill" data-value="10" type="button">10</button>
+                <button class="pill" data-value="per-block" type="button">Per block</button>
+              </div>
+              <input type="number" id="exam-custom-count" class="custom-count-input" min="1" max="30" placeholder="or exact #">
+            </div>
+          </div>
+          <button id="exam-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
+            <span class="btn-text">Generate Questions</span>
+            <span class="btn-spinner" style="display:none"></span>
+          </button>
+          <p id="exam-error" class="error-msg" style="display:none"></p>
+        </div>
+        <div id="exam-results" class="tool-panel" style="display:none">
+          <div class="feature-result-header">
+            <button id="exam-back-btn" class="feature-back-btn" type="button">← Settings</button>
+            <span id="exam-count-label" class="feature-result-count"></span>
+          </div>
+          <div id="exam-question-list" class="exam-question-list"></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- Cross-Lecture Exam Prediction -->
+    <details class="tool-section" id="tool-cross-exam">
+      <summary class="tool-section-summary">
+        <div class="tool-section-title-row">
+          <svg class="tool-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+          <span>Predict Exam Topics</span>
+        </div>
+        <svg class="tool-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="tool-section-body">
+        <div class="info-banner tool-feature-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+          <span>Analyses recurring themes across multiple lectures to predict exam-likely questions. Select ≥2 lectures from the same course. Generation runs in the background.</span>
+        </div>
+        <div id="cross-exam-settings" class="tool-panel">
+          <p class="feature-modal-hint">Select lectures to analyse, then generate cross-topic exam predictions.</p>
+          <div id="cross-exam-lecture-list" class="cross-exam-lecture-list">
+            <p class="feature-modal-hint" style="color:var(--text-muted)">Loading lectures from history…</p>
+          </div>
+          <div class="gen-setting-row" style="margin-top:8px">
+            <label class="gen-setting-label">Difficulty</label>
+            <div class="pill-group" id="cross-exam-difficulty-pills">
+              <button class="pill" data-value="easy" type="button">Easy</button>
+              <button class="pill pill-active" data-value="mixed" type="button">Mixed</button>
+              <button class="pill" data-value="hard" type="button">Hard</button>
+            </div>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Format</label>
+            <div class="pill-group" id="cross-exam-format-pills">
+              <button class="pill pill-active" data-value="open" type="button">Open</button>
+              <button class="pill" data-value="mc" type="button">MC</button>
+              <button class="pill" data-value="proof" type="button">Proof</button>
+              <button class="pill" data-value="mixed" type="button">Mixed</button>
+            </div>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label">Questions</label>
+            <div class="pill-count-row">
+              <div class="pill-group" id="cross-exam-count-pills">
+                <button class="pill" data-value="3" type="button">3</button>
+                <button class="pill pill-active" data-value="5" type="button">5</button>
+                <button class="pill" data-value="10" type="button">10</button>
+              </div>
+              <input type="number" id="cross-exam-custom-count" class="custom-count-input" min="1" max="20" placeholder="or exact #">
+            </div>
+          </div>
+          <button id="cross-exam-generate-btn" class="primary-btn" style="margin-top:12px" type="button" disabled>
+            <span class="btn-text">Predict Exam Questions</span>
+            <span class="btn-spinner" style="display:none"></span>
+          </button>
+          <p id="cross-exam-error" class="error-msg" style="display:none"></p>
+        </div>
+        <div id="cross-exam-results" class="tool-panel" style="display:none">
+          <div class="feature-result-header">
+            <button id="cross-exam-back-btn" class="feature-back-btn" type="button">← Settings</button>
+            <span id="cross-exam-count-label" class="feature-result-count"></span>
+          </div>
+          <div id="cross-exam-topics-section" class="cross-exam-topics-section" style="display:none">
+            <div class="exam-section-heading">High-probability topics</div>
+            <div id="cross-exam-topics-list" class="cross-exam-topics-list"></div>
+          </div>
+          <div class="exam-section-heading" style="margin-top:8px">Predicted questions</div>
+          <div id="cross-exam-question-list" class="exam-question-list"></div>
+        </div>
+      </div>
+    </details>
+  </div>
+
   <!-- Q&A reply-ready toast — body-level so overflow:hidden on tab-content can't clip it -->
   <div id="qa-reply-ready-toast" class="qa-reply-ready-toast" hidden aria-live="polite">
     <button type="button" id="qa-reply-ready-toast-action" class="qa-reply-ready-toast-action">
@@ -513,276 +835,6 @@
 
   <!-- Speed toast — shown inside the sidebar when arrow keys change playback rate -->
   <div id="sidebar-speed-toast"></div>
-
-  <!-- ── FLASHCARDS MODAL ── -->
-  <div id="flashcards-modal" class="feature-modal-backdrop" style="display:none" role="dialog" aria-modal="true" aria-label="Generate Flashcards">
-    <div class="feature-modal">
-      <div class="feature-modal-header">
-        <strong>Generate Flashcards</strong>
-        <button id="flashcards-modal-close" class="icon-btn" type="button" title="Close" aria-label="Close">×</button>
-      </div>
-      <div id="flashcards-settings" class="feature-modal-body">
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Count</label>
-          <div class="pill-group" id="flashcards-count-pills">
-            <button class="pill" data-value="5" type="button">5</button>
-            <button class="pill" data-value="10" type="button">10</button>
-            <button class="pill pill-active" data-value="20" type="button">20</button>
-            <button class="pill" data-value="auto" type="button">Auto</button>
-          </div>
-        </div>
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Style</label>
-          <div class="pill-group" id="flashcards-style-pills">
-            <button class="pill" data-value="recall" type="button">Recall</button>
-            <button class="pill" data-value="definition" type="button">Definition</button>
-            <button class="pill pill-active" data-value="mixed" type="button">Mixed</button>
-          </div>
-        </div>
-        <label class="gen-fallback-toggle" style="margin-top:6px">
-          <input type="checkbox" id="flashcards-formulas-cb" checked>
-          <span class="toggle-thumb"></span>
-          <span class="toggle-label">Include formula cards</span>
-        </label>
-        <p class="feature-modal-hint">Cards are editable before export. You can remove individual cards.</p>
-        <button id="flashcards-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
-          <span class="btn-text">Generate Flashcards</span>
-          <span class="btn-spinner" style="display:none"></span>
-        </button>
-        <p id="flashcards-error" class="error-msg" style="display:none"></p>
-      </div>
-      <div id="flashcards-results" class="feature-modal-body" style="display:none">
-        <div class="feature-result-header">
-          <button id="flashcards-back-btn" class="feature-back-btn" type="button">← Settings</button>
-          <span id="flashcards-count-label" class="feature-result-count"></span>
-          <div class="feature-result-actions">
-            <button id="flashcards-export-tsv" class="history-load-btn" type="button" title="Export as TSV for Anki manual import">TSV</button>
-            <button id="flashcards-export-anki" class="history-load-btn" type="button" title="Send directly to Anki via AnkiConnect">Anki</button>
-          </div>
-        </div>
-        <div id="flashcards-card-list" class="flashcards-card-list"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── QUIZ MODAL ── -->
-  <div id="quiz-modal" class="feature-modal-backdrop" style="display:none" role="dialog" aria-modal="true" aria-label="Practice Quiz">
-    <div class="feature-modal">
-      <div class="feature-modal-header">
-        <strong>Practice Quiz</strong>
-        <button id="quiz-modal-close" class="icon-btn" type="button" title="Close" aria-label="Close">×</button>
-      </div>
-      <!-- Settings -->
-      <div id="quiz-settings" class="feature-modal-body">
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Questions</label>
-          <div class="pill-group" id="quiz-count-pills">
-            <button class="pill" data-value="5" type="button">5</button>
-            <button class="pill pill-active" data-value="10" type="button">10</button>
-            <button class="pill" data-value="20" type="button">20</button>
-          </div>
-        </div>
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Type</label>
-          <div class="pill-group" id="quiz-type-pills">
-            <button class="pill" data-value="mc" type="button">Multiple Choice</button>
-            <button class="pill" data-value="sa" type="button">Short Answer</button>
-            <button class="pill pill-active" data-value="mixed" type="button">Mixed</button>
-          </div>
-        </div>
-        <button id="quiz-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
-          <span class="btn-text">Start Quiz</span>
-          <span class="btn-spinner" style="display:none"></span>
-        </button>
-        <p id="quiz-error" class="error-msg" style="display:none"></p>
-      </div>
-      <!-- Active quiz -->
-      <div id="quiz-active" class="feature-modal-body" style="display:none">
-        <div class="quiz-progress-row">
-          <span id="quiz-q-counter" class="quiz-q-counter">1 / 10</span>
-          <div class="quiz-progress-track"><div id="quiz-progress-fill" class="quiz-progress-fill"></div></div>
-          <button id="quiz-quit-btn" class="feature-back-btn" type="button" title="Quit quiz">✕ Quit</button>
-        </div>
-        <div id="quiz-question-area" class="quiz-question-area">
-          <p id="quiz-question-text" class="quiz-question-text"></p>
-          <!-- MC options injected here -->
-          <div id="quiz-mc-options" class="quiz-mc-options" style="display:none"></div>
-          <!-- SA textarea -->
-          <div id="quiz-sa-area" style="display:none">
-            <textarea id="quiz-sa-input" class="quiz-sa-input" placeholder="Type your answer…" rows="4"></textarea>
-          </div>
-        </div>
-        <div id="quiz-action-row" class="quiz-action-row">
-          <button id="quiz-reveal-btn" class="primary-btn" type="button">Show Answer</button>
-          <button id="quiz-submit-mc-btn" class="primary-btn" type="button" style="display:none">Submit</button>
-        </div>
-        <div id="quiz-answer-reveal" class="quiz-answer-reveal" style="display:none">
-          <div class="quiz-model-answer">
-            <div class="quiz-answer-label">Model answer</div>
-            <div id="quiz-answer-text" class="quiz-answer-text"></div>
-          </div>
-          <div id="quiz-explanation-text" class="quiz-explanation"></div>
-          <div class="quiz-grade-row">
-            <span class="quiz-grade-label">Did you get it right?</span>
-            <button id="quiz-grade-correct" class="quiz-grade-btn quiz-grade-correct" type="button">✓ Yes</button>
-            <button id="quiz-grade-wrong" class="quiz-grade-btn quiz-grade-wrong" type="button">✗ No</button>
-          </div>
-        </div>
-      </div>
-      <!-- Results -->
-      <div id="quiz-results" class="feature-modal-body" style="display:none">
-        <div class="quiz-score-display">
-          <div id="quiz-score-circle" class="quiz-score-circle">
-            <span id="quiz-score-pct" class="quiz-score-pct">0%</span>
-          </div>
-          <div class="quiz-score-detail">
-            <div id="quiz-score-text" class="quiz-score-text"></div>
-            <div id="quiz-score-encouragement" class="quiz-score-encouragement"></div>
-          </div>
-        </div>
-        <div id="quiz-missed-section" style="display:none">
-          <div class="quiz-missed-header">Missed questions</div>
-          <div id="quiz-missed-list" class="quiz-missed-list"></div>
-        </div>
-        <div class="quiz-results-actions">
-          <button id="quiz-restart-btn" class="primary-btn" type="button">New Quiz</button>
-          <button id="quiz-results-close-btn" class="history-load-btn" type="button">Done</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── EXAM QUESTIONS MODAL (Part 3A) ── -->
-  <div id="exam-modal" class="feature-modal-backdrop" style="display:none" role="dialog" aria-modal="true" aria-label="Generate Exam Questions">
-    <div class="feature-modal feature-modal-wide">
-      <div class="feature-modal-header">
-        <strong>Generate Exam Questions</strong>
-        <button id="exam-modal-close" class="icon-btn" type="button" title="Close" aria-label="Close">×</button>
-      </div>
-      <!-- Settings -->
-      <div id="exam-settings" class="feature-modal-body">
-        <p class="feature-modal-hint">Generate exam-style questions from this lecture's guide.</p>
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Scope</label>
-          <div class="pill-group" id="exam-scope-pills">
-            <button class="pill pill-active" data-value="whole" type="button">Whole guide</button>
-            <button class="pill" data-value="current" type="button">Current block</button>
-            <button class="pill" data-value="select" type="button">Select blocks…</button>
-          </div>
-        </div>
-        <div id="exam-block-select-area" class="exam-block-select-area" style="display:none">
-          <div id="exam-block-checkboxes" class="exam-block-checkboxes"></div>
-        </div>
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Difficulty</label>
-          <div class="pill-group" id="exam-difficulty-pills">
-            <button class="pill" data-value="easy" type="button">Easy</button>
-            <button class="pill pill-active" data-value="mixed" type="button">Mixed</button>
-            <button class="pill" data-value="hard" type="button">Hard</button>
-          </div>
-        </div>
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Format</label>
-          <div class="pill-group" id="exam-format-pills">
-            <button class="pill pill-active" data-value="open" type="button">Open</button>
-            <button class="pill" data-value="mc" type="button">MC</button>
-            <button class="pill" data-value="proof" type="button">Proof</button>
-            <button class="pill" data-value="mixed" type="button">Mixed</button>
-          </div>
-        </div>
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Answer length</label>
-          <div class="pill-group" id="exam-answer-pills">
-            <button class="pill" data-value="short" type="button">Short</button>
-            <button class="pill pill-active" data-value="medium" type="button">Medium</button>
-            <button class="pill" data-value="long" type="button">Long</button>
-          </div>
-        </div>
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Questions</label>
-          <div class="pill-group" id="exam-count-pills">
-            <button class="pill" data-value="3" type="button">3</button>
-            <button class="pill pill-active" data-value="5" type="button">5</button>
-            <button class="pill" data-value="10" type="button">10</button>
-            <button class="pill" data-value="per-block" type="button">Per block</button>
-          </div>
-        </div>
-        <button id="exam-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
-          <span class="btn-text">Generate Questions</span>
-          <span class="btn-spinner" style="display:none"></span>
-        </button>
-        <p id="exam-error" class="error-msg" style="display:none"></p>
-      </div>
-      <!-- Results -->
-      <div id="exam-results" class="feature-modal-body" style="display:none">
-        <div class="feature-result-header">
-          <button id="exam-back-btn" class="feature-back-btn" type="button">← Settings</button>
-          <span id="exam-count-label" class="feature-result-count"></span>
-        </div>
-        <div id="exam-question-list" class="exam-question-list"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── CROSS-LECTURE EXAM PREDICTION MODAL (Part 3B) ── -->
-  <div id="cross-exam-modal" class="feature-modal-backdrop" style="display:none" role="dialog" aria-modal="true" aria-label="Cross-Lecture Exam Prediction">
-    <div class="feature-modal feature-modal-wide">
-      <div class="feature-modal-header">
-        <strong>Predict Exam Questions</strong>
-        <button id="cross-exam-modal-close" class="icon-btn" type="button" title="Close" aria-label="Close">×</button>
-      </div>
-      <!-- Lecture selection -->
-      <div id="cross-exam-settings" class="feature-modal-body">
-        <p class="feature-modal-hint">Select lectures to analyse, then generate cross-topic exam predictions.</p>
-        <div id="cross-exam-lecture-list" class="cross-exam-lecture-list">
-          <p class="feature-modal-hint" style="color:var(--text-muted)">Loading lectures from history…</p>
-        </div>
-        <div class="gen-setting-row" style="margin-top:8px">
-          <label class="gen-setting-label">Difficulty</label>
-          <div class="pill-group" id="cross-exam-difficulty-pills">
-            <button class="pill" data-value="easy" type="button">Easy</button>
-            <button class="pill pill-active" data-value="mixed" type="button">Mixed</button>
-            <button class="pill" data-value="hard" type="button">Hard</button>
-          </div>
-        </div>
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Format</label>
-          <div class="pill-group" id="cross-exam-format-pills">
-            <button class="pill pill-active" data-value="open" type="button">Open</button>
-            <button class="pill" data-value="mc" type="button">MC</button>
-            <button class="pill" data-value="proof" type="button">Proof</button>
-            <button class="pill" data-value="mixed" type="button">Mixed</button>
-          </div>
-        </div>
-        <div class="gen-setting-row">
-          <label class="gen-setting-label">Questions</label>
-          <div class="pill-group" id="cross-exam-count-pills">
-            <button class="pill" data-value="3" type="button">3</button>
-            <button class="pill pill-active" data-value="5" type="button">5</button>
-            <button class="pill" data-value="10" type="button">10</button>
-          </div>
-        </div>
-        <button id="cross-exam-generate-btn" class="primary-btn" style="margin-top:12px" type="button" disabled>
-          <span class="btn-text">Predict Exam Questions</span>
-          <span class="btn-spinner" style="display:none"></span>
-        </button>
-        <p id="cross-exam-error" class="error-msg" style="display:none"></p>
-      </div>
-      <!-- Results -->
-      <div id="cross-exam-results" class="feature-modal-body" style="display:none">
-        <div class="feature-result-header">
-          <button id="cross-exam-back-btn" class="feature-back-btn" type="button">← Settings</button>
-          <span id="cross-exam-count-label" class="feature-result-count"></span>
-        </div>
-        <div id="cross-exam-topics-section" class="cross-exam-topics-section" style="display:none">
-          <div class="exam-section-heading">High-probability topics</div>
-          <div id="cross-exam-topics-list" class="cross-exam-topics-list"></div>
-        </div>
-        <div class="exam-section-heading" style="margin-top:8px">Predicted questions</div>
-        <div id="cross-exam-question-list" class="exam-question-list"></div>
-      </div>
-    </div>
-  </div>
 
   <!-- Scripts -->
   <script src="../lib/katex/katex.min.js"></script>
