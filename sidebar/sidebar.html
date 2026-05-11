@@ -214,55 +214,56 @@
             <div id="progress-fill" class="progress-fill"></div>
           </div>
         </div>
-        <button id="copy-latex-multi-btn" class="icon-btn" type="button" title="Copy full selected blocks (including LaTeX)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="9" y="9" width="13" height="13" rx="2"/>
-            <rect x="2" y="2" width="13" height="13" rx="2"/>
-          </svg>
-        </button>
-        <button id="export-md-btn" class="icon-btn export-md-btn" type="button" title="Export full guide as Markdown (.md)">
-          <!-- Markdown icon: doc + M↓ mark -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-            <polyline points="8 15 10 13 12 15 14 13 16 15" stroke-linecap="round" stroke-linejoin="round"/>
-            <line x1="12" y1="13" x2="12" y2="18" stroke-linecap="round"/>
-          </svg>
-        </button>
-        <button id="export-pdf-btn" class="icon-btn export-pdf-btn" type="button" title="Export full guide as PDF (opens print — choose Save as PDF)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-            <line x1="16" y1="13" x2="8" y2="13"/>
-            <line x1="16" y1="17" x2="8" y2="17"/>
-            <polyline points="10 9 9 9 8 9"/>
-          </svg>
-        </button>
-        <button id="flashcards-btn" class="icon-btn" type="button" title="Generate Anki flashcards from this guide">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="2" y="5" width="20" height="14" rx="2"/>
-            <line x1="2" y1="10" x2="22" y2="10"/>
-          </svg>
-        </button>
-        <button id="quiz-btn" class="icon-btn" type="button" title="Start a practice quiz from this guide">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M9 11l3 3L22 4"/>
-            <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
-          </svg>
-        </button>
-        <button id="exam-btn" class="icon-btn" type="button" title="Generate exam-style questions from this guide">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-            <line x1="12" y1="17" x2="12.01" y2="17" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </button>
-        <button id="regenerate-btn" class="icon-btn regen-btn" title="Generate a new guide">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <polyline points="23 4 23 10 17 10"/>
-            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-          </svg>
-        </button>
+        <div class="guide-toolbar-actions">
+          <button id="copy-latex-multi-btn" class="icon-btn" type="button" title="Copy full selected blocks (including LaTeX)" data-inline-tool="copy">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="9" y="9" width="13" height="13" rx="2"/>
+              <rect x="2" y="2" width="13" height="13" rx="2"/>
+            </svg>
+          </button>
+          <button id="export-md-btn" class="icon-btn export-md-btn" type="button" title="Export full guide as Markdown (.md)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <polyline points="8 15 10 13 12 15 14 13 16 15" stroke-linecap="round" stroke-linejoin="round"/>
+              <line x1="12" y1="13" x2="12" y2="18" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button id="export-pdf-btn" class="icon-btn export-pdf-btn" type="button" title="Export full guide as PDF (opens print — choose Save as PDF)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </svg>
+          </button>
+          <button id="flashcards-btn" class="icon-btn" type="button" title="Generate Anki flashcards from this guide" data-inline-tool="flashcards">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="2" y="5" width="20" height="14" rx="2"/>
+              <line x1="2" y1="10" x2="22" y2="10"/>
+            </svg>
+          </button>
+          <button id="quiz-btn" class="icon-btn" type="button" title="Start a practice quiz from this guide" data-inline-tool="quiz">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M9 11l3 3L22 4"/>
+              <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+            </svg>
+          </button>
+          <button id="exam-btn" class="icon-btn" type="button" title="Generate exam-style questions from this guide" data-inline-tool="exam">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+              <line x1="12" y1="17" x2="12.01" y2="17" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button id="regenerate-btn" class="icon-btn regen-btn" title="Generate a new guide">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="guide-nav-row">
         <div class="guide-nav-arrows">
@@ -287,6 +288,20 @@
 
       <div id="guide-block" class="guide-block">
         <!-- Filled dynamically by sidebar.js -->
+      </div>
+
+      <!-- ── Inline tool panel (slides up inside guide tab, no tab switch needed) ── -->
+      <div id="guide-inline-tool" class="guide-inline-tool" hidden>
+        <div id="guide-inline-resize" class="guide-inline-resize" title="Drag to resize"></div>
+        <div class="guide-inline-tool-header">
+          <span id="guide-inline-tool-name" class="guide-inline-tool-name"></span>
+          <button id="guide-inline-tool-close" class="icon-btn guide-inline-close-btn" type="button" title="Close tool panel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div id="guide-inline-tool-body" class="guide-inline-tool-body">
+          <!-- Populated by openInlineToolPanel() -->
+        </div>
       </div>
 
       <div id="latex-select-modal" class="latex-modal-backdrop" style="display:none">
@@ -509,10 +524,6 @@
         <svg class="tool-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
       </summary>
       <div class="tool-section-body">
-        <div class="info-banner tool-feature-banner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
-          <span>Generation runs in the background — browse the guide while waiting. Requesting far more cards than the lecture has content will reduce quality. A good baseline is 1–3 cards per guide block.</span>
-        </div>
         <div id="flashcards-settings" class="tool-panel">
           <div class="gen-setting-row">
             <label class="gen-setting-label">Count</label>
@@ -555,6 +566,16 @@
               <button id="flashcards-export-anki" class="history-load-btn" type="button" title="Send directly to Anki via AnkiConnect">Anki</button>
             </div>
           </div>
+          <!-- Paginated card navigation -->
+          <div class="flashcard-nav">
+            <button id="flashcard-prev-btn" class="block-nav-btn" type="button" title="Previous card" aria-label="Previous card">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <span id="flashcard-nav-counter" class="flashcard-nav-counter">1 / 1</span>
+            <button id="flashcard-next-btn" class="block-nav-btn" type="button" title="Next card" aria-label="Next card">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
           <div id="flashcards-card-list" class="flashcards-card-list"></div>
         </div>
       </div>
@@ -572,10 +593,6 @@
         <svg class="tool-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
       </summary>
       <div class="tool-section-body">
-        <div class="info-banner tool-feature-banner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
-          <span>Quiz generation runs in the background. Switch tabs freely — the quiz will be ready when you return. You can navigate the guide between questions.</span>
-        </div>
         <div id="quiz-settings" class="tool-panel">
           <div class="gen-setting-row">
             <label class="gen-setting-label">Questions</label>
@@ -630,6 +647,10 @@
               <button id="quiz-grade-correct" class="quiz-grade-btn quiz-grade-correct" type="button">✓ Yes</button>
               <button id="quiz-grade-wrong" class="quiz-grade-btn quiz-grade-wrong" type="button">✗ No</button>
             </div>
+            <button id="quiz-next-btn" class="quiz-next-btn" type="button" style="display:none">
+              Next question
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
           </div>
         </div>
         <div id="quiz-results" class="tool-panel" style="display:none">
@@ -666,10 +687,6 @@
         <svg class="tool-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
       </summary>
       <div class="tool-section-body">
-        <div class="info-banner tool-feature-banner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
-          <span>Questions are generated at ETH exam rigor — expect multi-part problems, formal proofs, and derivations. Generation runs in the background; switch tabs freely.</span>
-        </div>
         <div id="exam-settings" class="tool-panel">
           <div class="gen-setting-row">
             <label class="gen-setting-label">Scope</label>
@@ -678,6 +695,10 @@
               <button class="pill" data-value="current" type="button">Current block</button>
               <button class="pill" data-value="select" type="button">Select blocks…</button>
             </div>
+          </div>
+          <div id="exam-current-block-info" class="current-block-info-row" style="display:none">
+            <span class="current-block-info-icon">§</span>
+            <span id="exam-current-block-label" class="current-block-info-label">—</span>
           </div>
           <div id="exam-block-select-area" class="exam-block-select-area" style="display:none">
             <div id="exam-block-checkboxes" class="exam-block-checkboxes"></div>
@@ -747,14 +768,10 @@
         <svg class="tool-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
       </summary>
       <div class="tool-section-body">
-        <div class="info-banner tool-feature-banner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
-          <span>Analyses recurring themes across multiple lectures to predict exam-likely questions. Select ≥2 lectures from the same course. Generation runs in the background.</span>
-        </div>
         <div id="cross-exam-settings" class="tool-panel">
-          <p class="feature-modal-hint">Select lectures to analyse, then generate cross-topic exam predictions.</p>
+          <p class="feature-modal-hint">Pick ≥ 2 lectures from your history, then predict cross-topic exam questions.</p>
           <div id="cross-exam-lecture-list" class="cross-exam-lecture-list">
-            <p class="feature-modal-hint" style="color:var(--text-muted)">Loading lectures from history…</p>
+            <p class="feature-modal-hint" style="color:var(--text-muted);padding:8px">Loading lectures from history…</p>
           </div>
           <div class="gen-setting-row" style="margin-top:8px">
             <label class="gen-setting-label">Difficulty</label>

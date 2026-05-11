@@ -774,8 +774,18 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
       const { messages, systemPrompt } = msg;
       const chatTemp = msg.chatTemperature ?? 0.35;
       const chatThinking = msg.chatThinking || 'none';
-      return callAI(provider, model, apiKey, messages, systemPrompt,
-        { ...baseOpts, provider, temperature: chatTemp, timeoutMs: 120000, thinking: chatThinking });
+      const chatStream = !!msg.useStream;
+      const chatOpts = {
+        ...baseOpts,
+        provider,
+        temperature: chatTemp,
+        timeoutMs: 120000,
+        thinking: chatThinking,
+        ...(chatStream ? { onChunk: (delta) => emitStreamChunk(sender, requestId, delta) } : {})
+      };
+      return chatStream
+        ? callAIStream(provider, model, apiKey, messages, systemPrompt, chatOpts)
+        : callAI(provider, model, apiKey, messages, systemPrompt, chatOpts);
     }
 
     case 'FETCH_VTT': {

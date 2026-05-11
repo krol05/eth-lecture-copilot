@@ -538,27 +538,48 @@
   }
 
   /** Scrape the lecture recording date directly from the video.ethz.ch page DOM.
-   *  Tobira renders <time datetime="2026-05-04T08:13:00.000Z">Yesterday at…</time>
-   *  right below the <h1> title. We walk up from the h1 to find its sibling time
-   *  element, which is always the current video's date (series-list <time> elements
-   *  appear later in the DOM and are never the first match). */
+   *  Tobira renders <time datetime="2026-05-04T08:13:00.000Z">…</time>
+   *  right below the <h1> title inside a sibling div.
+   *
+   *  Strategy:
+   *  1. Walk UP from h1 (up to 8 levels) and use querySelector to find the first
+   *     <time datetime> within that subtree — this hits the header time, which
+   *     is always the current video's date.
+   *  2. Fallback: extract the video ID from the URL and find its matching entry
+   *     in the series list (Tobira renders each <a href="…/{id}"> with a sibling
+   *     <time datetime>).
+   *  3. Last resort: first time[datetime] in document. */
   function extractLectureDateFromPage() {
     try {
-      // Walk up from h1 up to 5 levels; look for a time[datetime] sibling
+      // Method 1: Walk up from h1 — handles the header area
       const h1 = document.querySelector('h1');
       if (h1) {
         let ancestor = h1.parentElement;
-        for (let depth = 0; depth < 6 && ancestor; depth++, ancestor = ancestor.parentElement) {
+        for (let depth = 0; depth < 8 && ancestor; depth++, ancestor = ancestor.parentElement) {
           const t = ancestor.querySelector('time[datetime]');
-          if (t) {
-            const dt = t.getAttribute('datetime');
-            return dt || null;
+          if (t?.getAttribute('datetime')) return t.getAttribute('datetime');
+        }
+      }
+
+      // Method 2: Match via video ID in the series list
+      // URL pattern: /lectures/.../v/{videoId}
+      const videoIdMatch = location.pathname.match(/\/v\/([^/]+)\/?$/);
+      if (videoIdMatch) {
+        const videoId = videoIdMatch[1];
+        // Find the <a> tag linking to this video, then look for a sibling time element
+        const link = document.querySelector(`a[href*="${videoId}"]`);
+        if (link) {
+          let el = link;
+          for (let d = 0; d < 6 && el; d++, el = el.parentElement) {
+            const t = el.querySelector('time[datetime]');
+            if (t?.getAttribute('datetime')) return t.getAttribute('datetime');
           }
         }
       }
-      // Fallback: first time[datetime] anywhere on page is the current video's date
+
+      // Method 3: First time[datetime] on page (Tobira puts current video date first)
       const t = document.querySelector('time[datetime]');
-      return t ? (t.getAttribute('datetime') || null) : null;
+      return t?.getAttribute('datetime') || null;
     } catch { return null; }
   }
 
@@ -600,13 +621,45 @@
   const _BAD_BREADCRUMB = /^(home|start|lectures?|spring|fall|autumn|winter|summer|herbst|früh?ling|sommer|d-\w{1,8}|\d{4})$/i;
   function extractCourseName(lectureTitle) {
     if (!lectureTitle) return null;
-    // Try breadcrumb nav on page first — skip URL path segments
-    const breadcrumbs = document.querySelectorAll('nav a, .breadcrumb a, [aria-label="breadcrumb"] a, [class*="breadcrumb"] a');
-    for (const el of breadcrumbs) {
-      const t = el.textContent?.trim();
-      if (t && t.length > 4 && !_BAD_BREADCRUMB.test(t)) return t;
+
+    // ── Strategy 1: Series page link ──────────────────────────────────────────
+    // The current video URL ends with a UUID; the parent path is the series/course page.
+    // Find an <a> whose href exactly matches that parent path — its text is the course name.
+    try {
+      const pathname  = location.pathname.replace(/\/$/, '');
+      const uuidRe    = /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const seriesPath = uuidRe.test(pathname) ? pathname.replace(uuidRe, '') : null;
+      if (seriesPath) {
+        for (const a of document.querySelectorAll('a[href]')) {
+          const aPath = new URL(a.href, location.href).pathname.replace(/\/$/, '');
+          if (aPath === seriesPath) {
+            const t = a.textContent?.trim();
+            if (t && t.length > 4 && !_BAD_BREADCRUMB.test(t)) return t;
+          }
+        }
+      }
+    } catch (_) {}
+
+    // ── Strategy 2: Tobira breadcrumb nav ─────────────────────────────────────
+    // ETH's Tobira SPA uses aria-label="breadcrumbs" (plural). We intentionally
+    // DO NOT use 'nav a' here — that would also match the course-list sidebar nav
+    // whose first link is alphabetically first ("Building Control and Automation"),
+    // not the current course.
+    const breadcrumbSelectors = [
+      'nav[aria-label="breadcrumbs"] a',
+      'nav[aria-label="breadcrumb"] a',
+      '[aria-label="breadcrumbs"] a',
+      '[aria-label="breadcrumb"] a',
+      '[class*="breadcrumb"] a',
+    ];
+    for (const sel of breadcrumbSelectors) {
+      for (const el of document.querySelectorAll(sel)) {
+        const t = el.textContent?.trim();
+        if (t && t.length > 4 && !_BAD_BREADCRUMB.test(t)) return t;
+      }
     }
-    // Fall back to stripping "Lecture N" / "— Lecture" suffix from H1
+
+    // ── Strategy 3: H1 title with "Lecture N" suffix stripped ─────────────────
     return lectureTitle
       .replace(/[\s—–-]+lecture\s*\d+.*/i, '')
       .replace(/[\s—–-]+\d{4}.*/i, '')
