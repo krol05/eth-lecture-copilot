@@ -4205,28 +4205,55 @@ ${guideBlocksStr}${scriptContext}`;
     });
   }
 
+  // Returns <select> HTML for a language picker pre-selected to the current guideLanguage.
+  function _inlineLangSelectHtml(id) {
+    const langs = [
+      ['__guide__','Same as guide'],['English','English'],['German','Deutsch'],
+      ['French','Français'],['Italian','Italiano'],['Spanish','Español'],
+      ['Portuguese','Português'],['Turkish','Türkçe'],['Arabic','العربية'],
+      ['Chinese','中文'],['Japanese','日本語'],['Korean','한국어'],['Russian','Русский']
+    ];
+    const known = langs.slice(1).map(([v]) => v);
+    const sel = (guideLanguage && known.includes(guideLanguage)) ? guideLanguage : '__guide__';
+    return `<select id="${id}" class="gen-setting-select">${
+      langs.map(([v,l]) => `<option value="${v}"${v===sel?' selected':''}>${l}</option>`).join('')
+    }</select>`;
+  }
+
   /** Build the Flashcards inline panel body */
   function _buildInlineFlashcards(body) {
     if (flashcardData.length) {
       // Already have cards — show them directly
       _renderInlineFlashcardResults(body);
     } else {
-      // Settings form (minimal — count + style)
-      const countVal = getActivePillValue('flashcards-count-pills') || 'auto';
-      const styleVal = getActivePillValue('flashcards-style-pills') || 'mixed';
+      const countVal   = getActivePillValue('flashcards-count-pills') || 'auto';
+      const styleVal   = getActivePillValue('flashcards-style-pills') || 'mixed';
+      const formulasOn = document.getElementById('flashcards-formulas-cb')?.checked ?? true;
       body.innerHTML = `
-        <p class="inline-tool-hint">Generates flashcards from this lecture guide.</p>
         <div class="inline-tool-row">
           <span class="inline-tool-label">Count</span>
-          <div class="pill-group" id="it-fc-count-pills">
-            ${['auto','10','20','30'].map(v => `<button class="pill${v===countVal?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <div class="pill-group" id="it-fc-count-pills">
+              ${['5','10','20','auto'].map(v => `<button class="pill${v===countVal?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+            </div>
+            <input type="number" id="it-fc-custom-count" class="custom-count-input" min="1" max="200" placeholder="or #">
           </div>
         </div>
         <div class="inline-tool-row">
           <span class="inline-tool-label">Style</span>
           <div class="pill-group" id="it-fc-style-pills">
-            ${['mixed','definition','formula','concept'].map(v => `<button class="pill${v===styleVal?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+            ${['recall','definition','mixed'].map(v => `<button class="pill${v===styleVal?' pill-active':''}" data-value="${v}" type="button">${v.charAt(0).toUpperCase()+v.slice(1)}</button>`).join('')}
           </div>
+        </div>
+        <div class="inline-tool-row">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:pointer">
+            <input type="checkbox" id="it-fc-formulas-cb"${formulasOn?' checked':''}>
+            <span>Include formula cards</span>
+          </label>
+        </div>
+        <div class="inline-tool-row">
+          <span class="inline-tool-label">Language</span>
+          ${_inlineLangSelectHtml('it-fc-lang-select')}
         </div>
         <button id="it-fc-generate-btn" class="primary-btn" type="button">
           <span class="btn-text">Generate Flashcards</span>
@@ -4242,10 +4269,13 @@ ${guideBlocksStr}${scriptContext}`;
         setFeatureBtnLoading(btn, true);
         errEl.style.display = 'none';
         try {
-          const count  = getActivePillValue('it-fc-count-pills') || 'auto';
+          const customRaw = parseInt(body.querySelector('#it-fc-custom-count')?.value || '', 10);
+          const count  = (!isNaN(customRaw) && customRaw > 0) ? String(customRaw) : (getActivePillValue('it-fc-count-pills') || 'auto');
           const style  = getActivePillValue('it-fc-style-pills') || 'mixed';
-          const language = getToolLanguage('flashcards-lang-select');
-          const systemPrompt = buildFlashcardsPrompt(guide, { count, style, includeFormulas: true, language });
+          const formulas = !!body.querySelector('#it-fc-formulas-cb')?.checked;
+          const langVal = body.querySelector('#it-fc-lang-select')?.value || '__guide__';
+          const language = langVal === '__guide__' ? guideLanguage : langVal;
+          const systemPrompt = buildFlashcardsPrompt(guide, { count, style, includeFormulas: formulas, language });
           const payload = { ...buildApiPayloadBase(), type: 'FLASHCARDS_REQUEST', guideJson: guide, systemPrompt };
           const resp = await apiRequest(payload);
           if (!resp.success) throw new Error(resp.error);
@@ -4320,53 +4350,59 @@ ${guideBlocksStr}${scriptContext}`;
   /** Build the Quiz inline panel body */
   function _buildInlineQuiz(body) {
     if (quizState) {
-      // Quiz in progress — render the active state
       body.innerHTML = `<p style="color:var(--text-muted);font-size:12px">Quiz is in progress in the Tools tab.</p>
         <button class="primary-btn" type="button" id="it-quiz-goto">Open Quiz →</button>`;
       body.querySelector('#it-quiz-goto')?.addEventListener('click', () => { openToolSection('tool-quiz'); closeInlineToolPanel(); });
       return;
     }
-    const scopeVal = getActivePillValue('quiz-type-pills') || 'mixed';
+    const typeVal  = getActivePillValue('quiz-type-pills') || 'mixed';
     const countVal = getActivePillValue('quiz-count-pills') || '10';
     body.innerHTML = `
-      <p class="inline-tool-hint">Quick quiz from this guide. Full settings in the <button class="link-btn" id="it-quiz-fullsettings">Tools tab</button>.</p>
       <div class="inline-tool-row">
-        <span class="inline-tool-label">Type</span>
-        <div class="pill-group" id="it-quiz-type-pills">
-          ${['mixed','mc','open'].map(v => `<button class="pill${v===scopeVal?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+        <span class="inline-tool-label">Questions</span>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <div class="pill-group" id="it-quiz-count-pills">
+            ${['5','10','20'].map(v => `<button class="pill${v===countVal?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+          </div>
+          <input type="number" id="it-quiz-custom-count" class="custom-count-input" min="1" max="50" placeholder="or #">
         </div>
       </div>
       <div class="inline-tool-row">
-        <span class="inline-tool-label">Questions</span>
-        <div class="pill-group" id="it-quiz-count-pills">
-          ${['5','10','15'].map(v => `<button class="pill${v===countVal?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+        <span class="inline-tool-label">Type</span>
+        <div class="pill-group" id="it-quiz-type-pills">
+          <button class="pill${typeVal==='mc'?' pill-active':''}" data-value="mc" type="button">Multiple Choice</button>
+          <button class="pill${typeVal==='sa'?' pill-active':''}" data-value="sa" type="button">Short Answer</button>
+          <button class="pill${typeVal==='mixed'?' pill-active':''}" data-value="mixed" type="button">Mixed</button>
         </div>
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Language</span>
+        ${_inlineLangSelectHtml('it-quiz-lang-select')}
       </div>
       <button id="it-quiz-start-btn" class="primary-btn" type="button">
         <span class="btn-text">Start Quiz</span><span class="btn-spinner" style="display:none"></span>
       </button>
       <p class="error-msg" id="it-quiz-error" style="display:none"></p>
     `;
-    initPillGroup('it-quiz-type-pills');
     initPillGroup('it-quiz-count-pills');
-    body.querySelector('#it-quiz-fullsettings')?.addEventListener('click', () => { openToolSection('tool-quiz'); closeInlineToolPanel(); });
+    initPillGroup('it-quiz-type-pills');
     body.querySelector('#it-quiz-start-btn').addEventListener('click', async () => {
       const btn   = body.querySelector('#it-quiz-start-btn');
       const errEl = body.querySelector('#it-quiz-error');
       setFeatureBtnLoading(btn, true);
       errEl.style.display = 'none';
       try {
+        const customRaw = parseInt(body.querySelector('#it-quiz-custom-count')?.value || '', 10);
+        const count = (!isNaN(customRaw) && customRaw > 0) ? customRaw : parseInt(getActivePillValue('it-quiz-count-pills') || '10', 10);
         const type  = getActivePillValue('it-quiz-type-pills') || 'mixed';
-        const count = parseInt(getActivePillValue('it-quiz-count-pills') || '10', 10);
-        const scope = 'whole';
-        const language = getToolLanguage('quiz-lang-select');
+        const langVal = body.querySelector('#it-quiz-lang-select')?.value || '__guide__';
+        const language = langVal === '__guide__' ? guideLanguage : langVal;
         const systemPrompt = buildQuizPrompt(guide, { count, type, language });
         const payload = { ...buildApiPayloadBase(), type: 'QUIZ_REQUEST', guideJson: guide, systemPrompt };
         const resp  = await apiRequest(payload);
         if (!resp.success) throw new Error(resp.error);
         const questions = resp.data?.questions || [];
         if (!questions.length) throw new Error('No questions returned.');
-        // Open full quiz in Tools tab for the interactive quiz experience
         quizData = questions;
         quizState = { questions, currentIndex: 0, scores: questions.map(() => null), done: false };
         openToolSection('tool-quiz');
@@ -4384,25 +4420,61 @@ ${guideBlocksStr}${scriptContext}`;
 
   /** Build the Exam Questions inline panel body */
   function _buildInlineExam(body) {
+    const scopeVal  = getActivePillValue('exam-scope-pills') || 'whole';
+    const diffVal   = getActivePillValue('exam-difficulty-pills') || 'mixed';
+    const fmtVal    = getActivePillValue('exam-format-pills') || 'open';
+    const ansVal    = getActivePillValue('exam-answer-pills') || 'medium';
+    const countVal  = getActivePillValue('exam-count-pills') || '5';
     body.innerHTML = `
-      <p class="inline-tool-hint">Generate exam-style questions from this guide. Full settings in the <button class="link-btn" id="it-exam-fullsettings">Tools tab</button>.</p>
       <div class="inline-tool-row">
         <span class="inline-tool-label">Scope</span>
         <div class="pill-group" id="it-exam-scope-pills">
-          ${['whole','current'].map(v => `<button class="pill${v==='whole'?' pill-active':''}" data-value="${v}" type="button">${v==='whole'?'Whole guide':'Current block'}</button>`).join('')}
+          <button class="pill${scopeVal==='whole'?' pill-active':''}" data-value="whole" type="button">Whole guide</button>
+          <button class="pill${scopeVal==='current'?' pill-active':''}" data-value="current" type="button">Current block</button>
+          <button class="pill${scopeVal==='select'?' pill-active':''}" data-value="select" type="button">Select blocks…</button>
+        </div>
+      </div>
+      <div id="it-exam-block-select-area" style="display:none;flex-direction:column;gap:4px;margin-left:62px"></div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Difficulty</span>
+        <div class="pill-group" id="it-exam-difficulty-pills">
+          <button class="pill${diffVal==='easy'?' pill-active':''}" data-value="easy" type="button">Easy</button>
+          <button class="pill${diffVal==='mixed'?' pill-active':''}" data-value="mixed" type="button">Mixed</button>
+          <button class="pill${diffVal==='hard'?' pill-active':''}" data-value="hard" type="button">Hard</button>
         </div>
       </div>
       <div class="inline-tool-row">
         <span class="inline-tool-label">Format</span>
         <div class="pill-group" id="it-exam-format-pills">
-          ${['open','mc','mixed'].map(v => `<button class="pill${v==='open'?' pill-active':''}" data-value="${v}" type="button">${v.charAt(0).toUpperCase()+v.slice(1)}</button>`).join('')}
+          <button class="pill${fmtVal==='open'?' pill-active':''}" data-value="open" type="button">Open</button>
+          <button class="pill${fmtVal==='mc'?' pill-active':''}" data-value="mc" type="button">MC</button>
+          <button class="pill${fmtVal==='proof'?' pill-active':''}" data-value="proof" type="button">Proof</button>
+          <button class="pill${fmtVal==='mixed'?' pill-active':''}" data-value="mixed" type="button">Mixed</button>
         </div>
       </div>
       <div class="inline-tool-row">
-        <span class="inline-tool-label">Count</span>
-        <div class="pill-group" id="it-exam-count-pills">
-          ${['3','5','10'].map(v => `<button class="pill${v==='5'?' pill-active':''}" data-value="${v}" type="button">${v}</button>`).join('')}
+        <span class="inline-tool-label">Answer</span>
+        <div class="pill-group" id="it-exam-answer-pills">
+          <button class="pill${ansVal==='short'?' pill-active':''}" data-value="short" type="button">Short</button>
+          <button class="pill${ansVal==='medium'?' pill-active':''}" data-value="medium" type="button">Medium</button>
+          <button class="pill${ansVal==='long'?' pill-active':''}" data-value="long" type="button">Long</button>
         </div>
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Questions</span>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <div class="pill-group" id="it-exam-count-pills">
+            <button class="pill${countVal==='3'?' pill-active':''}" data-value="3" type="button">3</button>
+            <button class="pill${countVal==='5'?' pill-active':''}" data-value="5" type="button">5</button>
+            <button class="pill${countVal==='10'?' pill-active':''}" data-value="10" type="button">10</button>
+            <button class="pill${countVal==='per-block'?' pill-active':''}" data-value="per-block" type="button">Per block</button>
+          </div>
+          <input type="number" id="it-exam-custom-count" class="custom-count-input" min="1" max="30" placeholder="or #">
+        </div>
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Language</span>
+        ${_inlineLangSelectHtml('it-exam-lang-select')}
       </div>
       <button id="it-exam-gen-btn" class="primary-btn" type="button">
         <span class="btn-text">Generate Questions</span><span class="btn-spinner" style="display:none"></span>
@@ -4411,9 +4483,28 @@ ${guideBlocksStr}${scriptContext}`;
       <div id="it-exam-results"></div>
     `;
     initPillGroup('it-exam-scope-pills');
+    initPillGroup('it-exam-difficulty-pills');
     initPillGroup('it-exam-format-pills');
+    initPillGroup('it-exam-answer-pills');
     initPillGroup('it-exam-count-pills');
-    body.querySelector('#it-exam-fullsettings')?.addEventListener('click', () => { openToolSection('tool-exam'); closeInlineToolPanel(); });
+
+    // Populate + toggle block checkboxes
+    const blockArea = body.querySelector('#it-exam-block-select-area');
+    if (guide?.guide?.length) {
+      guide.guide.forEach((block, i) => {
+        const row = document.createElement('label');
+        row.className = 'exam-block-checkbox-row';
+        row.innerHTML = `<input type="checkbox" value="${i}" checked><span class="exam-block-cb-label">${escHtml(`${i+1}. ${block.title}`)}</span>`;
+        blockArea.appendChild(row);
+      });
+    }
+    const toggleBlockArea = () => {
+      const isSelect = getActivePillValue('it-exam-scope-pills') === 'select';
+      blockArea.style.display = isSelect ? 'flex' : 'none';
+    };
+    body.querySelector('#it-exam-scope-pills').addEventListener('click', toggleBlockArea);
+    if (scopeVal === 'select') blockArea.style.display = 'flex';
+
     body.querySelector('#it-exam-gen-btn').addEventListener('click', async () => {
       const btn    = body.querySelector('#it-exam-gen-btn');
       const errEl  = body.querySelector('#it-exam-error');
@@ -4423,13 +4514,30 @@ ${guideBlocksStr}${scriptContext}`;
       resDiv.innerHTML = '';
       try {
         const scope      = getActivePillValue('it-exam-scope-pills') || 'whole';
+        const difficulty = getActivePillValue('it-exam-difficulty-pills') || 'mixed';
         const format     = getActivePillValue('it-exam-format-pills') || 'open';
-        const count      = getActivePillValue('it-exam-count-pills') || '5';
-        const blocks     = scope === 'current'
-          ? (guide.guide[Math.max(0, currentBlockIndex)] ? [guide.guide[Math.max(0, currentBlockIndex)].title] : guide.guide.map(b => b.title))
-          : guide.guide.map(b => b.title);
-        const language = getToolLanguage('exam-lang-select');
-        const systemPrompt = buildExamQuestionsPrompt(guide, blocks, { count: parseInt(count, 10) || 5, format, difficulty: 'mixed', answerLength: 'medium', language });
+        const answerLen  = getActivePillValue('it-exam-answer-pills') || 'medium';
+        const countPill  = getActivePillValue('it-exam-count-pills') || '5';
+        const perBlock   = countPill === 'per-block';
+        const customRaw  = parseInt(body.querySelector('#it-exam-custom-count')?.value || '', 10);
+        const count = perBlock ? 2 : ((!isNaN(customRaw) && customRaw > 0) ? customRaw : parseInt(countPill, 10) || 5);
+        const langVal = body.querySelector('#it-exam-lang-select')?.value || '__guide__';
+        const language = langVal === '__guide__' ? guideLanguage : langVal;
+
+        let blocks;
+        if (scope === 'current') {
+          const b = guide.guide[Math.max(0, currentBlockIndex)];
+          blocks = b ? [b.title] : guide.guide.map(b => b.title);
+        } else if (scope === 'select') {
+          const checks = blockArea.querySelectorAll('input[type=checkbox]:checked');
+          const indices = [...checks].map(c => parseInt(c.value, 10));
+          blocks = indices.map(i => guide.guide[i]?.title).filter(Boolean);
+          if (!blocks.length) blocks = guide.guide.map(b => b.title);
+        } else {
+          blocks = guide.guide.map(b => b.title);
+        }
+
+        const systemPrompt = buildExamQuestionsPrompt(guide, blocks, { count, format, difficulty, answerLength: answerLen, questionsPerBlock: perBlock, language });
         const payload = { ...buildApiPayloadBase(), type: 'EXAM_QUESTIONS_REQUEST', guideJson: guide, systemPrompt };
         const resp = await apiRequest(payload);
         if (!resp.success) throw new Error(resp.error);
