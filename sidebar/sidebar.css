@@ -2314,20 +2314,31 @@ body {
   gap: 10px;
 }
 
-.attach-label {
-  display: flex;
+.attach-frame-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
   font-size: 11px;
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
-  transition: color var(--transition);
+  transition: color var(--transition), border-color var(--transition), background var(--transition);
 }
 
-.attach-label:hover { color: var(--text-primary); }
+.attach-frame-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--accent-subtle, rgba(99,102,241,0.06));
+}
 
-.attach-label input[type="checkbox"] { display: none; }
+.attach-frame-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 .attach-icon {
   width: 13px;
@@ -2337,7 +2348,7 @@ body {
   transition: opacity var(--transition);
 }
 
-.attach-label:hover .attach-icon { opacity: 1; }
+.attach-frame-btn:hover .attach-icon { opacity: 1; }
 
 .attach-text {
   line-height: 1;

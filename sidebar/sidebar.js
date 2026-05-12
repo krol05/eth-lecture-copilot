@@ -25,8 +25,7 @@
   let qaReplyReadyTargetEl = null;
   let isGenerating = false;
   let isChatting = false;
-  let pendingFrameBase64 = null;   // frame captured when checkbox is ticked, used at send time
-  let pastedImages = [];           // base64 data-URLs from paste / drag-drop / file-picker
+  let attachedImages = [];         // {dataUrl, label} objects — captured frames + pasted/dropped images
   let activeGuideRequestId = null;
   let activeQaRequestId = null;   // requestId of the active streaming QA request
   let isQaStreaming = false;       // true while QA stream is in flight
@@ -62,7 +61,7 @@
   const qaMessages_el = document.getElementById('qa-messages');
   const qaInput      = document.getElementById('qa-input');
   const qaSend       = document.getElementById('qa-send');
-  const attachCb     = document.getElementById('attach-frame-cb');
+  const qaFrameBtn   = document.getElementById('qa-frame-btn');
   const qaImageStrip = document.getElementById('qa-image-strip');
   const qaAttachBtn  = document.getElementById('qa-attach-btn');
   const qaFileInput  = document.getElementById('qa-file-input');
@@ -272,22 +271,15 @@
       }
     });
 
-    attachCb.addEventListener('change', async () => {
-      if (attachCb.checked) {
-        attachCb.disabled = true;
-        const b64 = await captureFrame();
-        attachCb.disabled = false;
-        if (b64) {
-          pendingFrameBase64 = b64;
-          renderImageStrip();
-        } else {
-          attachCb.checked = false;
-          pendingFrameBase64 = null;
-          setStatus('warning', 'Frame capture failed');
-        }
-      } else {
-        pendingFrameBase64 = null;
+    qaFrameBtn?.addEventListener('click', async () => {
+      qaFrameBtn.disabled = true;
+      const b64 = await captureFrame();
+      qaFrameBtn.disabled = false;
+      if (b64) {
+        attachedImages.push({ dataUrl: `data:image/jpeg;base64,${b64}`, label: 'Frame' });
         renderImageStrip();
+      } else {
+        setStatus('warning', 'Frame capture failed');
       }
     });
 
@@ -704,6 +696,28 @@
 
       case 'TRANSCRIPT_READY':
         handleTranscriptReady(msg);
+        break;
+
+      case 'TRANSCRIPT_DATE_UPDATE':
+        if (transcript && msg.lectureDate && !transcript.lectureDate) {
+          transcript.lectureDate = msg.lectureDate;
+          storageSet({ currentTranscript: transcript });
+          // Patch the stored history entry for this lecture if it has no date yet
+          if (currentLectureUrl) {
+            const norm = normalizeLectureUrl(currentLectureUrl);
+            chrome.storage?.local?.get(['guideHistory'], saved => {
+              const history = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
+              let patched = false;
+              for (const e of history) {
+                if (normalizeLectureUrl(e.lectureUrl) === norm && !e.lectureDate) {
+                  e.lectureDate = msg.lectureDate;
+                  patched = true;
+                }
+              }
+              if (patched) storageSet({ guideHistory: history });
+            });
+          }
+        }
         break;
 
       case 'TIMESTAMP_UPDATE':
@@ -1145,17 +1159,13 @@
 
   function renderImageStrip() {
     if (!qaImageStrip) return;
-    const allImages = [
-      ...(pendingFrameBase64 ? [{ dataUrl: 'data:image/jpeg;base64,' + pendingFrameBase64, label: 'Frame', isFrame: true }] : []),
-      ...pastedImages.map((d, i) => ({ dataUrl: d, label: 'Pasted', isFrame: false, idx: i }))
-    ];
-    if (!allImages.length) {
+    if (!attachedImages.length) {
       qaImageStrip.style.display = 'none';
       qaImageStrip.innerHTML = '';
       return;
     }
     qaImageStrip.style.display = 'flex';
-    qaImageStrip.innerHTML = allImages.map((img, i) => `
+    qaImageStrip.innerHTML = attachedImages.map((img, i) => `
       <div class="qa-image-thumb" data-strip-index="${i}" title="Click to preview">
         <img src="${img.dataUrl}" alt="${img.label}">
         <button class="qa-image-remove" data-strip-index="${i}" type="button" title="Remove" aria-label="Remove image">×</button>
@@ -1168,13 +1178,7 @@
       btn.addEventListener('click', e => {
         e.stopPropagation();
         const idx = parseInt(btn.dataset.stripIndex, 10);
-        const img = allImages[idx];
-        if (img.isFrame) {
-          attachCb.checked = false;
-          pendingFrameBase64 = null;
-        } else {
-          pastedImages.splice(img.idx, 1);
-        }
+        attachedImages.splice(idx, 1);
         renderImageStrip();
       });
     });
@@ -1184,7 +1188,7 @@
       thumb.addEventListener('click', e => {
         if (e.target.classList.contains('qa-image-remove')) return;
         const idx = parseInt(thumb.dataset.stripIndex, 10);
-        openFrameLightbox(allImages[idx].dataUrl);
+        openFrameLightbox(attachedImages[idx].dataUrl);
       });
     });
   }
@@ -1206,7 +1210,7 @@
         const canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        pastedImages.push(canvas.toDataURL('image/jpeg', 0.82));
+        attachedImages.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.82), label: 'Image' });
         renderImageStrip();
       };
       img.src = original;
@@ -2343,15 +2347,9 @@ Now process the following transcript:`;
     isChatting = true;
     qaSend.disabled = true;
 
-    // Collect all images: captured frame first, then pasted images
-    const allImages = [
-      ...(attachCb.checked && pendingFrameBase64 ? [pendingFrameBase64] : []),
-      ...pastedImages
-    ];
-    // Clear image state
-    pendingFrameBase64 = null;
-    attachCb.checked = false;
-    pastedImages = [];
+    // Collect all images (data URLs) and clear state
+    const allImages = attachedImages.map(img => img.dataUrl);
+    attachedImages = [];
     renderImageStrip();
 
     setStatus('loading', 'Waiting for reply…');

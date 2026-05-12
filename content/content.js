@@ -426,7 +426,7 @@
           fallbackEventId &&
           fallbackEventId === blockedEventIdAfterNav;
         if (!isBlockedOldEvent) {
-          return fetchAndPublishVtt(fallbackVtt, fallbackEventId, gen);
+          return fetchAndPublishVtt(fallbackVtt, fallbackEventId, gen, extractLectureDateFromPage() || null);
         }
       }
 
@@ -534,6 +534,22 @@
       });
       lastSuccessfulEventId = eventId || extractEventIdFromVttUrl(vttUrl) || null;
       blockedEventIdAfterNav = null;
+
+      // If we couldn't get the lecture date yet (SPA may still be rendering),
+      // retry DOM extraction a few times and send an update once found.
+      if (!lectureDate) {
+        let retries = 0;
+        const tryLaterDate = () => {
+          if (gen !== extractionGen) return;
+          const d = extractLectureDateFromPage();
+          if (d) {
+            postToSidebar({ type: 'TRANSCRIPT_DATE_UPDATE', lectureDate: d });
+            return;
+          }
+          if (++retries < 8) setTimeout(tryLaterDate, 1000);
+        };
+        setTimeout(tryLaterDate, 800);
+      }
     });
   }
 
