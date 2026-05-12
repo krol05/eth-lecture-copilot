@@ -2317,38 +2317,59 @@ body {
 .attach-frame-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
+  gap: 6px;
+  padding: 0;
+  border: none;
   background: transparent;
   font-size: 11px;
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
-  transition: color var(--transition), border-color var(--transition), background var(--transition);
+  transition: color var(--transition);
 }
 
-.attach-frame-btn:hover {
-  color: var(--text-primary);
-  border-color: var(--accent);
-  background: var(--accent-subtle, rgba(99,102,241,0.06));
-}
+.attach-frame-btn:hover { color: var(--text-primary); }
 
 .attach-frame-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.attach-icon {
-  width: 13px;
-  height: 13px;
+/* Pill: image icon + plus badge */
+.attach-frame-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  border-radius: 100px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-2);
+  color: var(--accent);
   flex-shrink: 0;
-  opacity: 0.7;
-  transition: opacity var(--transition);
+  transition: background var(--transition), border-color var(--transition);
 }
 
-.attach-frame-btn:hover .attach-icon { opacity: 1; }
+.attach-frame-btn:hover .attach-frame-pill {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.attach-frame-btn:disabled .attach-frame-pill {
+  color: var(--text-muted);
+}
+
+.attach-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.attach-plus-icon {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  stroke-width: 2.5;
+}
 
 .attach-text {
   line-height: 1;
