@@ -789,6 +789,7 @@ body {
 .guide-toolbar-actions {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 1px;
   flex-wrap: wrap;
   /* Separate the action strip from progress with a subtle divider */
@@ -1087,6 +1088,7 @@ body {
 
 .guide-inline-tool-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 12px 14px 16px;
   display: flex;
