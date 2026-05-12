@@ -554,7 +554,25 @@
             <span class="toggle-thumb"></span>
             <span class="toggle-label">Include formula cards</span>
           </label>
-          <p class="feature-modal-hint">Cards are editable before export. You can remove individual cards after generation.</p>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label" for="flashcards-lang-select">Language</label>
+            <select id="flashcards-lang-select" class="gen-setting-select">
+              <option value="__guide__">Same as guide</option>
+              <option value="English">English</option>
+              <option value="German">Deutsch</option>
+              <option value="French">Français</option>
+              <option value="Italian">Italiano</option>
+              <option value="Spanish">Español</option>
+              <option value="Portuguese">Português</option>
+              <option value="Turkish">Türkçe</option>
+              <option value="Arabic">العربية</option>
+              <option value="Chinese">中文</option>
+              <option value="Japanese">日本語</option>
+              <option value="Korean">한국어</option>
+              <option value="Russian">Русский</option>
+            </select>
+          </div>
+          <p class="feature-modal-hint">You can remove individual cards after generation.</p>
           <button id="flashcards-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
             <span class="btn-text">Generate Flashcards</span>
             <span class="btn-spinner" style="display:none"></span>
@@ -616,6 +634,24 @@
               <button class="pill" data-value="sa" type="button">Short Answer</button>
               <button class="pill pill-active" data-value="mixed" type="button">Mixed</button>
             </div>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label" for="quiz-lang-select">Language</label>
+            <select id="quiz-lang-select" class="gen-setting-select">
+              <option value="__guide__">Same as guide</option>
+              <option value="English">English</option>
+              <option value="German">Deutsch</option>
+              <option value="French">Français</option>
+              <option value="Italian">Italiano</option>
+              <option value="Spanish">Español</option>
+              <option value="Portuguese">Português</option>
+              <option value="Turkish">Türkçe</option>
+              <option value="Arabic">العربية</option>
+              <option value="Chinese">中文</option>
+              <option value="Japanese">日本語</option>
+              <option value="Korean">한국어</option>
+              <option value="Russian">Русский</option>
+            </select>
           </div>
           <button id="quiz-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
             <span class="btn-text">Start Quiz</span>
@@ -744,6 +780,24 @@
               <input type="number" id="exam-custom-count" class="custom-count-input" min="1" max="30" placeholder="or exact #">
             </div>
           </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label" for="exam-lang-select">Language</label>
+            <select id="exam-lang-select" class="gen-setting-select">
+              <option value="__guide__">Same as guide</option>
+              <option value="English">English</option>
+              <option value="German">Deutsch</option>
+              <option value="French">Français</option>
+              <option value="Italian">Italiano</option>
+              <option value="Spanish">Español</option>
+              <option value="Portuguese">Português</option>
+              <option value="Turkish">Türkçe</option>
+              <option value="Arabic">العربية</option>
+              <option value="Chinese">中文</option>
+              <option value="Japanese">日本語</option>
+              <option value="Korean">한국어</option>
+              <option value="Russian">Русский</option>
+            </select>
+          </div>
           <button id="exam-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
             <span class="btn-text">Generate Questions</span>
             <span class="btn-spinner" style="display:none"></span>
@@ -804,6 +858,24 @@
               </div>
               <input type="number" id="cross-exam-custom-count" class="custom-count-input" min="1" max="20" placeholder="or exact #">
             </div>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label" for="cross-exam-lang-select">Language</label>
+            <select id="cross-exam-lang-select" class="gen-setting-select">
+              <option value="__guide__">Same as guide</option>
+              <option value="English">English</option>
+              <option value="German">Deutsch</option>
+              <option value="French">Français</option>
+              <option value="Italian">Italiano</option>
+              <option value="Spanish">Español</option>
+              <option value="Portuguese">Português</option>
+              <option value="Turkish">Türkçe</option>
+              <option value="Arabic">العربية</option>
+              <option value="Chinese">中文</option>
+              <option value="Japanese">日本語</option>
+              <option value="Korean">한국어</option>
+              <option value="Russian">Русский</option>
+            </select>
           </div>
           <button id="cross-exam-generate-btn" class="primary-btn" style="margin-top:12px" type="button" disabled>
             <span class="btn-text">Predict Exam Questions</span>

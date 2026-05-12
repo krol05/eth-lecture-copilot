@@ -18,6 +18,7 @@
   // ─── State ────────────────────────────────────────────────────────────────
   let transcript = null;      // { cues, text, lectureTitle, lectureUrl, videoDuration }
   let guide = null;           // parsed guide JSON
+  let guideLanguage = '';     // language used when the active guide was generated
   let settings = null;        // { provider, model, apiKey }
   let currentBlockIndex = -1;
   let qaMessages = [];        // conversation history
@@ -489,6 +490,8 @@
   function applyRestoredGuide(guideData, qaFromStorage, persistSession) {
     guide = guideData;
     sanitizeGuide(guide);
+    guideLanguage = guideData._language || '';
+    _syncToolLanguageSelects();
     qaMessages = Array.isArray(qaFromStorage) ? qaFromStorage : [];
     if (persistSession && currentLectureUrl) {
       storageSet({
@@ -566,6 +569,7 @@
 
   function resetGuideUI() {
     guide = null;
+    guideLanguage = '';
     transcript = null;
     currentBlockIndex = -1;
     qaMessages = [];
@@ -1387,9 +1391,12 @@
       clearStreamingBar();
       guide = response.data;
       guide = sanitizeGuide(guide);
+      guideLanguage = guideLang;
+      guide._language = guideLang;
 
       storageSet({ currentGuide: guide, currentLectureUrl: currentLectureUrl });
       saveToHistory();
+      _syncToolLanguageSelects();
 
       setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
       showGuideContent();
@@ -1580,6 +1587,30 @@
     if (!val) return '';
     if (val === 'other') return genLangCustom?.value?.trim() || '';
     return val;
+  }
+
+  // Returns the effective language for a tool's language select.
+  // '__guide__' resolves to guideLanguage (the language the current guide was generated in).
+  function getToolLanguage(selectId) {
+    const sel = document.getElementById(selectId);
+    const val = sel?.value || '__guide__';
+    return val === '__guide__' ? guideLanguage : val;
+  }
+
+  // Sync all tool language selects to the current guide language.
+  // Called after a guide is loaded or restored.
+  function _syncToolLanguageSelects() {
+    const ids = ['flashcards-lang-select', 'quiz-lang-select', 'exam-lang-select', 'cross-exam-lang-select'];
+    for (const id of ids) {
+      const sel = document.getElementById(id);
+      if (!sel) continue;
+      if (guideLanguage) {
+        const match = [...sel.options].find(o => o.value === guideLanguage);
+        sel.value = match ? guideLanguage : '__guide__';
+      } else {
+        sel.value = '__guide__';
+      }
+    }
   }
 
   function buildGuidePrompt(detail, count, lang) {
@@ -4213,7 +4244,8 @@ ${guideBlocksStr}${scriptContext}`;
         try {
           const count  = getActivePillValue('it-fc-count-pills') || 'auto';
           const style  = getActivePillValue('it-fc-style-pills') || 'mixed';
-          const systemPrompt = buildFlashcardsPrompt(guide, { count, style, includeFormulas: true });
+          const language = getToolLanguage('flashcards-lang-select');
+          const systemPrompt = buildFlashcardsPrompt(guide, { count, style, includeFormulas: true, language });
           const payload = { ...buildApiPayloadBase(), type: 'FLASHCARDS_REQUEST', guideJson: guide, systemPrompt };
           const resp = await apiRequest(payload);
           if (!resp.success) throw new Error(resp.error);
@@ -4264,11 +4296,11 @@ ${guideBlocksStr}${scriptContext}`;
       el.innerHTML = `
         <div class="flashcard-side flashcard-front">
           <div class="flashcard-side-label">Front</div>
-          <div class="flashcard-text" contenteditable="true" spellcheck="false">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(card.front)))}</div>
+          <div class="flashcard-text">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(card.front)))}</div>
         </div>
         <div class="flashcard-side flashcard-back">
           <div class="flashcard-side-label">Back</div>
-          <div class="flashcard-text" contenteditable="true" spellcheck="false">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(card.back)))}</div>
+          <div class="flashcard-text">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(card.back)))}</div>
         </div>
       `;
       el.querySelectorAll('.flashcard-text').forEach(t => applyKatex(t));
@@ -4327,7 +4359,8 @@ ${guideBlocksStr}${scriptContext}`;
         const type  = getActivePillValue('it-quiz-type-pills') || 'mixed';
         const count = parseInt(getActivePillValue('it-quiz-count-pills') || '10', 10);
         const scope = 'whole';
-        const systemPrompt = buildQuizPrompt(guide, { count, type, scope });
+        const language = getToolLanguage('quiz-lang-select');
+        const systemPrompt = buildQuizPrompt(guide, { count, type, language });
         const payload = { ...buildApiPayloadBase(), type: 'QUIZ_REQUEST', guideJson: guide, systemPrompt };
         const resp  = await apiRequest(payload);
         if (!resp.success) throw new Error(resp.error);
@@ -4395,8 +4428,9 @@ ${guideBlocksStr}${scriptContext}`;
         const blocks     = scope === 'current'
           ? (guide.guide[Math.max(0, currentBlockIndex)] ? [guide.guide[Math.max(0, currentBlockIndex)].title] : guide.guide.map(b => b.title))
           : guide.guide.map(b => b.title);
-        const systemPrompt = buildExamPrompt(guide, { count, format, difficulty: 'mixed', answerLength: 'medium', selectedBlockTitles: blocks });
-        const payload = { ...buildApiPayloadBase(), type: 'EXAM_REQUEST', guideJson: guide, systemPrompt };
+        const language = getToolLanguage('exam-lang-select');
+        const systemPrompt = buildExamQuestionsPrompt(guide, blocks, { count: parseInt(count, 10) || 5, format, difficulty: 'mixed', answerLength: 'medium', language });
+        const payload = { ...buildApiPayloadBase(), type: 'EXAM_QUESTIONS_REQUEST', guideJson: guide, systemPrompt };
         const resp = await apiRequest(payload);
         if (!resp.success) throw new Error(resp.error);
         const questions = resp.data?.questions || [];
@@ -4447,7 +4481,8 @@ ${guideBlocksStr}${scriptContext}`;
     errEl.style.display = 'none';
 
     try {
-      const systemPrompt = buildFlashcardsPrompt(guide, { count, style, includeFormulas: formulas });
+      const language = getToolLanguage('flashcards-lang-select');
+      const systemPrompt = buildFlashcardsPrompt(guide, { count, style, includeFormulas: formulas, language });
       const payload = {
         ...buildApiPayloadBase(),
         type: 'FLASHCARDS_REQUEST',
@@ -4501,11 +4536,11 @@ ${guideBlocksStr}${scriptContext}`;
     item.innerHTML = `
       <div class="flashcard-side flashcard-front">
         <div class="flashcard-side-label">Front</div>
-        <div class="flashcard-text" contenteditable="true" spellcheck="false">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(card.front)))}</div>
+        <div class="flashcard-text">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(card.front)))}</div>
       </div>
       <div class="flashcard-side flashcard-back">
         <div class="flashcard-side-label">Back</div>
-        <div class="flashcard-text" contenteditable="true" spellcheck="false">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(card.back)))}</div>
+        <div class="flashcard-text">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(card.back)))}</div>
       </div>
       <div class="flashcard-actions">
         <button class="flashcard-delete-btn" type="button" title="Delete this card">Delete card</button>
@@ -4549,25 +4584,6 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   function getEditedFlashcards() {
-    // Paginated view: only the current card is in the DOM.
-    // Flush any contenteditable edits from the visible card back into flashcardData,
-    // then return the full array (all cards, not just the visible one).
-    const list = document.getElementById('flashcards-card-list');
-    if (list && flashcardData.length) {
-      const item = list.querySelector('.flashcard-item');
-      if (item) {
-        const frontEl = item.querySelector('.flashcard-front .flashcard-text');
-        const backEl  = item.querySelector('.flashcard-back  .flashcard-text');
-        if (frontEl) flashcardData[flashcardIndex] = {
-          ...flashcardData[flashcardIndex],
-          front: frontEl.textContent?.trim() || flashcardData[flashcardIndex].front
-        };
-        if (backEl) flashcardData[flashcardIndex] = {
-          ...flashcardData[flashcardIndex],
-          back: backEl.textContent?.trim()  || flashcardData[flashcardIndex].back
-        };
-      }
-    }
     return flashcardData;
   }
 
@@ -4686,7 +4702,8 @@ ${guideBlocksStr}${scriptContext}`;
     errEl.style.display = 'none';
 
     try {
-      const systemPrompt = buildQuizPrompt(guide, { count, type });
+      const language = getToolLanguage('quiz-lang-select');
+      const systemPrompt = buildQuizPrompt(guide, { count, type, language });
       const payload = {
         ...buildApiPayloadBase(),
         type: 'QUIZ_REQUEST',
@@ -4731,7 +4748,7 @@ ${guideBlocksStr}${scriptContext}`;
 
     const qText = document.getElementById('quiz-question-text');
     if (qText) {
-      qText.textContent = normalizeLatexForKatex(unescapeMathDelimiters(q.question));
+      qText.innerHTML = renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(q.question)));
       applyKatex(qText);
     }
 
@@ -4758,7 +4775,7 @@ ${guideBlocksStr}${scriptContext}`;
         btn.dataset.optionIndex = i;
         btn.type = 'button';
         btn.innerHTML = `<span class="quiz-mc-letter">${_LETTERS[i] || i+1}</span><span class="quiz-mc-text"></span>`;
-        btn.querySelector('.quiz-mc-text').textContent = normalizeLatexForKatex(unescapeMathDelimiters(opt));
+        btn.querySelector('.quiz-mc-text').innerHTML = renderMarkdownInline(normalizeLatexForKatex(unescapeMathDelimiters(opt)));
         btn.addEventListener('click', () => {
           mcArea.querySelectorAll('.quiz-mc-option').forEach(b => b.classList.remove('selected'));
           btn.classList.add('selected');
@@ -4814,11 +4831,11 @@ ${guideBlocksStr}${scriptContext}`;
 
     const answer = q.answer || (q.options?.[q.correct] ? q.options[q.correct].replace(/^[A-D]\) /, '') : '');
     if (answerText) {
-      answerText.textContent = normalizeLatexForKatex(unescapeMathDelimiters(answer));
+      answerText.innerHTML = renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(answer)));
       applyKatex(answerText);
     }
     if (explanationText) {
-      explanationText.textContent = normalizeLatexForKatex(unescapeMathDelimiters(q.explanation || ''));
+      explanationText.innerHTML = renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(q.explanation || '')));
       explanationText.style.display = q.explanation ? '' : 'none';
       if (q.explanation) applyKatex(explanationText);
     }
@@ -4893,8 +4910,8 @@ ${guideBlocksStr}${scriptContext}`;
         item.className = 'quiz-missed-item';
         const answer = q.answer || (q.options?.[q.correct] ? q.options[q.correct].replace(/^[A-D]\) /, '') : '');
         item.innerHTML = `
-          <div class="quiz-missed-q">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(q.question)))}</div>
-          <div class="quiz-missed-a">Answer: ${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(answer)))}</div>
+          <div class="quiz-missed-q">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(q.question)))}</div>
+          <div class="quiz-missed-a"><strong>Answer:</strong> ${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(answer)))}</div>
         `;
         applyKatex(item);
         missedList.appendChild(item);
@@ -4996,8 +5013,9 @@ ${guideBlocksStr}${scriptContext}`;
     errEl.style.display = 'none';
 
     try {
+      const language = getToolLanguage('exam-lang-select');
       const systemPrompt = buildExamQuestionsPrompt(guide, selectedBlocks, {
-        difficulty, format, answerLength: answerLen, questionsPerBlock: perBlock, count
+        difficulty, format, answerLength: answerLen, questionsPerBlock: perBlock, count, language
       });
       const payload = {
         ...buildApiPayloadBase(),
@@ -5047,7 +5065,7 @@ ${guideBlocksStr}${scriptContext}`;
         const opts = q.options.map((o, oi) =>
           `<div class="exam-mc-option" data-idx="${oi}">
              <span class="exam-mc-letter">${LETTERS[oi] || (oi + 1)}</span>
-             <span class="exam-mc-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(o)))}</span>
+             <span class="exam-mc-text">${renderMarkdownInline(normalizeLatexForKatex(unescapeMathDelimiters(o)))}</span>
            </div>`
         ).join('');
         mcOptionsHtml = `<div class="exam-mc-options" data-correct="${q.correct ?? -1}">${opts}</div>`;
@@ -5076,12 +5094,12 @@ ${guideBlocksStr}${scriptContext}`;
         </div>
       `;
 
-      // Set question text via textContent first to escape, then apply KaTeX
+      // Render question text as markdown then apply KaTeX
       const qTextEl = item.querySelector('.exam-question-text');
-      qTextEl.textContent = normalizeLatexForKatex(unescapeMathDelimiters(q.question));
+      qTextEl.innerHTML = renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(q.question)));
       applyKatex(qTextEl);
 
-      // Apply KaTeX to each MC option text span
+      // Apply KaTeX to each MC option text span (markdown already rendered in innerHTML)
       item.querySelectorAll('.exam-mc-text').forEach(el => applyKatex(el));
 
       const toggle      = item.querySelector('.exam-answer-toggle');
@@ -5324,7 +5342,8 @@ ${guideBlocksStr}${scriptContext}`;
     errEl.style.display = 'none';
 
     try {
-      const systemPrompt = buildCrossLecturePredictionPrompt(lectures, { difficulty, format, count });
+      const language = getToolLanguage('cross-exam-lang-select');
+      const systemPrompt = buildCrossLecturePredictionPrompt(lectures, { difficulty, format, count, language });
       const payload = {
         ...buildApiPayloadBase(),
         type: 'CROSS_LECTURE_EXAM_REQUEST',
