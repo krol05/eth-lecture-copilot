@@ -2144,6 +2144,7 @@ Now process the following transcript:`;
     latexBlockList.innerHTML = blocks.map((b, i) => `
       <label class="latex-block-item">
         <input type="checkbox" data-latex-block="${i}">
+        <span class="toggle-thumb"></span>
         <span class="latex-block-title">${i + 1}. ${escHtml(b.title || 'Untitled block')}</span>
       </label>
     `).join('');
@@ -4246,9 +4247,10 @@ ${guideBlocksStr}${scriptContext}`;
           </div>
         </div>
         <div class="inline-tool-row">
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:pointer">
+          <label class="auto-follow-toggle" title="Include cards that drill formulas and notation">
             <input type="checkbox" id="it-fc-formulas-cb"${formulasOn?' checked':''}>
-            <span>Include formula cards</span>
+            <span class="toggle-thumb"></span>
+            <span class="toggle-label">Include formula cards</span>
           </label>
         </div>
         <div class="inline-tool-row">
@@ -4494,7 +4496,7 @@ ${guideBlocksStr}${scriptContext}`;
       guide.guide.forEach((block, i) => {
         const row = document.createElement('label');
         row.className = 'exam-block-checkbox-row';
-        row.innerHTML = `<input type="checkbox" value="${i}" checked><span class="exam-block-cb-label">${escHtml(`${i+1}. ${block.title}`)}</span>`;
+        row.innerHTML = `<input type="checkbox" value="${i}" checked><span class="toggle-thumb"></span><span class="exam-block-cb-label">${escHtml(`${i+1}. ${block.title}`)}</span>`;
         blockArea.appendChild(row);
       });
     }
@@ -5081,6 +5083,7 @@ ${guideBlocksStr}${scriptContext}`;
       row.className = 'exam-block-checkbox-row';
       row.innerHTML = `
         <input type="checkbox" value="${i}" checked>
+        <span class="toggle-thumb"></span>
         <span class="exam-block-cb-label">${escHtml(`${i + 1}. ${block.title}`)}</span>
       `;
       container.appendChild(row);
@@ -5336,7 +5339,8 @@ ${guideBlocksStr}${scriptContext}`;
         const selectAllId = `cross-exam-selall-${k}`;
         header.innerHTML = `
           <label class="cross-exam-course-selall" title="Select / deselect all in this course">
-            <input type="checkbox" id="${escHtml(selectAllId)}" class="cross-exam-selall-cb cross-exam-cb">
+            <input type="checkbox" id="${escHtml(selectAllId)}" class="cross-exam-selall-cb">
+            <span class="toggle-thumb"></span>
           </label>
           <span class="cross-exam-course-name">${escHtml(g.courseName)}</span>
           <span class="cross-exam-course-count">${g.entries.length} lecture${g.entries.length !== 1 ? 's' : ''}</span>
@@ -5362,7 +5366,8 @@ ${guideBlocksStr}${scriptContext}`;
           row.className = 'cross-exam-lecture-row';
           row.setAttribute('for', cbId);
           row.innerHTML = `
-            <input type="checkbox" id="${cbId}" class="cross-exam-cb" data-idx="${globalIdx}"${isPreselected ? ' checked' : ''}>
+            <input type="checkbox" id="${cbId}" data-idx="${globalIdx}"${isPreselected ? ' checked' : ''}>
+            <span class="toggle-thumb"></span>
             <div class="cross-exam-lecture-info">
               <div class="cross-exam-lecture-title">${escHtml(entry.lectureTitle)}</div>
               ${dateStr ? `<div class="cross-exam-lecture-meta">${numLabel}${escHtml(dateStr)}</div>` : ''}
