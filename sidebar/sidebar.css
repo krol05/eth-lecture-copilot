@@ -2978,6 +2978,43 @@ body {
   height: 15px;
 }
 
+/* Stop mode: send button becomes a square stop button */
+.send-btn.qa-send-stop {
+  background: var(--danger, #e53e3e);
+}
+.send-btn.qa-send-stop:hover {
+  background: #c53030;
+}
+.send-btn .stop-icon { display: none; }
+.send-btn.qa-send-stop .send-icon { display: none !important; }
+.send-btn.qa-send-stop .stop-icon { display: block !important; }
+
+/* Guide abort link — appears below Generate button while generating */
+.guide-abort-link {
+  display: block;
+  margin-top: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-decoration: underline;
+  font-family: var(--font-sans);
+  transition: color var(--transition);
+}
+.guide-abort-link:hover { color: var(--danger, #e53e3e); }
+.abort-icon-btn { color: var(--danger, #e53e3e); }
+.abort-icon-btn svg rect { fill: currentColor; stroke: none; }
+
+/* Stopped indicator */
+.qa-stream-stopped {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+  opacity: 0.7;
+}
+
 /* ─── History Tab ────────────────────────────────────────────────────────── */
 .history-list {
   overflow-y: auto;

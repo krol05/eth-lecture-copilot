@@ -197,6 +197,7 @@
         <span class="btn-text">Generate Guide</span>
         <span class="btn-spinner" style="display:none"></span>
       </button>
+      <button id="guide-abort-btn" class="guide-abort-link" type="button" hidden>✕ Stop generation</button>
       <a id="manual-paste-link" href="#" style="display:inline-block;margin-top:10px;font-size:12px;color:var(--text-secondary);text-decoration:underline;cursor:pointer;">or paste transcript manually</a>
       <p id="generate-error" class="error-msg" style="display:none"></p>
     </div>
@@ -256,6 +257,9 @@
               <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
               <line x1="12" y1="17" x2="12.01" y2="17" stroke-width="2" stroke-linecap="round"/>
             </svg>
+          </button>
+          <button id="guide-content-abort-btn" class="icon-btn abort-icon-btn" type="button" title="Stop guide generation" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
           </button>
           <button id="regenerate-btn" class="icon-btn regen-btn" title="Generate a new guide">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -494,9 +498,12 @@
           </svg>
         </button>
         <button id="qa-send" class="send-btn" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <svg class="send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <line x1="22" y1="2" x2="11" y2="13"/>
             <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+          <svg class="stop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
           </svg>
         </button>
       </div>

@@ -30,19 +30,20 @@
   /** When set, Q&A “reply ready” toast scroll target (assistant message element). */
   let qaReplyReadyTargetEl = null;
   let isGenerating = false;
-  let isChatting = false;
   let attachedImages = [];         // {dataUrl, label} objects — captured frames + pasted/dropped images
   let activeGuideRequestId = null;
-  let activeQaRequestId = null;   // requestId of the active streaming QA request
-  let isQaStreaming = false;       // true while QA stream is in flight
-  let qaStreamBuffer = '';         // accumulated text for the active QA stream
-  let qaStreamEl = null;           // the streaming assistant message div
-  let qaStreamBubble = null;       // .chat-bubble inside qaStreamEl
-  let qaKatexThrottle = null;      // setTimeout for throttled KaTeX re-render
-  let qaRafPending = false;        // rAF gate for Q&A stream rendering
-  let qaStreamDollarCount = 0;     // tracks how many $$ seen so far (even = complete blocks)
-  let qaStreamStableEnd = 0;       // buffer index up to which chars have been appended to DOM as plain spans
-  let qaStreamKatexEnd  = 0;       // buffer index up to which chars have been rendered in the KaTeX zone
+  let _activeGuideAbortFn = null;  // abort function for the active guide request
+  // Per-stream state — keyed by requestId. Allows simultaneous streams across chats.
+  const qaActiveStreams = new Map();
+  // qaActiveStreams value shape:
+  // { chatIdx, el, bubble, buffer, dollarCount, stableEnd, katexEnd, rafPending, katexThrottle, abortFn }
+
+  function isChatStreaming(chatIdx) {
+    for (const s of qaActiveStreams.values()) {
+      if (s.chatIdx === chatIdx) return true;
+    }
+    return false;
+  }
   let customPromptExtras = { guide: '', qa: '', flashcards: '', quiz: '', exam: '' };
   let flashcardIndex = 0;          // current card index in paginated flashcard view
   let requestIdCounter = 0;
@@ -197,6 +198,7 @@
     getChatCol(idx)?.classList.add('active');
     renderQaChatBar();
     updateQaScrollBtn();
+    onQaInputChange();
   }
 
   function addQaChat() {
@@ -319,6 +321,8 @@
     });
 
     generateBtn.addEventListener('click', onGenerateClick);
+    document.getElementById('guide-abort-btn')?.addEventListener('click', abortGuideGeneration);
+    document.getElementById('guide-content-abort-btn')?.addEventListener('click', abortGuideGeneration);
     exportPdfBtn?.addEventListener('click', () => {
       if (guide?.guide?.length) {
         openGuidePrintWindow(guide, transcript?.lectureTitle || guide?.lecture_title);
@@ -388,7 +392,13 @@
     qaInput.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQaMessage(); }
     });
-    qaSend.addEventListener('click', sendQaMessage);
+    qaSend.addEventListener('click', () => {
+      if (isChatStreaming(activeQaChatIdx)) {
+        abortQaStream(activeQaChatIdx);
+      } else {
+        sendQaMessage();
+      }
+    });
     // Delegate clicks on the messages container (works across all chat columns)
     qaMessages_el?.addEventListener('click', onQaMessagesClick);
     // Note: per-column scroll listeners are attached in initQaChatCols / addQaChat
@@ -645,22 +655,28 @@
     return matches[0];
   }
 
-  function applyRestoredGuide(guideData, qaFromStorage, persistSession) {
+  function applyRestoredGuide(guideData, qaFromStorage, persistSession, qaChatsFromStorage) {
     guide = guideData;
     sanitizeGuide(guide);
     guideLanguage = guideData._language || '';
     _syncToolLanguageSelects();
     const restoredMsgs = Array.isArray(qaFromStorage) ? qaFromStorage : [];
-    // Populate first chat with restored messages; reset extra chats
-    qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs }];
+    // Restore multi-chat state if available, else fall back to single chat
+    if (Array.isArray(qaChatsFromStorage) && qaChatsFromStorage.length > 0) {
+      qaChats = qaChatsFromStorage.map(c => ({ id: c.id || 1, name: c.name || 'Chat 1', messages: Array.isArray(c.messages) ? c.messages : [] }));
+      _nextChatId = Math.max(...qaChats.map(c => c.id), 1) + 1;
+    } else {
+      qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs }];
+      _nextChatId = 2;
+    }
     activeQaChatIdx = 0;
-    _nextChatId = 2;
     qaMessages = qaChats[0].messages;
     if (persistSession && currentLectureUrl) {
       storageSet({
         currentGuide: guide,
         currentLectureUrl: currentLectureUrl,
-        currentQaMessages: qaMessages
+        currentQaMessages: qaMessages,
+        currentQaChats: qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages }))
       });
     }
     setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
@@ -684,14 +700,14 @@
     });
 
     chrome.storage?.local?.get(
-      ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages', 'guideHistory'],
+      ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages', 'currentQaChats', 'guideHistory'],
       saved => {
         const hist = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
         const normSaved = saved.currentLectureUrl ? normalizeLectureUrl(saved.currentLectureUrl) : '';
         const sessionMatches = normSaved === normNew;
 
         if (!sessionMatches) {
-          chrome.storage?.local?.remove(['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages']);
+          chrome.storage?.local?.remove(['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages', 'currentQaChats']);
           resetGuideUI();
           setStatus('loading', 'New lecture detected — waiting for transcript…');
         }
@@ -699,12 +715,12 @@
         let restoredGuide = false;
 
         if (sessionMatches && saved.currentGuide?.guide?.length) {
-          applyRestoredGuide(saved.currentGuide, saved.currentQaMessages, false);
+          applyRestoredGuide(saved.currentGuide, saved.currentQaMessages, false, saved.currentQaChats);
           restoredGuide = true;
         } else {
           const latest = pickLatestHistoryForUrl(hist, lectureUrl);
           if (latest?.guide?.guide?.length) {
-            applyRestoredGuide(latest.guide, latest.qaMessages, true);
+            applyRestoredGuide(latest.guide, latest.qaMessages, true, latest.qaChatsData);
             restoredGuide = true;
           }
         }
@@ -934,7 +950,9 @@
 
   function apiRequest(payload) {
     const id = makeRequestId();
+    let _rejectFn = null;
     const promise = new Promise((resolve, reject) => {
+      _rejectFn = reject;
       const isGuideRequest = payload?.type === 'GENERATE_GUIDE';
       let settled = false;
       let timeoutTimer = null;
@@ -989,6 +1007,15 @@
     });
     // Expose the requestId on the promise so callers that need streaming context can read it
     promise._requestId = id;
+    promise.abort = () => {
+      if (_rejectFn) {
+        delete pendingRequests[id];
+        if (activeGuideRequestId === id) activeGuideRequestId = null;
+        const fn = _rejectFn;
+        _rejectFn = null;
+        fn(new Error('Request aborted.'));
+      }
+    };
     return promise;
   }
 
@@ -1061,8 +1088,8 @@
     const reqId = msg?.requestId;
     if (!reqId) return;
 
-    // Route to QA stream handler first (isChatting is still true during stream)
-    if (isQaStreaming && reqId === activeQaRequestId) {
+    // Route to the correct QA stream (multiple can be active simultaneously)
+    if (qaActiveStreams.has(reqId)) {
       handleQaStreamChunk(msg);
       return;
     }
@@ -1150,12 +1177,12 @@
   // KaTeX runs exactly once when the stream completes (see sendQaMessage).
 
   function handleQaStreamChunk(msg) {
-    qaStreamBuffer += msg.text || '';
-    if (!qaStreamBubble) return;
-    // Gate DOM writes to one per animation frame — prevents layout thrashing
-    if (!qaRafPending) {
-      qaRafPending = true;
-      requestAnimationFrame(flushQaStream);
+    const state = qaActiveStreams.get(msg.requestId);
+    if (!state || !state.bubble) return;
+    state.buffer += msg.text || '';
+    if (!state.rafPending) {
+      state.rafPending = true;
+      requestAnimationFrame(() => flushQaStream(state));
     }
   }
 
@@ -1177,16 +1204,16 @@
    *  On stream completion both layers are replaced by a full markdown+KaTeX
    *  render with a smooth opacity crossfade.
    */
-  function flushQaStream() {
-    qaRafPending = false;
-    if (!qaStreamBubble) return;
+  function flushQaStream(state) {
+    state.rafPending = false;
+    if (!state.bubble) return;
 
-    const buf    = qaStreamBuffer;
-    const cursor = qaStreamBubble.querySelector('.qa-stream-cursor');
-    const katexZ = qaStreamBubble.querySelector('.qa-katex-zone');
+    const buf    = state.buffer;
+    const cursor = state.bubble.querySelector('.qa-stream-cursor');
+    const katexZ = state.bubble.querySelector('.qa-katex-zone');
 
     // ── Layer A: detect newly-closed $$...$$ blocks ──────────────────────────
-    let katexCutoff = qaStreamKatexEnd;
+    let katexCutoff = state.katexEnd;
     let i = katexCutoff;
     while (i < buf.length - 1) {
       if (buf[i] === '$' && buf[i + 1] === '$') {
@@ -1202,7 +1229,7 @@
       }
     }
 
-    if (katexCutoff > qaStreamKatexEnd && katexZ) {
+    if (katexCutoff > state.katexEnd && katexZ) {
       // New complete math block(s) found.
       // Set the zone's textContent so the $$ delimiters live in a SINGLE text
       // node — renderMathInElement can then find multi-line equations.
@@ -1217,32 +1244,32 @@
           trust: false
         });
       }
-      qaStreamKatexEnd = katexCutoff;
+      state.katexEnd = katexCutoff;
 
       // Remove all existing plain spans/brs (now covered by the katex zone).
-      Array.from(qaStreamBubble.childNodes).forEach(node => {
+      Array.from(state.bubble.childNodes).forEach(node => {
         if (node !== katexZ && node !== cursor) node.remove();
       });
       // Plain-span pointer resets to the katex cutoff.
-      qaStreamStableEnd = katexCutoff;
+      state.stableEnd = katexCutoff;
     }
 
     // ── Layer B: append the live tail as fading plain-text spans ─────────────
-    const newText = buf.slice(qaStreamStableEnd);
+    const newText = buf.slice(state.stableEnd);
     if (newText) {
       newText.split('\n').forEach((line, idx) => {
         if (idx > 0) {
           const br = document.createElement('br');
-          cursor ? qaStreamBubble.insertBefore(br, cursor) : qaStreamBubble.appendChild(br);
+          cursor ? state.bubble.insertBefore(br, cursor) : state.bubble.appendChild(br);
         }
         if (line.length > 0) {
           const span = document.createElement('span');
           span.className = 'qa-chunk';
           span.innerHTML = applyStreamingLineMarkdown(line);
-          cursor ? qaStreamBubble.insertBefore(span, cursor) : qaStreamBubble.appendChild(span);
+          cursor ? state.bubble.insertBefore(span, cursor) : state.bubble.appendChild(span);
         }
       });
-      qaStreamStableEnd = buf.length;
+      state.stableEnd = buf.length;
     }
   }
 
@@ -1776,6 +1803,20 @@
     if (!hasSettings) {
       generateBtn.title = 'Set your API key in the extension popup first';
     }
+    updateGuideAbortBtn();
+  }
+
+  function updateGuideAbortBtn() {
+    const btn = document.getElementById('guide-abort-btn');
+    if (btn) btn.hidden = !isGenerating;
+    const contentAbortBtn = document.getElementById('guide-content-abort-btn');
+    if (contentAbortBtn) contentAbortBtn.hidden = !isGenerating;
+  }
+
+  function abortGuideGeneration() {
+    if (!_activeGuideAbortFn) return;
+    _activeGuideAbortFn();
+    _activeGuideAbortFn = null;
   }
 
   async function onGenerateClick() {
@@ -1837,7 +1878,10 @@
     });
 
     try {
-      const response = await apiRequest(payload);
+      const guideReq = apiRequest(payload);
+      _activeGuideAbortFn = guideReq.abort;
+      updateGuideAbortBtn();
+      const response = await guideReq;
       console.log('[Copilot] GENERATE_GUIDE response received', { success: response.success });
 
       if (!response.success) throw new Error(response.error);
@@ -1860,11 +1904,16 @@
     } catch (err) {
       console.error('[Copilot] GENERATE_GUIDE error:', err.message);
       clearStreamingBar();
-      showGuideError(err.message);
-      setStatus('error', 'Guide generation failed');
-      showManualPasteOption();
+      if (err.message !== 'Request aborted.') {
+        showGuideError(err.message);
+        setStatus('error', 'Guide generation failed');
+        showManualPasteOption();
+      } else {
+        restoreMainStatus();
+      }
     } finally {
       isGenerating = false;
+      _activeGuideAbortFn = null;
       generateBtn.querySelector('.btn-text').textContent = 'Generate Guide';
       generateBtn.querySelector('.btn-spinner').style.display = 'none';
       updateGenerateButton();
@@ -2790,6 +2839,15 @@ Now process the following transcript:`;
 
   // ─── Q&A Chat ─────────────────────────────────────────────────────────────
 
+  function abortQaStream(chatIdx) {
+    for (const [reqId, state] of qaActiveStreams.entries()) {
+      if (state.chatIdx === chatIdx) {
+        state.abortFn?.();
+        return;
+      }
+    }
+  }
+
   function restoreMainStatus() {
     if (guide?.guide?.length) {
       setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
@@ -2806,18 +2864,24 @@ Now process the following transcript:`;
     const hasText = qaInput.value.trim().length > 0;
     const hasSettings = hasUsableSettings();
     const hasTranscript = transcript?.text;
-    qaSend.disabled = !hasText || !hasSettings || !hasTranscript || isChatting;
-    // Dynamic tooltip explaining why button is disabled
-    if (!hasSettings) {
-      qaSend.title = 'Add an API key in Settings first';
-    } else if (!hasTranscript) {
-      qaSend.title = 'Waiting for transcript to load';
-    } else if (!hasText) {
-      qaSend.title = 'Type a question first';
-    } else if (isChatting) {
-      qaSend.title = 'Waiting for reply…';
+    const activeChatStreaming = isChatStreaming(activeQaChatIdx);
+    // Toggle between send and stop mode
+    if (activeChatStreaming) {
+      qaSend.classList.add('qa-send-stop');
+      qaSend.title = 'Stop generation';
+      qaSend.disabled = false; // stop button is always clickable
     } else {
-      qaSend.title = 'Send (Enter)';
+      qaSend.classList.remove('qa-send-stop');
+      qaSend.disabled = !hasText || !hasSettings || !hasTranscript;
+      if (!hasSettings) {
+        qaSend.title = 'Add an API key in Settings first';
+      } else if (!hasTranscript) {
+        qaSend.title = 'Waiting for transcript to load';
+      } else if (!hasText) {
+        qaSend.title = 'Type a question first';
+      } else {
+        qaSend.title = 'Send (Enter)';
+      }
     }
     // Auto-resize textarea
     qaInput.style.height = 'auto';
@@ -2826,14 +2890,10 @@ Now process the following transcript:`;
 
   async function sendQaMessage() {
     const text = qaInput.value.trim();
-    if (!text || isChatting || !hasUsableSettings() || !transcript?.text) return;
+    const sendChatIdx = activeQaChatIdx;
+    if (!text || isChatStreaming(sendChatIdx) || !hasUsableSettings() || !transcript?.text) return;
 
     hideQaReplyReadyToast();
-    isChatting = true;
-    qaSend.disabled = true;
-
-    // Capture which chat receives this message (freeze at send time)
-    const sendChatIdx = activeQaChatIdx;
     activeQaStreamChatIdx = sendChatIdx;
 
     // Collect all images (data URLs) and clear state
@@ -2859,31 +2919,31 @@ Now process the following transcript:`;
 
     // Prepare streaming message element or typing indicator
     let typingEl = null;
+    let streamEl = null;
+    let streamBubble = null;
     if (useStream) {
-      qaStreamBuffer = '';
-      qaStreamDollarCount = 0;
-      qaStreamStableEnd = 0;
-      qaStreamKatexEnd  = 0;
-      qaRafPending = false;
-      qaStreamEl = document.createElement('div');
-      qaStreamEl.className = 'chat-msg assistant';
-      qaStreamEl.innerHTML = '<div class="chat-bubble"><div class="qa-katex-zone"></div><span class="qa-stream-cursor" aria-hidden="true"></span></div>';
+      streamEl = document.createElement('div');
+      streamEl.className = 'chat-msg assistant';
+      streamEl.innerHTML = '<div class="chat-bubble"><div class="qa-katex-zone"></div><span class="qa-stream-cursor" aria-hidden="true"></span></div>';
       const targetCol = getChatCol(sendChatIdx);
       if (targetCol) {
         const welcome = targetCol.querySelector('.qa-welcome');
         if (welcome) welcome.remove();
-        targetCol.appendChild(qaStreamEl);
+        targetCol.appendChild(streamEl);
       }
-      qaStreamBubble = qaStreamEl.querySelector('.chat-bubble');
+      streamBubble = streamEl.querySelector('.chat-bubble');
     } else {
       typingEl = appendTypingIndicator(sendChatIdx);
     }
+
+    let streamState = null;
+    let req = null;
 
     try {
       const qaTemp = qaTempSlider ? qaTempSlider.value / 100 : 0.35;
       const qaThinking = qaThinkingSel?.value || 'none';
 
-      const req = apiRequest({
+      req = apiRequest({
         type: 'CHAT',
         messages: chatMessages.map(m => ({ role: m.role, content: m.content, ...(m.images?.length ? { images: m.images } : {}) })),
         systemPrompt,
@@ -2896,10 +2956,21 @@ Now process the following transcript:`;
         useStream
       });
 
-      // Register as active QA stream so handleQaStreamChunk can find it
       if (useStream) {
-        activeQaRequestId = req._requestId;
-        isQaStreaming = true;
+        streamState = {
+          chatIdx: sendChatIdx,
+          el: streamEl,
+          bubble: streamBubble,
+          buffer: '',
+          dollarCount: 0,
+          stableEnd: 0,
+          katexEnd: 0,
+          rafPending: false,
+          katexThrottle: null,
+          abortFn: req.abort
+        };
+        qaActiveStreams.set(req._requestId, streamState);
+        onQaInputChange(); // update stop/send button for this chat
       }
 
       const response = await req;
@@ -2913,14 +2984,15 @@ Now process the following transcript:`;
 
       if (useStream) {
         // Stream complete — stop accepting new chunks
-        isQaStreaming = false;
-        activeQaRequestId = null;
-        if (qaKatexThrottle) { clearTimeout(qaKatexThrottle); qaKatexThrottle = null; }
+        if (streamState) {
+          if (streamState.katexThrottle) { clearTimeout(streamState.katexThrottle); streamState.katexThrottle = null; }
+          qaActiveStreams.delete(req._requestId);
+        }
 
         // Final render: crossfade from plain-text spans → full markdown + KaTeX.
-        // Capture bubble in a local var because qaStreamBubble is nulled right after.
-        if (qaStreamBubble) {
-          const bubble    = qaStreamBubble;
+        // Capture bubble in a local var because streamBubble is nulled right after.
+        if (streamBubble) {
+          const bubble    = streamBubble;
           const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(assistantText));
 
           // Step 1: fade out the raw plain-text version
@@ -2949,16 +3021,16 @@ Now process the following transcript:`;
         persistChat();
 
         // Notify: on QA tab → show reply toast; away → cross-tab notify
-        if (qaStreamEl) {
-          const streamDiv = qaStreamEl;
+        if (streamEl) {
+          const streamDiv = streamEl;
           if (_currentTab !== 'qa') {
             showCrossTabNotify(streamDiv);
           } else {
             showQaReplyReadyToast(streamDiv, assistantText);
           }
         }
-        qaStreamEl = null;
-        qaStreamBubble = null;
+        streamEl = null;
+        streamBubble = null;
 
       } else {
         // Non-streaming path
@@ -2968,26 +3040,45 @@ Now process the following transcript:`;
       }
 
     } catch (err) {
-      // Clean up streaming state on error
-      isQaStreaming = false;
-      activeQaRequestId = null;
-      if (qaKatexThrottle) { clearTimeout(qaKatexThrottle); qaKatexThrottle = null; }
+      // Clean up streaming state on error/abort
+      if (streamState) {
+        if (streamState.katexThrottle) { clearTimeout(streamState.katexThrottle); streamState.katexThrottle = null; }
+        if (req?._requestId) qaActiveStreams.delete(req._requestId);
+      }
 
-      if (useStream && qaStreamEl) {
-        qaStreamEl.remove();
-        qaStreamEl = null;
-        qaStreamBubble = null;
-        qaStreamStableEnd = 0;
-        qaStreamKatexEnd  = 0;
+      if (useStream && streamEl) {
+        // If aborted and we have partial content, finalize it instead of removing
+        if (err.message === 'Request aborted.' && streamState?.buffer) {
+          const partialText = streamState.buffer;
+          qaChats[sendChatIdx].messages.push({ role: 'assistant', content: partialText });
+          if (sendChatIdx === activeQaChatIdx) qaMessages = qaChats[sendChatIdx].messages;
+          // Finalize the partial bubble with markdown+katex
+          if (streamBubble) {
+            const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(partialText));
+            streamBubble.innerHTML = renderMarkdown(finalNorm);
+            applyKatex(streamBubble);
+          }
+          // Add a "(stopped)" indicator
+          const stoppedNote = document.createElement('span');
+          stoppedNote.className = 'qa-stream-stopped';
+          stoppedNote.textContent = ' (generation stopped)';
+          streamBubble?.appendChild(stoppedNote);
+          persistChat();
+        } else {
+          streamEl.remove();
+        }
+        streamEl = null;
+        streamBubble = null;
       } else {
         typingEl?.remove();
       }
 
-      const humanError = humanizeApiError(err.message);
-      appendErrorMsg(humanError, sendChatIdx);
+      if (err.message !== 'Request aborted.') {
+        const humanError = humanizeApiError(err.message);
+        appendErrorMsg(humanError, sendChatIdx);
+      }
     } finally {
-      isChatting = false;
-      onQaInputChange();
+      onQaInputChange(); // clears stop button since stream is removed
       restoreMainStatus();
     }
   }
@@ -3538,8 +3629,9 @@ ${guideBlocksStr}${scriptContext}`;
   // ─── History Persistence ──────────────────────────────────────────────────
 
   function persistChat() {
-    // Persist first chat for backward compatibility with history and session restore
-    storageSet({ currentQaMessages: qaChats[0]?.messages || [] });
+    // Save all chats — store as array of {id, name, messages}
+    const allChats = qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages }));
+    storageSet({ currentQaMessages: qaChats[0]?.messages || [], currentQaChats: allChats });
     saveToHistory();
   }
 
@@ -3583,7 +3675,8 @@ ${guideBlocksStr}${scriptContext}`;
         guide,
         // unlimitedStorage permission allows keeping images; they persist across sessions.
         // Always save first chat's messages to keep history backward-compatible.
-        qaMessages: (qaChats[0]?.messages?.length ? qaChats[0].messages : null) || prevSame?.qaMessages || []
+        qaMessages: (qaChats[0]?.messages?.length ? qaChats[0].messages : null) || prevSame?.qaMessages || [],
+        qaChatsData: qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages }))
       };
       history.unshift(entry);
       if (history.length > 50) history.length = 50;
@@ -3998,9 +4091,14 @@ ${guideBlocksStr}${scriptContext}`;
 
     guide = entry.guide;
     const restoredMsgs = Array.isArray(entry.qaMessages) ? entry.qaMessages : [];
-    qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs }];
+    if (Array.isArray(entry.qaChatsData) && entry.qaChatsData.length > 0) {
+      qaChats = entry.qaChatsData.map(c => ({ id: c.id || 1, name: c.name || 'Chat 1', messages: Array.isArray(c.messages) ? c.messages : [] }));
+      _nextChatId = Math.max(...qaChats.map(c => c.id), 1) + 1;
+    } else {
+      qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs }];
+      _nextChatId = 2;
+    }
     activeQaChatIdx = 0;
-    _nextChatId = 2;
     qaMessages = qaChats[0].messages;
     transcript = transcript || { cues: [], text: '', lectureTitle: entry.lectureTitle, videoDuration: 0 };
 
