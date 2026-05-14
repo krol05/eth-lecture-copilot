@@ -440,13 +440,6 @@
     </div>
 
     <div class="qa-footer-stack">
-      <!-- Scroll-to-bottom pill — appears when user is scrolled up in Q&A -->
-      <button id="qa-scroll-bottom-btn" class="qa-scroll-bottom-btn" title="Jump to latest message" hidden>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-          <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
-        </svg>
-        Jump to latest
-      </button>
       <div class="qa-input-area">
       <div class="qa-temp-row">
         <label class="qa-temp-label" for="qa-temp-slider">Temp
@@ -482,14 +475,16 @@
           <span class="attach-text">Attach frame</span>
         </button>
       </div>
-      <p class="attach-hint">Only works with vision models. Click to capture and attach the current video frame.</p>
-      <div id="qa-image-strip" class="qa-image-strip" style="display:none" aria-label="Attached images"></div>
-      <div id="qa-img-edit-hint" class="qa-img-edit-hint" aria-live="polite">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
-        </svg>
-        Tip: click an image to crop or draw on it before sending
+      <div class="attach-hints">
+        <p class="attach-hint">Only works with vision models. Click to capture and attach the current video frame.</p>
+        <div id="qa-img-edit-hint" class="qa-img-edit-hint" aria-live="polite">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+          </svg>
+          Click an image to crop or draw on it before sending.
+        </div>
       </div>
+      <div id="qa-image-strip" class="qa-image-strip" style="display:none" aria-label="Attached images"></div>
       <input type="file" id="qa-file-input" accept="image/*" multiple style="display:none">
       <div class="qa-textarea-row">
         <textarea id="qa-input" placeholder="Ask a question about the lecture…" rows="2"></textarea>
@@ -908,12 +903,18 @@
     </details>
   </div>
 
+  <!-- Jump-to-latest pill — body-level so overflow:hidden on tab-content can't clip pointer events -->
+  <button id="qa-scroll-bottom-btn" class="qa-scroll-bottom-btn" title="Jump to latest message" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+      <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
+    </svg>
+    Jump to latest
+  </button>
+
   <!-- Q&A reply-ready toast — body-level so overflow:hidden on tab-content can't clip it -->
-  <div id="qa-reply-ready-toast" class="qa-reply-ready-toast" hidden aria-live="polite">
-    <button type="button" id="qa-reply-ready-toast-action" class="qa-reply-ready-toast-action">
-      <span id="qa-reply-ready-toast-title" class="qa-reply-ready-toast-title">Assistant reply ready</span>
-      <span id="qa-reply-ready-toast-sub" class="qa-reply-ready-toast-sub">Click to jump to the start of the reply</span>
-    </button>
+  <div id="qa-reply-ready-toast" class="qa-reply-ready-toast" hidden role="button" tabindex="0" aria-live="polite">
+    <span id="qa-reply-ready-toast-title" class="qa-reply-ready-toast-title">Assistant reply ready</span>
+    <span id="qa-reply-ready-toast-sub" class="qa-reply-ready-toast-sub">Click to jump to latest reply</span>
     <button type="button" id="qa-reply-ready-toast-dismiss" class="qa-reply-ready-toast-dismiss" title="Dismiss" aria-label="Dismiss">×</button>
   </div>
 

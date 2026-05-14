@@ -103,7 +103,6 @@
   const qaThinkingSel  = document.getElementById('qa-thinking-select');
   const qaThinkingHint = document.getElementById('qa-thinking-hint');
   const qaReplyReadyToast = document.getElementById('qa-reply-ready-toast');
-  const qaReplyReadyToastAction = document.getElementById('qa-reply-ready-toast-action');
   const qaReplyReadyToastDismiss = document.getElementById('qa-reply-ready-toast-dismiss');
   const qaReplyReadyToastTitle = document.getElementById('qa-reply-ready-toast-title');
   const qaReplyReadyToastSub = document.getElementById('qa-reply-ready-toast-sub');
@@ -285,7 +284,13 @@
 
   function updateQaScrollBtn() {
     const btn = document.getElementById('qa-scroll-bottom-btn');
-    if (btn) btn.hidden = qaIsFollowingLatest();
+    if (!btn) return;
+    const toastVisible = qaReplyReadyToast && !qaReplyReadyToast.hidden;
+    const root = getActiveChatCol();
+    const farUp = root
+      ? (root.scrollHeight - root.scrollTop - root.clientHeight > QA_SCROLL_BTN_THRESHOLD_PX)
+      : false;
+    btn.hidden = toastVisible || !farUp;
   }
 
   // ─── Init ─────────────────────────────────────────────────────────────────
@@ -393,9 +398,9 @@
     // Wire up image editor event listeners (once)
     _imgEdInitEvents();
 
-    qaReplyReadyToastAction?.addEventListener('click', () => {
+    qaReplyReadyToast?.addEventListener('click', () => {
+      hideQaReplyReadyToast(); // reflow from updateQaScrollBtn must finish before scroll starts
       qaScrollToBottom();
-      hideQaReplyReadyToast();
     });
     qaReplyReadyToastDismiss?.addEventListener('click', (e) => {
       e.preventDefault();
@@ -2855,7 +2860,6 @@ Now process the following transcript:`;
     // Prepare streaming message element or typing indicator
     let typingEl = null;
     if (useStream) {
-      // Create a live-updating assistant bubble; no auto-scroll during generation
       qaStreamBuffer = '';
       qaStreamDollarCount = 0;
       qaStreamStableEnd = 0;
@@ -2863,8 +2867,6 @@ Now process the following transcript:`;
       qaRafPending = false;
       qaStreamEl = document.createElement('div');
       qaStreamEl.className = 'chat-msg assistant';
-      // .qa-katex-zone receives KaTeX-rendered text for complete $$...$$ blocks.
-      // Plain-text .qa-chunk spans are appended after it.
       qaStreamEl.innerHTML = '<div class="chat-bubble"><div class="qa-katex-zone"></div><span class="qa-stream-cursor" aria-hidden="true"></span></div>';
       const targetCol = getChatCol(sendChatIdx);
       if (targetCol) {
@@ -2873,8 +2875,6 @@ Now process the following transcript:`;
         targetCol.appendChild(qaStreamEl);
       }
       qaStreamBubble = qaStreamEl.querySelector('.chat-bubble');
-      // Always scroll to bottom when the stream bubble first appears
-      qaScrollToBottom(sendChatIdx);
     } else {
       typingEl = appendTypingIndicator(sendChatIdx);
     }
@@ -2948,13 +2948,13 @@ Now process the following transcript:`;
 
         persistChat();
 
-        // Scroll / notify: on QA tab → scroll to bottom; away → cross-tab notify
+        // Notify: on QA tab → show reply toast; away → cross-tab notify
         if (qaStreamEl) {
+          const streamDiv = qaStreamEl;
           if (_currentTab !== 'qa') {
-            showCrossTabNotify(qaStreamEl);
+            showCrossTabNotify(streamDiv);
           } else {
-            // Always scroll to bottom when generation completes (per user request)
-            qaScrollToBottom(sendChatIdx);
+            showQaReplyReadyToast(streamDiv, assistantText);
           }
         }
         qaStreamEl = null;
@@ -3150,8 +3150,10 @@ ${windowText}
 ${guideBlocksStr}${scriptContext}`;
   }
 
-  /** If the user is within this many px of the bottom, new assistant replies align to the start of the bubble instead of jumping to the end. */
+  /** Auto-hide the reply-ready toast when user scrolls within this many px of the bottom. */
   const QA_SCROLL_BOTTOM_THRESHOLD_PX = 80;
+  /** Show the "Jump to latest" pill only when user has scrolled this far from the bottom. */
+  const QA_SCROLL_BTN_THRESHOLD_PX = 3000;
 
   function qaIsFollowingLatest(chatIdx) {
     const root = getChatCol(chatIdx ?? activeQaChatIdx);
@@ -3182,6 +3184,7 @@ ${guideBlocksStr}${scriptContext}`;
   function hideQaReplyReadyToast() {
     qaReplyReadyTargetEl = null;
     if (qaReplyReadyToast) qaReplyReadyToast.hidden = true;
+    updateQaScrollBtn();
   }
 
   // ─── Frame image lightbox ────────────────────────────────────────────────
@@ -3273,6 +3276,7 @@ ${guideBlocksStr}${scriptContext}`;
         : 'Click to jump to the start of the reply';
     }
     qaReplyReadyToast.hidden = false;
+    updateQaScrollBtn();
   }
 
   /** Build a chat message DOM element without appending it anywhere. Used by both appendChatMsg and _buildChatCol. */
@@ -3319,7 +3323,6 @@ ${guideBlocksStr}${scriptContext}`;
     chatIdx = chatIdx ?? activeQaChatIdx;
     const col = getChatCol(chatIdx);
     if (!col) return null;
-    const wasFollowing = qaIsFollowingLatest(chatIdx);
     scrollMode = scrollMode || 'default';
 
     const div = _buildChatMsgEl(role, content, images);
@@ -3330,15 +3333,12 @@ ${guideBlocksStr}${scriptContext}`;
 
     if (scrollMode === 'none') return div;
 
-    if (role === 'user') {
-      qaScrollToBottom(chatIdx);
-    } else if (_currentTab !== 'qa') {
-      showCrossTabNotify(div);
-    } else if (wasFollowing) {
-      hideQaReplyReadyToast();
-      qaScrollToBottom(chatIdx);
-    } else if (scrollMode === 'default') {
-      showQaReplyReadyToast(div, content);
+    if (role === 'assistant') {
+      if (_currentTab !== 'qa') {
+        showCrossTabNotify(div);
+      } else if (scrollMode === 'default') {
+        showQaReplyReadyToast(div, content);
+      }
     }
     return div;
   }
@@ -3347,7 +3347,6 @@ ${guideBlocksStr}${scriptContext}`;
     chatIdx = chatIdx ?? activeQaChatIdx;
     const col = getChatCol(chatIdx);
     if (!col) return null;
-    const wasFollowing = qaIsFollowingLatest(chatIdx);
     const div = document.createElement('div');
     div.className = 'chat-msg assistant chat-msg-error';
     div.innerHTML = `
@@ -3360,8 +3359,6 @@ ${guideBlocksStr}${scriptContext}`;
     col.appendChild(div);
     if (_currentTab !== 'qa') {
       showCrossTabNotify(div);
-    } else if (wasFollowing) {
-      qaScrollToBottom(chatIdx);
     } else {
       showQaReplyReadyToast(div, content);
     }
@@ -3371,7 +3368,6 @@ ${guideBlocksStr}${scriptContext}`;
   function appendTypingIndicator(chatIdx) {
     chatIdx = chatIdx ?? activeQaChatIdx;
     const col = getChatCol(chatIdx);
-    const wasFollowing = qaIsFollowingLatest(chatIdx);
     const div = document.createElement('div');
     div.className = 'chat-msg assistant';
     div.innerHTML = `<div class="typing-indicator">
@@ -3380,7 +3376,6 @@ ${guideBlocksStr}${scriptContext}`;
       <div class="typing-dot"></div>
     </div>`;
     if (col) col.appendChild(div);
-    if (wasFollowing) qaScrollToBottom(chatIdx);
     return div;
   }
 
