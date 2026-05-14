@@ -21,7 +21,12 @@
   let guideLanguage = '';     // language used when the active guide was generated
   let settings = null;        // { provider, model, apiKey }
   let currentBlockIndex = -1;
-  let qaMessages = [];        // conversation history
+  // Multi-chat state — each chat has its own message history
+  let qaChats = [{ id: 1, name: 'Chat 1', messages: [] }];
+  let activeQaChatIdx = 0;
+  let _nextChatId = 2;
+  let activeQaStreamChatIdx = 0; // which chat the current stream is going to
+  let qaMessages = qaChats[0].messages; // convenience ref — always points to active chat's messages
   /** When set, Q&A “reply ready” toast scroll target (assistant message element). */
   let qaReplyReadyTargetEl = null;
   let isGenerating = false;
@@ -141,6 +146,148 @@
   /** Stream buffer for guide streaming */
   let streamBuffer = '';
 
+  // ─── Multi-chat helpers ───────────────────────────────────────────────────
+
+  function getChatCol(idx) {
+    return document.getElementById('qa-chat-col-' + (idx != null ? idx : activeQaChatIdx));
+  }
+  function getActiveChatCol() { return getChatCol(activeQaChatIdx); }
+
+  function renderQaChatBar() {
+    const bar = document.getElementById('qa-chat-bar');
+    if (!bar) return;
+    // Always render the bar (+ button always visible); tabs only appear once 2+ chats exist
+    bar.style.display = '';
+
+    const canClose = qaChats.length > 1;
+    bar.innerHTML = qaChats.map((chat, i) => {
+      const isActive = i === activeQaChatIdx;
+      // Only show close button when 2+ chats exist
+      const closeBtn = canClose
+        ? `<button class="qa-chat-tab-close" data-close-idx="${i}" type="button" title="Close ${escHtml(chat.name)}" aria-label="Close ${escHtml(chat.name)}">×</button>`
+        : '';
+      return `<button class="qa-chat-tab${isActive ? ' active' : ''}" data-chat-idx="${i}" type="button">
+        <span class="qa-chat-tab-name">${escHtml(chat.name)}</span>${closeBtn}
+      </button>`;
+    }).join('') +
+    `<button class="qa-chat-add-btn" id="qa-chat-add-btn" title="New chat" type="button">+</button>`;
+
+    bar.querySelectorAll('.qa-chat-tab').forEach(btn => {
+      btn.addEventListener('click', e => {
+        // Don't switch if the close button was clicked
+        if (e.target.closest('.qa-chat-tab-close')) return;
+        switchQaChat(parseInt(btn.dataset.chatIdx, 10));
+      });
+    });
+    bar.querySelectorAll('.qa-chat-tab-close').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        closeQaChat(parseInt(btn.dataset.closeIdx, 10));
+      });
+    });
+    document.getElementById('qa-chat-add-btn')?.addEventListener('click', addQaChat);
+  }
+
+  function switchQaChat(idx) {
+    if (idx < 0 || idx >= qaChats.length) return;
+    // Hide current active column
+    getActiveChatCol()?.classList.remove('active');
+    activeQaChatIdx = idx;
+    qaMessages = qaChats[idx].messages;
+    // Show new active column
+    getChatCol(idx)?.classList.add('active');
+    renderQaChatBar();
+    updateQaScrollBtn();
+  }
+
+  function addQaChat() {
+    const id = _nextChatId++;
+    qaChats.push({ id, name: 'Chat ' + id, messages: [] });
+    const newIdx = qaChats.length - 1;
+    // Build and append the new column (hidden by default via CSS; switchQaChat activates it)
+    const col = _buildChatCol(newIdx);
+    qaMessages_el?.appendChild(col);
+    col.addEventListener('scroll', _onColScroll.bind(null, newIdx), { passive: true });
+    switchQaChat(newIdx);
+  }
+
+  function closeQaChat(idx) {
+    if (qaChats.length <= 1) return; // can't close the last chat
+    const chatName = qaChats[idx]?.name || 'this chat';
+    const hasMessages = qaChats[idx]?.messages?.length > 0;
+    if (hasMessages && !window.confirm(`Close ${chatName}? Its history will be lost.`)) return;
+
+    // Remove the column from DOM
+    getChatCol(idx)?.remove();
+
+    // Remove from array
+    qaChats.splice(idx, 1);
+
+    // Re-index remaining columns so their IDs match array positions
+    document.querySelectorAll('.qa-chat-col').forEach((col, i) => {
+      col.id = 'qa-chat-col-' + i;
+    });
+
+    // Determine which chat to switch to
+    let nextIdx = activeQaChatIdx;
+    if (activeQaChatIdx >= idx) nextIdx = Math.max(0, activeQaChatIdx - 1);
+    if (nextIdx >= qaChats.length) nextIdx = qaChats.length - 1;
+
+    // Reset activeQaChatIdx before switchQaChat so it doesn't try to hide a stale index
+    activeQaChatIdx = -1;
+    switchQaChat(nextIdx);
+  }
+
+  function _buildChatCol(idx) {
+    const isActive = idx === activeQaChatIdx;
+    const col = document.createElement('div');
+    col.className = 'qa-chat-col' + (isActive ? ' active' : '');
+    col.id = 'qa-chat-col-' + idx;
+    const chat = qaChats[idx];
+    if (!chat.messages.length) {
+      col.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture. I have the full transcript and guide as context.</p></div>';
+    } else {
+      for (const m of chat.messages) {
+        const el = _buildChatMsgEl(m.role, m.content, m.images || m.imageBase64 || []);
+        col.appendChild(el);
+      }
+      col.scrollTop = col.scrollHeight;
+    }
+    return col;
+  }
+
+  function initQaChatCols() {
+    if (!qaMessages_el) return;
+    qaMessages_el.innerHTML = '';
+    for (let i = 0; i < qaChats.length; i++) {
+      const col = _buildChatCol(i);
+      qaMessages_el.appendChild(col);
+      col.addEventListener('scroll', _onColScroll.bind(null, i), { passive: true });
+    }
+    renderQaChatBar();
+    updateQaScrollBtn();
+  }
+
+  function resetQaChats() {
+    qaChats = [{ id: 1, name: 'Chat 1', messages: [] }];
+    activeQaChatIdx = 0;
+    _nextChatId = 2;
+    qaMessages = qaChats[0].messages;
+    initQaChatCols();
+  }
+
+  function _onColScroll(idx) {
+    if (idx === activeQaChatIdx) {
+      onQaMessagesScroll();
+      updateQaScrollBtn();
+    }
+  }
+
+  function updateQaScrollBtn() {
+    const btn = document.getElementById('qa-scroll-bottom-btn');
+    if (btn) btn.hidden = qaIsFollowingLatest();
+  }
+
   // ─── Init ─────────────────────────────────────────────────────────────────
 
   function init() {
@@ -237,8 +384,14 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQaMessage(); }
     });
     qaSend.addEventListener('click', sendQaMessage);
+    // Delegate clicks on the messages container (works across all chat columns)
     qaMessages_el?.addEventListener('click', onQaMessagesClick);
-    qaMessages_el?.addEventListener('scroll', onQaMessagesScroll);
+    // Note: per-column scroll listeners are attached in initQaChatCols / addQaChat
+
+    // Initialize chat columns and bar
+    initQaChatCols();
+    // Wire up image editor event listeners (once)
+    _imgEdInitEvents();
 
     qaReplyReadyToastAction?.addEventListener('click', () => {
       qaScrollToBottom();
@@ -492,7 +645,12 @@
     sanitizeGuide(guide);
     guideLanguage = guideData._language || '';
     _syncToolLanguageSelects();
-    qaMessages = Array.isArray(qaFromStorage) ? qaFromStorage : [];
+    const restoredMsgs = Array.isArray(qaFromStorage) ? qaFromStorage : [];
+    // Populate first chat with restored messages; reset extra chats
+    qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs }];
+    activeQaChatIdx = 0;
+    _nextChatId = 2;
+    qaMessages = qaChats[0].messages;
     if (persistSession && currentLectureUrl) {
       storageSet({
         currentGuide: guide,
@@ -502,13 +660,8 @@
     }
     setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
     showGuideContent();
-    qaMessages_el.innerHTML = '';
     hideQaReplyReadyToast();
-    if (qaMessages.length) {
-      restoreChatUI();
-    } else {
-      qaMessages_el.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture. I have the full transcript and guide as context.</p></div>';
-    }
+    initQaChatCols();
     updateGenerateButton();
   }
 
@@ -572,7 +725,7 @@
     guideLanguage = '';
     transcript = null;
     currentBlockIndex = -1;
-    qaMessages = [];
+    resetQaChats();
     isGenerating = false;
     guideContent.style.display = 'none';
     guideEmpty.style.display = '';
@@ -580,7 +733,6 @@
     generateBtn.disabled = true;
     generateBtn.querySelector('.btn-text').textContent = 'Generate Guide';
     generateBtn.querySelector('.btn-spinner').style.display = 'none';
-    qaMessages_el.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture. I have the full transcript and guide as context.</p></div>';
     hideQaReplyReadyToast();
     const manualSection = document.getElementById('manual-paste-section');
     if (manualSection) manualSection.remove();
@@ -588,12 +740,12 @@
 
   function restoreChatUI() {
     hideQaReplyReadyToast();
-    const welcome = qaMessages_el.querySelector('.qa-welcome');
-    if (welcome) welcome.remove();
-    for (const m of qaMessages) {
-      appendChatMsg(m.role, m.content, m.imageBase64 || false, 'none');
+    initQaChatCols();
+    // Scroll all columns to bottom
+    for (let i = 0; i < qaChats.length; i++) {
+      const col = getChatCol(i);
+      if (col) col.scrollTop = col.scrollHeight;
     }
-    qaMessages_el.scrollTop = qaMessages_el.scrollHeight;
   }
 
   /**
@@ -1163,12 +1315,15 @@
 
   function renderImageStrip() {
     if (!qaImageStrip) return;
+    const hint = document.getElementById('qa-img-edit-hint');
     if (!attachedImages.length) {
       qaImageStrip.style.display = 'none';
       qaImageStrip.innerHTML = '';
+      if (hint) hint.style.display = 'none';
       return;
     }
     qaImageStrip.style.display = 'flex';
+    if (hint) hint.style.display = 'flex';
     qaImageStrip.innerHTML = attachedImages.map((img, i) => `
       <div class="qa-image-thumb" data-strip-index="${i}" title="Click to preview">
         <img src="${img.dataUrl}" alt="${img.label}">
@@ -1187,12 +1342,12 @@
       });
     });
 
-    // Click thumbnail to fullscreen preview
+    // Click thumbnail to open image editor
     qaImageStrip.querySelectorAll('.qa-image-thumb').forEach(thumb => {
       thumb.addEventListener('click', e => {
         if (e.target.classList.contains('qa-image-remove')) return;
         const idx = parseInt(thumb.dataset.stripIndex, 10);
-        openFrameLightbox(attachedImages[idx].dataUrl);
+        openImageEditor(idx);
       });
     });
   }
@@ -1220,6 +1375,300 @@
       img.src = original;
     };
     reader.readAsDataURL(file);
+  }
+
+  // ─── Image Editor ─────────────────────────────────────────────────────────
+
+  let _imgEd = null; // editor state; null when closed
+
+  function openImageEditor(imageIdx) {
+    const imgData = attachedImages[imageIdx];
+    if (!imgData) return;
+    const overlay = document.getElementById('qa-img-editor');
+    if (!overlay) return;
+
+    const canvas = document.getElementById('qa-img-ed-canvas');
+    const ctx = canvas.getContext('2d');
+
+    const img = new Image();
+    img.onload = () => {
+      // Scale to fit viewport
+      const maxW = Math.min(window.innerWidth - 48, 860);
+      const maxH = window.innerHeight - 150;
+      const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1);
+      const cW = Math.round(img.naturalWidth * scale);
+      const cH = Math.round(img.naturalHeight * scale);
+      canvas.width  = cW;
+      canvas.height = cH;
+
+      // Offscreen canvas for drawing strokes
+      const drawCanvas = document.createElement('canvas');
+      drawCanvas.width  = cW;
+      drawCanvas.height = cH;
+
+      _imgEd = {
+        imageIdx,
+        img,
+        canvas, ctx,
+        drawCanvas, drawCtx: drawCanvas.getContext('2d'),
+        crop: { x: 0, y: 0, w: cW, h: cH },
+        mode: 'crop',
+        color: '#e53e3e',
+        brushSize: 4,
+        isDrawing: false,
+        dragHandle: null, dragStart: null, dragStartCrop: null,
+      };
+
+      // Reset toolbar UI
+      overlay.querySelectorAll('.qa-img-ed-mode-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.mode === 'crop');
+      });
+      overlay.querySelectorAll('.qa-img-ed-color').forEach(b => {
+        b.classList.toggle('active', b.dataset.color === '#e53e3e');
+      });
+      _imgEdSetMode('crop');
+      _imgEdRender();
+      _imgEdUpdateHandles();
+      overlay.hidden = false;
+    };
+    img.src = imgData.dataUrl;
+  }
+
+  function _imgEdRender() {
+    if (!_imgEd) return;
+    const { img, canvas, ctx, drawCanvas, crop } = _imgEd;
+    const W = canvas.width, H = canvas.height;
+
+    ctx.clearRect(0, 0, W, H);
+    // 1. Base image
+    ctx.drawImage(img, 0, 0, W, H);
+    // 2. Drawing layer
+    ctx.drawImage(drawCanvas, 0, 0);
+    // 3. Dark overlay outside crop via even-odd path
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.52)';
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);
+    ctx.rect(crop.x, crop.y, crop.w, crop.h);
+    ctx.closePath();
+    ctx.fill('evenodd');
+    ctx.restore();
+    // 4. Crop border
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(crop.x + 0.75, crop.y + 0.75, crop.w - 1.5, crop.h - 1.5);
+    ctx.restore();
+  }
+
+  function _imgEdUpdateHandles() {
+    if (!_imgEd) return;
+    const { crop } = _imgEd;
+    const layer = document.getElementById('qa-img-ed-handles');
+    if (!layer) return;
+    const pts = {
+      tl: [crop.x, crop.y],
+      tm: [crop.x + crop.w / 2, crop.y],
+      tr: [crop.x + crop.w, crop.y],
+      ml: [crop.x, crop.y + crop.h / 2],
+      mr: [crop.x + crop.w, crop.y + crop.h / 2],
+      bl: [crop.x, crop.y + crop.h],
+      bm: [crop.x + crop.w / 2, crop.y + crop.h],
+      br: [crop.x + crop.w, crop.y + crop.h],
+    };
+    layer.querySelectorAll('.qa-img-ed-handle').forEach(h => {
+      const p = pts[h.dataset.pos];
+      if (p) { h.style.left = p[0] + 'px'; h.style.top = p[1] + 'px'; }
+    });
+  }
+
+  function _imgEdSetMode(mode) {
+    if (!_imgEd) return;
+    _imgEd.mode = mode;
+    const canvas = _imgEd.canvas;
+    const handles = document.getElementById('qa-img-ed-handles');
+    const colors  = document.getElementById('qa-img-ed-colors');
+    const clearBtn = document.getElementById('qa-img-ed-clear-draw');
+    if (mode === 'draw') {
+      canvas.style.cursor = 'crosshair';
+      if (handles) { handles.style.pointerEvents = 'none'; handles.style.opacity = '0.35'; }
+      if (colors)  colors.style.opacity = '1';
+      if (clearBtn) clearBtn.style.opacity = '1';
+    } else {
+      canvas.style.cursor = 'default';
+      if (handles) { handles.style.pointerEvents = ''; handles.style.opacity = '1'; }
+      if (colors)  colors.style.opacity = '0.42';
+      if (clearBtn) clearBtn.style.opacity = '0.42';
+    }
+    document.querySelectorAll('#qa-img-ed-toolbar .qa-img-ed-mode-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === mode);
+    });
+  }
+
+  function _imgEdInitEvents() {
+    const overlay  = document.getElementById('qa-img-editor');
+    if (!overlay || overlay._eventsInited) return;
+    overlay._eventsInited = true;
+
+    const canvas  = document.getElementById('qa-img-ed-canvas');
+    const handles = document.getElementById('qa-img-ed-handles');
+
+    document.getElementById('qa-img-ed-backdrop')?.addEventListener('click', closeImageEditor);
+    document.getElementById('qa-img-ed-cancel')?.addEventListener('click', closeImageEditor);
+    document.getElementById('qa-img-ed-done')?.addEventListener('click', applyImageEditor);
+
+    document.getElementById('qa-img-ed-clear-draw')?.addEventListener('click', () => {
+      if (!_imgEd) return;
+      _imgEd.drawCtx.clearRect(0, 0, _imgEd.drawCanvas.width, _imgEd.drawCanvas.height);
+      _imgEdRender();
+    });
+
+    // Mode buttons
+    overlay.querySelectorAll('.qa-img-ed-mode-btn').forEach(b => {
+      b.addEventListener('click', () => { if (_imgEd) _imgEdSetMode(b.dataset.mode); });
+    });
+
+    // Color buttons
+    overlay.querySelectorAll('.qa-img-ed-color').forEach(b => {
+      b.addEventListener('click', () => {
+        if (!_imgEd) return;
+        _imgEd.color = b.dataset.color;
+        overlay.querySelectorAll('.qa-img-ed-color').forEach(x => x.classList.toggle('active', x === b));
+      });
+    });
+
+    // Drawing on canvas
+    canvas?.addEventListener('mousedown', _imgEdDrawStart);
+    canvas?.addEventListener('mousemove', _imgEdDrawMove);
+    canvas?.addEventListener('mouseup',   _imgEdDrawEnd);
+    canvas?.addEventListener('mouseleave', _imgEdDrawEnd);
+
+    // Handle dragging (event delegation on the handles layer)
+    handles?.addEventListener('mousedown', _imgEdHandleStart, true);
+
+    // ESC closes
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && _imgEd) closeImageEditor();
+    });
+  }
+
+  // ── Drawing events ──────────────────────────────────────────────────────────
+
+  function _imgEdDrawStart(e) {
+    if (!_imgEd || _imgEd.mode !== 'draw') return;
+    e.preventDefault();
+    _imgEd.isDrawing = true;
+    const [x, y] = _imgEdCanvasXY(e);
+    const dc = _imgEd.drawCtx;
+    dc.beginPath();
+    dc.moveTo(x, y);
+    dc.strokeStyle = _imgEd.color;
+    dc.lineWidth   = _imgEd.brushSize;
+    dc.lineCap     = 'round';
+    dc.lineJoin    = 'round';
+  }
+
+  function _imgEdDrawMove(e) {
+    if (!_imgEd || !_imgEd.isDrawing) return;
+    e.preventDefault();
+    const [x, y] = _imgEdCanvasXY(e);
+    _imgEd.drawCtx.lineTo(x, y);
+    _imgEd.drawCtx.stroke();
+    _imgEdRender();
+  }
+
+  function _imgEdDrawEnd() { if (_imgEd) _imgEd.isDrawing = false; }
+
+  function _imgEdCanvasXY(e) {
+    const rect = _imgEd.canvas.getBoundingClientRect();
+    const sx = _imgEd.canvas.width  / rect.width;
+    const sy = _imgEd.canvas.height / rect.height;
+    return [(e.clientX - rect.left) * sx, (e.clientY - rect.top) * sy];
+  }
+
+  // ── Crop handle drag ────────────────────────────────────────────────────────
+
+  function _imgEdHandleStart(e) {
+    if (!_imgEd || _imgEd.mode !== 'crop') return;
+    const handle = e.target.closest('.qa-img-ed-handle');
+    if (!handle) return;
+    e.preventDefault();
+    e.stopPropagation();
+    _imgEd.dragHandle    = handle.dataset.pos;
+    _imgEd.dragStart     = { x: e.clientX, y: e.clientY };
+    _imgEd.dragStartCrop = { ..._imgEd.crop };
+    document.addEventListener('mousemove', _imgEdHandleDrag);
+    document.addEventListener('mouseup',   _imgEdHandleEnd);
+  }
+
+  function _imgEdHandleDrag(e) {
+    if (!_imgEd?.dragHandle) return;
+    const { dragHandle, dragStart, dragStartCrop: C, canvas } = _imgEd;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width  / rect.width;
+    const sy = canvas.height / rect.height;
+    const dx = (e.clientX - dragStart.x) * sx;
+    const dy = (e.clientY - dragStart.y) * sy;
+    const MIN = 20, MAX_X = canvas.width, MAX_Y = canvas.height;
+    let { x, y, w, h } = C;
+
+    switch (dragHandle) {
+      case 'tl': x = Math.min(C.x+dx, C.x+C.w-MIN); y = Math.min(C.y+dy, C.y+C.h-MIN); w = C.w-(x-C.x); h = C.h-(y-C.y); break;
+      case 'tm': y = Math.min(C.y+dy, C.y+C.h-MIN); h = C.h-(y-C.y); break;
+      case 'tr': w = Math.max(C.w+dx, MIN); y = Math.min(C.y+dy, C.y+C.h-MIN); h = C.h-(y-C.y); break;
+      case 'ml': x = Math.min(C.x+dx, C.x+C.w-MIN); w = C.w-(x-C.x); break;
+      case 'mr': w = Math.max(C.w+dx, MIN); break;
+      case 'bl': x = Math.min(C.x+dx, C.x+C.w-MIN); w = C.w-(x-C.x); h = Math.max(C.h+dy, MIN); break;
+      case 'bm': h = Math.max(C.h+dy, MIN); break;
+      case 'br': w = Math.max(C.w+dx, MIN); h = Math.max(C.h+dy, MIN); break;
+    }
+    // Clamp to canvas bounds
+    x = Math.max(0, Math.min(x, MAX_X - MIN));
+    y = Math.max(0, Math.min(y, MAX_Y - MIN));
+    w = Math.min(w, MAX_X - x);
+    h = Math.min(h, MAX_Y - y);
+    _imgEd.crop = { x, y, w, h };
+    _imgEdRender();
+    _imgEdUpdateHandles();
+  }
+
+  function _imgEdHandleEnd() {
+    if (_imgEd) { _imgEd.dragHandle = null; _imgEd.dragStart = null; _imgEd.dragStartCrop = null; }
+    document.removeEventListener('mousemove', _imgEdHandleDrag);
+    document.removeEventListener('mouseup',   _imgEdHandleEnd);
+  }
+
+  // ── Apply / Close ───────────────────────────────────────────────────────────
+
+  function closeImageEditor() {
+    const overlay = document.getElementById('qa-img-editor');
+    if (overlay) overlay.hidden = true;
+    _imgEd = null;
+  }
+
+  function applyImageEditor() {
+    if (!_imgEd) return;
+    const { img, canvas, drawCanvas, crop, imageIdx } = _imgEd;
+    const out = document.createElement('canvas');
+    out.width  = Math.max(1, Math.round(crop.w));
+    out.height = Math.max(1, Math.round(crop.h));
+    const oc = out.getContext('2d');
+    // Draw original image pixels (full-resolution crop)
+    const scaleX = img.naturalWidth  / canvas.width;
+    const scaleY = img.naturalHeight / canvas.height;
+    oc.drawImage(img,
+      crop.x * scaleX, crop.y * scaleY, crop.w * scaleX, crop.h * scaleY,
+      0, 0, out.width, out.height
+    );
+    // Overlay drawing strokes (at display scale, cropped)
+    oc.drawImage(drawCanvas, crop.x, crop.y, crop.w, crop.h, 0, 0, out.width, out.height);
+    attachedImages[imageIdx] = {
+      ...attachedImages[imageIdx],
+      dataUrl: out.toDataURL('image/jpeg', 0.92)
+    };
+    closeImageEditor();
+    renderImageStrip();
   }
 
   // ─── Transcript Handling ──────────────────────────────────────────────────
@@ -1460,12 +1909,11 @@
     hideRegenerateConfirmToast();
     guide = null;
     currentBlockIndex = -1;
-    qaMessages = [];
+    resetQaChats();
     guideContent.style.display = 'none';
     guideEmpty.style.display = '';
     generateError.style.display = 'none';
     chrome.storage?.local?.remove(['currentGuide', 'currentQaMessages']);
-    qaMessages_el.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture. I have the full transcript and guide as context.</p></div>';
     hideQaReplyReadyToast();
     const manualSection = document.getElementById('manual-paste-section');
     if (manualSection) manualSection.remove();
@@ -2379,6 +2827,10 @@ Now process the following transcript:`;
     isChatting = true;
     qaSend.disabled = true;
 
+    // Capture which chat receives this message (freeze at send time)
+    const sendChatIdx = activeQaChatIdx;
+    activeQaStreamChatIdx = sendChatIdx;
+
     // Collect all images (data URLs) and clear state
     const allImages = attachedImages.map(img => img.dataUrl);
     attachedImages = [];
@@ -2386,10 +2838,11 @@ Now process the following transcript:`;
 
     setStatus('loading', 'Waiting for reply…');
 
-    // Add user message to UI
+    // Add user message to the correct chat
+    const chatMessages = qaChats[sendChatIdx].messages;
     const userMsg = { role: 'user', content: text, images: allImages };
-    qaMessages.push(userMsg);
-    appendChatMsg('user', text, allImages);
+    chatMessages.push(userMsg);
+    appendChatMsg('user', text, allImages, 'default', sendChatIdx);
     qaInput.value = '';
     qaInput.style.height = 'auto';
 
@@ -2413,13 +2866,17 @@ Now process the following transcript:`;
       // .qa-katex-zone receives KaTeX-rendered text for complete $$...$$ blocks.
       // Plain-text .qa-chunk spans are appended after it.
       qaStreamEl.innerHTML = '<div class="chat-bubble"><div class="qa-katex-zone"></div><span class="qa-stream-cursor" aria-hidden="true"></span></div>';
-      qaMessages_el.appendChild(qaStreamEl);
+      const targetCol = getChatCol(sendChatIdx);
+      if (targetCol) {
+        const welcome = targetCol.querySelector('.qa-welcome');
+        if (welcome) welcome.remove();
+        targetCol.appendChild(qaStreamEl);
+      }
       qaStreamBubble = qaStreamEl.querySelector('.chat-bubble');
-      // Always scroll to bottom when the stream bubble first appears —
-      // the user just sent a message so they want to see the AI reply.
-      qaScrollToBottom();
+      // Always scroll to bottom when the stream bubble first appears
+      qaScrollToBottom(sendChatIdx);
     } else {
-      typingEl = appendTypingIndicator();
+      typingEl = appendTypingIndicator(sendChatIdx);
     }
 
     try {
@@ -2428,7 +2885,7 @@ Now process the following transcript:`;
 
       const req = apiRequest({
         type: 'CHAT',
-        messages: qaMessages.map(m => ({ role: m.role, content: m.content, ...(m.images?.length ? { images: m.images } : {}) })),
+        messages: chatMessages.map(m => ({ role: m.role, content: m.content, ...(m.images?.length ? { images: m.images } : {}) })),
         systemPrompt,
         provider: settings.provider,
         model: settings.model || null,
@@ -2450,7 +2907,9 @@ Now process the following transcript:`;
       if (!response.success) throw new Error(response.error);
 
       const assistantText = response.data;
-      qaMessages.push({ role: 'assistant', content: assistantText });
+      qaChats[sendChatIdx].messages.push({ role: 'assistant', content: assistantText });
+      // Keep qaMessages in sync if this was the active chat
+      if (sendChatIdx === activeQaChatIdx) qaMessages = qaChats[sendChatIdx].messages;
 
       if (useStream) {
         // Stream complete — stop accepting new chunks
@@ -2495,7 +2954,7 @@ Now process the following transcript:`;
             showCrossTabNotify(qaStreamEl);
           } else {
             // Always scroll to bottom when generation completes (per user request)
-            qaScrollToBottom();
+            qaScrollToBottom(sendChatIdx);
           }
         }
         qaStreamEl = null;
@@ -2504,7 +2963,7 @@ Now process the following transcript:`;
       } else {
         // Non-streaming path
         typingEl?.remove();
-        appendChatMsg('assistant', assistantText, false);
+        appendChatMsg('assistant', assistantText, false, 'default', sendChatIdx);
         persistChat();
       }
 
@@ -2525,7 +2984,7 @@ Now process the following transcript:`;
       }
 
       const humanError = humanizeApiError(err.message);
-      appendErrorMsg(humanError);
+      appendErrorMsg(humanError, sendChatIdx);
     } finally {
       isChatting = false;
       onQaInputChange();
@@ -2681,6 +3140,8 @@ Now process the following transcript:`;
 The student is currently at [${fmtSec(currentTime)}] in the video.
 
 Answer based on the transcript excerpt and guide blocks below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display) whenever math appears. Markdown formatting (e.g., #/## headings, short bullet lists) is allowed when it improves readability, but do not force markdown when plain text is clearer. If the question is about a different part of the lecture, reference the lecture structure to guide the student.
+
+If attached images contain user annotations (circles, highlights, underlines, arrows, or any drawn markings), pay special attention to those annotated regions and address them in extra detail — but do not reduce the depth of your answer for anything else.
 ${lectureOverview}
 --- TRANSCRIPT (${fmtSec(windowStart)} to ${fmtSec(windowEnd)}) ---
 ${windowText}
@@ -2692,14 +3153,15 @@ ${guideBlocksStr}${scriptContext}`;
   /** If the user is within this many px of the bottom, new assistant replies align to the start of the bubble instead of jumping to the end. */
   const QA_SCROLL_BOTTOM_THRESHOLD_PX = 80;
 
-  function qaIsFollowingLatest() {
-    const root = qaMessages_el;
+  function qaIsFollowingLatest(chatIdx) {
+    const root = getChatCol(chatIdx ?? activeQaChatIdx);
     if (!root) return true;
     return root.scrollHeight - root.scrollTop - root.clientHeight <= QA_SCROLL_BOTTOM_THRESHOLD_PX;
   }
 
-  function qaScrollToBottom() {
-    if (qaMessages_el) qaMessages_el.scrollTo({ top: qaMessages_el.scrollHeight, behavior: 'smooth' });
+  function qaScrollToBottom(chatIdx) {
+    const col = getChatCol(chatIdx ?? activeQaChatIdx);
+    if (col) col.scrollTo({ top: col.scrollHeight, behavior: 'smooth' });
   }
 
   /**
@@ -2707,8 +3169,8 @@ ${guideBlocksStr}${scriptContext}`;
    * Do not use scrollIntoView() here: it can scroll ancestor containers or the
    * host page and push the tab bar off-screen in the extension iframe.
    */
-  function qaScrollMessagesToShowElementTop(el) {
-    const root = qaMessages_el;
+  function qaScrollMessagesToShowElementTop(el, chatIdx) {
+    const root = getChatCol(chatIdx ?? activeQaChatIdx);
     if (!root || !el) return;
     const rootRect = root.getBoundingClientRect();
     const elRect = el.getBoundingClientRect();
@@ -2778,7 +3240,7 @@ ${guideBlocksStr}${scriptContext}`;
 
   function onQaMessagesScroll() {
     if (!qaReplyReadyToast || qaReplyReadyToast.hidden) return;
-    const root = qaMessages_el;
+    const root = getActiveChatCol();
     if (!root) return;
 
     if (qaReplyReadyTargetEl && qaReplyReadyTargetEl.isConnected) {
@@ -2813,24 +3275,21 @@ ${guideBlocksStr}${scriptContext}`;
     qaReplyReadyToast.hidden = false;
   }
 
-  function appendChatMsg(role, content, images, scrollMode) {
-    const wasFollowing = qaIsFollowingLatest();
-    scrollMode = scrollMode || 'default';
+  /** Build a chat message DOM element without appending it anywhere. Used by both appendChatMsg and _buildChatCol. */
+  function _buildChatMsgEl(role, content, images) {
     const renderedContent = role === 'assistant'
       ? normalizeLatexForKatex(unescapeMathDelimiters(content))
       : String(content ?? '');
 
-    // images may be an array of data-URLs, a single base64 string (legacy), or falsy
     let imgList = [];
     if (Array.isArray(images)) {
-      imgList = images.map(i => i.startsWith('data:') ? i : `data:image/jpeg;base64,${i}`);
+      imgList = images.map(i => (typeof i === 'string' && i.startsWith('data:')) ? i : `data:image/jpeg;base64,${i}`);
     } else if (typeof images === 'string' && images) {
       imgList = [`data:image/jpeg;base64,${images}`];
     }
 
     const div = document.createElement('div');
     div.className = `chat-msg ${role}`;
-
     let bubbleHtml = '';
     if (role === 'user' && imgList.length) {
       bubbleHtml += imgList.map(src =>
@@ -2840,9 +3299,6 @@ ${guideBlocksStr}${scriptContext}`;
     bubbleHtml += `<div class="chat-bubble">${renderMarkdown(renderedContent)}</div>`;
     div.innerHTML = bubbleHtml;
 
-    qaMessages_el.appendChild(div);
-
-    // Render KaTeX in the new message
     if (role === 'assistant' && typeof renderMathInElement === 'function') {
       const bubble = div.querySelector('.chat-bubble');
       if (bubble) {
@@ -2856,25 +3312,42 @@ ${guideBlocksStr}${scriptContext}`;
         });
       }
     }
+    return div;
+  }
+
+  function appendChatMsg(role, content, images, scrollMode, chatIdx) {
+    chatIdx = chatIdx ?? activeQaChatIdx;
+    const col = getChatCol(chatIdx);
+    if (!col) return null;
+    const wasFollowing = qaIsFollowingLatest(chatIdx);
+    scrollMode = scrollMode || 'default';
+
+    const div = _buildChatMsgEl(role, content, images);
+    // Remove welcome placeholder if present
+    const welcome = col.querySelector('.qa-welcome');
+    if (welcome) welcome.remove();
+    col.appendChild(div);
 
     if (scrollMode === 'none') return div;
 
     if (role === 'user') {
-      qaScrollToBottom();
+      qaScrollToBottom(chatIdx);
     } else if (_currentTab !== 'qa') {
-      // User navigated away from QA while waiting — show cross-tab notification
       showCrossTabNotify(div);
     } else if (wasFollowing) {
       hideQaReplyReadyToast();
-      qaScrollToBottom();
+      qaScrollToBottom(chatIdx);
     } else if (scrollMode === 'default') {
       showQaReplyReadyToast(div, content);
     }
     return div;
   }
 
-  function appendErrorMsg(content) {
-    const wasFollowing = qaIsFollowingLatest();
+  function appendErrorMsg(content, chatIdx) {
+    chatIdx = chatIdx ?? activeQaChatIdx;
+    const col = getChatCol(chatIdx);
+    if (!col) return null;
+    const wasFollowing = qaIsFollowingLatest(chatIdx);
     const div = document.createElement('div');
     div.className = 'chat-msg assistant chat-msg-error';
     div.innerHTML = `
@@ -2884,19 +3357,21 @@ ${guideBlocksStr}${scriptContext}`;
         <small>For guide generation, try Block count -> Custom tokens and lower the cap. For Q&amp;A, reduce Thinking or switch model/provider.</small>
       </div>
     `;
-    qaMessages_el.appendChild(div);
+    col.appendChild(div);
     if (_currentTab !== 'qa') {
       showCrossTabNotify(div);
     } else if (wasFollowing) {
-      qaScrollToBottom();
+      qaScrollToBottom(chatIdx);
     } else {
       showQaReplyReadyToast(div, content);
     }
     return div;
   }
 
-  function appendTypingIndicator() {
-    const wasFollowing = qaIsFollowingLatest();
+  function appendTypingIndicator(chatIdx) {
+    chatIdx = chatIdx ?? activeQaChatIdx;
+    const col = getChatCol(chatIdx);
+    const wasFollowing = qaIsFollowingLatest(chatIdx);
     const div = document.createElement('div');
     div.className = 'chat-msg assistant';
     div.innerHTML = `<div class="typing-indicator">
@@ -2904,8 +3379,8 @@ ${guideBlocksStr}${scriptContext}`;
       <div class="typing-dot"></div>
       <div class="typing-dot"></div>
     </div>`;
-    qaMessages_el.appendChild(div);
-    if (wasFollowing) qaScrollToBottom();
+    if (col) col.appendChild(div);
+    if (wasFollowing) qaScrollToBottom(chatIdx);
     return div;
   }
 
@@ -3068,7 +3543,8 @@ ${guideBlocksStr}${scriptContext}`;
   // ─── History Persistence ──────────────────────────────────────────────────
 
   function persistChat() {
-    storageSet({ currentQaMessages: qaMessages });
+    // Persist first chat for backward compatibility with history and session restore
+    storageSet({ currentQaMessages: qaChats[0]?.messages || [] });
     saveToHistory();
   }
 
@@ -3111,7 +3587,8 @@ ${guideBlocksStr}${scriptContext}`;
         lectureNumber,
         guide,
         // unlimitedStorage permission allows keeping images; they persist across sessions.
-        qaMessages: qaMessages.length ? qaMessages : (prevSame?.qaMessages || [])
+        // Always save first chat's messages to keep history backward-compatible.
+        qaMessages: (qaChats[0]?.messages?.length ? qaChats[0].messages : null) || prevSame?.qaMessages || []
       };
       history.unshift(entry);
       if (history.length > 50) history.length = 50;
@@ -3525,18 +4002,18 @@ ${guideBlocksStr}${scriptContext}`;
     }
 
     guide = entry.guide;
-    qaMessages = Array.isArray(entry.qaMessages) ? entry.qaMessages : [];
+    const restoredMsgs = Array.isArray(entry.qaMessages) ? entry.qaMessages : [];
+    qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs }];
+    activeQaChatIdx = 0;
+    _nextChatId = 2;
+    qaMessages = qaChats[0].messages;
     transcript = transcript || { cues: [], text: '', lectureTitle: entry.lectureTitle, videoDuration: 0 };
 
     showGuideContent();
     setStatus('ready', `Guide loaded · ${guide.guide.length} blocks`);
 
-    qaMessages_el.innerHTML = '';
-    if (qaMessages.length) {
-      restoreChatUI();
-    } else {
-      qaMessages_el.innerHTML = '<div class="qa-welcome"><p>Ask anything about this lecture.</p></div>';
-    }
+    hideQaReplyReadyToast();
+    initQaChatCols();
     switchTab('guide');
   }
 
@@ -3695,17 +4172,14 @@ ${guideBlocksStr}${scriptContext}`;
 
   function initQaScrollButton() {
     const btn = document.getElementById('qa-scroll-bottom-btn');
-    if (!btn || !qaMessages_el) return;
-
-    const update = () => {
-      btn.hidden = qaIsFollowingLatest();
-    };
-    qaMessages_el.addEventListener('scroll', update, { passive: true });
+    if (!btn) return;
+    // Per-column scroll listeners are attached in initQaChatCols; they call updateQaScrollBtn().
+    // Just wire the click handler here.
     btn.addEventListener('click', () => {
       qaScrollToBottom();
       btn.hidden = true;
     });
-    update();
+    updateQaScrollBtn();
   }
 
   // ─── Theme ────────────────────────────────────────────────────────────────

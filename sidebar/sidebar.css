@@ -2607,6 +2607,310 @@ body {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+/* ─── Q&A Multi-Chat Bar (matches main .tab-bar / .tab-btn style) ─────────── */
+.qa-chat-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+  flex-shrink: 0;
+  padding: 0;
+  /* hidden when only Chat 1 exists — shown once a second chat is added */
+}
+
+/* Each chat tab behaves like the main .tab-btn: flex:1, underline, uppercase */
+.qa-chat-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 9px 6px 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: var(--font-sans);
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color var(--transition), border-color var(--transition), background var(--transition);
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+/* Divider line between adjacent tabs */
+.qa-chat-tab + .qa-chat-tab {
+  border-left: 1px solid var(--border);
+}
+.qa-chat-tab:hover { color: var(--text-secondary); }
+.qa-chat-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 700;
+  background: var(--bg-0);
+}
+
+/* Close × button — appears on hover / active */
+.qa-chat-tab-close {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.14s, background 0.14s, color 0.14s;
+  margin-left: 1px;
+}
+.qa-chat-tab:hover .qa-chat-tab-close,
+.qa-chat-tab.active .qa-chat-tab-close { opacity: 0.55; }
+.qa-chat-tab-close:hover { opacity: 1 !important; color: var(--error); }
+
+/* + New-chat button — fixed slot on the right */
+.qa-chat-add-btn {
+  width: 30px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 17px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  align-self: stretch;
+  transition: color var(--transition), background var(--transition);
+}
+.qa-chat-add-btn:hover {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* ─── Q&A Chat Columns (single-view — only active column shown) ──────────── */
+.qa-messages {
+  overflow: hidden !important;
+  flex-direction: column !important;
+  padding: 0 !important;
+  gap: 0 !important;
+}
+
+/* Inactive columns are hidden; only the active one fills the space */
+.qa-chat-col {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 14px;
+  flex-direction: column;
+  gap: 12px;
+}
+.qa-chat-col.active { display: flex; }
+.qa-chat-col::-webkit-scrollbar { width: 4px; }
+.qa-chat-col::-webkit-scrollbar-track { background: transparent; }
+.qa-chat-col::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 2px; }
+
+/* ─── Image-edit hint (below image strip) ────────────────────────────────── */
+.qa-img-edit-hint {
+  display: none; /* shown by JS when images are attached */
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  padding: 2px 0 4px;
+  line-height: 1.35;
+}
+.qa-img-edit-hint svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* ─── Image Editor Overlay ───────────────────────────────────────────────── */
+.qa-img-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.15s ease;
+}
+.qa-img-editor-overlay[hidden] { display: none !important; }
+
+.qa-img-editor-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  cursor: zoom-out;
+}
+
+.qa-img-editor-container {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 11px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 70px);
+}
+
+.qa-img-editor-stage {
+  position: relative;
+  line-height: 0;
+  flex-shrink: 1;
+  min-height: 0;
+}
+
+.qa-img-ed-canvas {
+  display: block;
+  border-radius: 8px;
+  box-shadow: 0 18px 56px rgba(0, 0, 0, 0.52);
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 130px);
+  touch-action: none;
+}
+
+/* Crop handles layer */
+.qa-img-ed-handles-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 8px;
+}
+
+.qa-img-ed-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  border-radius: 2px;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  pointer-events: all;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+  transition: transform 0.1s;
+  z-index: 2;
+}
+.qa-img-ed-handle:hover { transform: translate(-50%, -50%) scale(1.25); }
+
+/* Cursor variants per handle position */
+.qa-img-ed-handle[data-pos="tl"],
+.qa-img-ed-handle[data-pos="br"] { cursor: nwse-resize; }
+.qa-img-ed-handle[data-pos="tr"],
+.qa-img-ed-handle[data-pos="bl"] { cursor: nesw-resize; }
+.qa-img-ed-handle[data-pos="tm"],
+.qa-img-ed-handle[data-pos="bm"] { cursor: ns-resize; }
+.qa-img-ed-handle[data-pos="ml"],
+.qa-img-ed-handle[data-pos="mr"] { cursor: ew-resize; }
+
+/* Editor toolbar */
+.qa-img-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 7px 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+}
+
+.qa-img-ed-mode-btn {
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.qa-img-ed-mode-btn.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.qa-img-ed-mode-btn:hover:not(.active) {
+  background: var(--bg-3);
+  color: var(--text-primary);
+}
+
+.qa-img-ed-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border-strong);
+  flex-shrink: 0;
+}
+
+.qa-img-ed-colors {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: opacity var(--transition);
+}
+.qa-img-ed-color {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  outline: none;
+  cursor: pointer;
+  transition: transform 0.14s, border-color 0.14s, box-shadow 0.14s;
+  flex-shrink: 0;
+  padding: 0;
+}
+.qa-img-ed-color:hover { transform: scale(1.2); }
+.qa-img-ed-color.active {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-1);
+  transform: scale(1.18);
+}
+
+.qa-img-ed-action-btn {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.qa-img-ed-action-btn:hover { background: var(--bg-3); color: var(--text-primary); }
+.qa-img-ed-action-btn.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+  font-weight: 600;
+}
+.qa-img-ed-action-btn.primary:hover { background: var(--accent-hover); }
+
 .qa-vision-warning {
   font-size: 10px;
   color: var(--text-muted);

@@ -328,6 +328,9 @@
   <!-- ── Q&A TAB ── -->
   <div id="tab-qa" class="tab-content">
 
+    <!-- Multi-chat tab bar -->
+    <div id="qa-chat-bar" class="qa-chat-bar"></div>
+
     <div id="qa-messages" class="qa-messages">
       <div class="qa-welcome">
         <p>Ask anything about this lecture. I have the full transcript and guide as context.</p>
@@ -481,6 +484,12 @@
       </div>
       <p class="attach-hint">Only works with vision models. Click to capture and attach the current video frame.</p>
       <div id="qa-image-strip" class="qa-image-strip" style="display:none" aria-label="Attached images"></div>
+      <div id="qa-img-edit-hint" class="qa-img-edit-hint" aria-live="polite">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+        </svg>
+        Tip: click an image to crop or draw on it before sending
+      </div>
       <input type="file" id="qa-file-input" accept="image/*" multiple style="display:none">
       <div class="qa-textarea-row">
         <textarea id="qa-input" placeholder="Ask a question about the lecture…" rows="2"></textarea>
@@ -930,6 +939,44 @@
 
   <!-- Speed toast — shown inside the sidebar when arrow keys change playback rate -->
   <div id="sidebar-speed-toast"></div>
+
+  <!-- Image Editor Overlay -->
+  <div id="qa-img-editor" class="qa-img-editor-overlay" hidden aria-modal="true" role="dialog" aria-label="Image editor">
+    <div class="qa-img-editor-backdrop" id="qa-img-ed-backdrop"></div>
+    <div class="qa-img-editor-container">
+      <div class="qa-img-editor-stage" id="qa-img-ed-stage">
+        <canvas id="qa-img-ed-canvas" class="qa-img-ed-canvas"></canvas>
+        <div class="qa-img-ed-handles-layer" id="qa-img-ed-handles">
+          <div class="qa-img-ed-handle" data-pos="tl"></div>
+          <div class="qa-img-ed-handle" data-pos="tm"></div>
+          <div class="qa-img-ed-handle" data-pos="tr"></div>
+          <div class="qa-img-ed-handle" data-pos="ml"></div>
+          <div class="qa-img-ed-handle" data-pos="mr"></div>
+          <div class="qa-img-ed-handle" data-pos="bl"></div>
+          <div class="qa-img-ed-handle" data-pos="bm"></div>
+          <div class="qa-img-ed-handle" data-pos="br"></div>
+        </div>
+      </div>
+      <div class="qa-img-editor-toolbar" id="qa-img-ed-toolbar">
+        <button class="qa-img-ed-mode-btn active" data-mode="crop">Crop</button>
+        <button class="qa-img-ed-mode-btn" data-mode="draw">Draw</button>
+        <div class="qa-img-ed-sep"></div>
+        <div class="qa-img-ed-colors" id="qa-img-ed-colors">
+          <button class="qa-img-ed-color active" data-color="#e53e3e" style="background:#e53e3e" title="Red"></button>
+          <button class="qa-img-ed-color" data-color="#3182ce" style="background:#3182ce" title="Blue"></button>
+          <button class="qa-img-ed-color" data-color="#38a169" style="background:#38a169" title="Green"></button>
+          <button class="qa-img-ed-color" data-color="#1a1a1a" style="background:#1a1a1a" title="Black"></button>
+          <button class="qa-img-ed-color" data-color="#ecc94b" style="background:#ecc94b" title="Yellow"></button>
+          <button class="qa-img-ed-color" data-color="#ed8936" style="background:#ed8936" title="Orange"></button>
+          <button class="qa-img-ed-color" data-color="#ffffff" style="background:#ffffff;outline:1px solid rgba(0,0,0,0.2)" title="White"></button>
+        </div>
+        <div class="qa-img-ed-sep"></div>
+        <button class="qa-img-ed-action-btn" id="qa-img-ed-clear-draw">Clear</button>
+        <button class="qa-img-ed-action-btn" id="qa-img-ed-cancel">Cancel</button>
+        <button class="qa-img-ed-action-btn primary" id="qa-img-ed-done">Done</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Scripts -->
   <script src="../lib/katex/katex.min.js"></script>
