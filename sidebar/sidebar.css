@@ -3004,6 +3004,9 @@ body {
   transition: color var(--transition);
 }
 .guide-abort-link:hover { color: var(--danger, #e53e3e); }
+/* Ensure [hidden] attribute wins over display:block */
+.guide-abort-link[hidden],
+.abort-icon-btn[hidden] { display: none !important; }
 .abort-icon-btn { color: var(--danger, #e53e3e); }
 .abort-icon-btn svg rect { fill: currentColor; stroke: none; }
 
