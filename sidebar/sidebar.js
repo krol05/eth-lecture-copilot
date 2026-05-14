@@ -579,17 +579,20 @@
     window.addEventListener('message', onContentMessage);
 
     // Keep --qa-footer-h CSS var in sync so the reply-ready toast always
-    // floats precisely above the footer regardless of footer height changes.
-    const _footerStack = document.querySelector('.qa-footer-stack');
-    if (_footerStack) {
-      const _updateFooterH = () => {
-        const h = _footerStack.getBoundingClientRect().height;
-        if (h > 0) document.documentElement.style.setProperty('--qa-footer-h', `${h}px`);
-      };
-      _updateFooterH();
-      if (window.ResizeObserver) {
-        new ResizeObserver(_updateFooterH).observe(_footerStack);
-      }
+    // floats precisely above the entire bottom area (script panel + footer stack).
+    const _footerStack  = document.querySelector('.qa-footer-stack');
+    const _scriptPanel  = document.getElementById('script-panel');
+    const _updateFooterH = () => {
+      const h1 = _footerStack  ? _footerStack.getBoundingClientRect().height  : 0;
+      const h2 = _scriptPanel  ? _scriptPanel.getBoundingClientRect().height  : 0;
+      const total = h1 + h2;
+      if (total > 0) document.documentElement.style.setProperty('--qa-footer-h', `${total}px`);
+    };
+    _updateFooterH();
+    if (window.ResizeObserver) {
+      const _ro = new ResizeObserver(_updateFooterH);
+      if (_footerStack) _ro.observe(_footerStack);
+      if (_scriptPanel) _ro.observe(_scriptPanel);
     }
 
     updateThinkingHint();
@@ -3353,6 +3356,15 @@ ${guideBlocksStr}${scriptContext}`;
    * (not “following” the bottom). Uses theme / UI font variables via CSS.
    */
   function showQaReplyReadyToast(targetDiv, content) {
+    // Skip toast if the top of the new message is already visible in the scroll column
+    if (targetDiv && targetDiv.isConnected) {
+      const root = getActiveChatCol();
+      if (root) {
+        const rootRect = root.getBoundingClientRect();
+        const msgRect  = targetDiv.getBoundingClientRect();
+        if (msgRect.top >= rootRect.top && msgRect.top < rootRect.bottom) return;
+      }
+    }
     qaReplyReadyTargetEl = targetDiv;
     if (!qaReplyReadyToast) return;
     const isErr = typeof content === 'string' && content.trim().startsWith('⚠');
