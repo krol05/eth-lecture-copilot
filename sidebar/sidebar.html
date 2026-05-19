@@ -51,6 +51,7 @@
   <div id="status-bar" class="status-bar status-loading" aria-live="polite" role="status">
     <div class="status-spinner"></div>
     <span id="status-text">Waiting for lecture page…</span>
+    <button id="status-dismiss" class="status-dismiss" type="button" title="Dismiss" aria-label="Dismiss message" hidden>×</button>
   </div>
 
   <!-- Tab bar -->
@@ -445,24 +446,60 @@
 
     <div class="qa-footer-stack">
       <div class="qa-input-area">
-      <div class="qa-temp-row">
-        <label class="qa-temp-label" for="qa-temp-slider">Temp
-          <span class="setting-hint" tabindex="0" data-tip="0.20-0.40 = focused, factual answers (recommended: 0.35)&#10;0.50-0.70 = more natural, conversational&#10;0.80+ = creative but may stray from lecture content">?</span>
-        </label>
-        <input type="range" id="qa-temp-slider" min="0" max="100" value="35" step="1">
-        <span id="qa-temp-value" class="gen-slider-value">0.35</span>
-      </div>
-      <div class="qa-temp-row">
-        <label class="qa-temp-label" for="qa-thinking-select">Thinking
-          <span class="setting-hint" id="qa-thinking-hint" tabindex="0" data-tip="">?</span>
-        </label>
-        <select id="qa-thinking-select" class="gen-setting-select">
-          <option value="none" selected>None</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-        </select>
-      </div>
+      <details id="qa-customization" class="qa-customization">
+        <summary class="qa-customization-summary">
+          <span>Customization</span>
+          <span class="qa-customization-meta">Thinking, Temp, Profiles</span>
+        </summary>
+        <div class="qa-customization-body">
+          <div class="qa-temp-row">
+            <label class="qa-temp-label" for="qa-temp-slider">Temp
+              <span class="setting-hint" tabindex="0" data-tip="0.20-0.40 = focused, factual answers (recommended: 0.35)&#10;0.50-0.70 = more natural, conversational&#10;0.80+ = creative but may stray from lecture content">?</span>
+            </label>
+            <input type="range" id="qa-temp-slider" min="0" max="100" value="35" step="1">
+            <span id="qa-temp-value" class="gen-slider-value">0.35</span>
+          </div>
+          <div class="qa-temp-row">
+            <label class="qa-temp-label" for="qa-thinking-select">Thinking
+              <span class="setting-hint" id="qa-thinking-hint" tabindex="0" data-tip="">?</span>
+            </label>
+            <select id="qa-thinking-select" class="gen-setting-select">
+              <option value="none" selected>None</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <div class="qa-temp-row qa-profile-row">
+            <label class="qa-temp-label" for="qa-response-length-select">Response depth
+              <span class="setting-hint" tabindex="0" data-tip="Controls how much detail to include in each answer.&#10;Default keeps a balanced amount.&#10;Use deeper modes when you want fuller reasoning.">?</span>
+            </label>
+            <select id="qa-response-length-select" class="gen-setting-select">
+              <option value="default" selected>Balanced (Default)</option>
+              <option value="ultra_concise">Lightning Summary</option>
+              <option value="concise">Concise Explanation</option>
+              <option value="thorough">Thorough Walkthrough</option>
+              <option value="deep_lecture">Deep Dive (Lecture Bound)</option>
+              <option value="deep_extended">Deep Dive + Extensions</option>
+            </select>
+          </div>
+          <div class="qa-temp-row qa-profile-row">
+            <label class="qa-temp-label" for="qa-response-style-select">Explanation style
+              <span class="setting-hint" tabindex="0" data-tip="Controls how the answer is phrased (from simple to rigorous).&#10;Default adapts style automatically to the question context.">?</span>
+            </label>
+            <select id="qa-response-style-select" class="gen-setting-select">
+              <option value="default" selected>Adaptive (Default)</option>
+              <option value="eli5">ELI5</option>
+              <option value="friendly">Friendly Beginner</option>
+              <option value="plain">Plain Language</option>
+              <option value="structured">Structured Basics</option>
+              <option value="tutor">Step-by-Step Tutor</option>
+              <option value="technical">Technical Precision</option>
+              <option value="formal">Formal Rigor</option>
+            </select>
+          </div>
+        </div>
+      </details>
       <div class="qa-attach-row">
         <button id="qa-frame-btn" class="attach-frame-btn" type="button" aria-label="Attach current video frame">
           <span class="attach-frame-pill">

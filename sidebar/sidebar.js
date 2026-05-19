@@ -58,6 +58,7 @@
   // ─── DOM Refs ─────────────────────────────────────────────────────────────
   const statusBar    = document.getElementById('status-bar');
   const statusText   = document.getElementById('status-text');
+  const statusDismiss = document.getElementById('status-dismiss');
   const generateBtn  = document.getElementById('generate-btn');
   const generateError = document.getElementById('generate-error');
   const guideEmpty   = document.getElementById('guide-empty');
@@ -103,6 +104,9 @@
   const qaTempValue    = document.getElementById('qa-temp-value');
   const qaThinkingSel  = document.getElementById('qa-thinking-select');
   const qaThinkingHint = document.getElementById('qa-thinking-hint');
+  const qaCustomization = document.getElementById('qa-customization');
+  const qaResponseLengthSel = document.getElementById('qa-response-length-select');
+  const qaResponseStyleSel = document.getElementById('qa-response-style-select');
   const qaReplyReadyToast = document.getElementById('qa-reply-ready-toast');
   const qaReplyReadyToastDismiss = document.getElementById('qa-reply-ready-toast-dismiss');
   const qaReplyReadyToastTitle = document.getElementById('qa-reply-ready-toast-title');
@@ -143,8 +147,31 @@
   let quizData = [];
   /** Current quiz state */
   let quizState = null; // { questions, currentIndex, scores: [true/false/null], done: false }
+  /** Exam questions for the current lecture (Tools tab) */
+  let examQuestionData = [];
+  /** Cross-lecture exam prediction output */
+  let crossExamQuestionData = [];
+  let crossExamTopics = [];
   /** Stream buffer for guide streaming */
   let streamBuffer = '';
+
+  const QA_LENGTH_PROFILE_PROMPTS = {
+    ultra_concise: 'Respond in 1-2 compact bullets or very short sentences. Keep only the core answer, no extra context.',
+    concise: 'Keep it concise: short explanation with only essential supporting detail.',
+    thorough: 'Provide a thorough explanation with clear steps and key intuition, while staying focused on the question.',
+    deep_lecture: 'Provide maximum detail, but stay strictly within lecture/script/guide scope. Do not add beyond-lecture material.',
+    deep_extended: 'Provide maximum detail and include relevant beyond-lecture context, extensions, and connections when useful.'
+  };
+
+  const QA_STYLE_PROFILE_PROMPTS = {
+    eli5: 'Explain like I am 5: super simple words, tiny steps, concrete examples, no jargon unless immediately explained.',
+    friendly: 'Explain for a complete beginner with very simple analogies and plain terms.',
+    plain: 'Use simple everyday language, avoid jargon unless absolutely needed.',
+    structured: 'Explain with clear structure: brief overview, then core points, then a short takeaway.',
+    tutor: 'Teach step-by-step, showing reasoning progression and checks for understanding.',
+    technical: 'Use precise technical terminology and concise formal wording.',
+    formal: 'Use rigorous, formal reasoning with explicit assumptions and careful definitions.'
+  };
 
   // ─── Multi-chat helpers ───────────────────────────────────────────────────
 
@@ -218,6 +245,15 @@
     const hasMessages = qaChats[idx]?.messages?.length > 0;
     if (hasMessages && !window.confirm(`Close ${chatName}? Its history will be lost.`)) return;
 
+    // Abort any active stream IN the chat being closed (its DOM element is about
+    // to disappear), but leave streams in OTHER chats alone — they must keep flowing.
+    for (const [reqId, state] of qaActiveStreams.entries()) {
+      if (state.chatIdx === idx) {
+        try { state.abortFn?.(); } catch (_) {}
+        qaActiveStreams.delete(reqId);
+      }
+    }
+
     // Remove the column from DOM
     getChatCol(idx)?.remove();
 
@@ -228,6 +264,15 @@
     document.querySelectorAll('.qa-chat-col').forEach((col, i) => {
       col.id = 'qa-chat-col-' + i;
     });
+
+    // CRITICAL: remap chatIdx in every still-active stream. Without this, a stream
+    // started in chat 2 (idx=1) keeps pointing at idx=1 even after chat 1 (idx=0)
+    // was closed, so when its response resolves `qaChats[1]` is undefined and the
+    // whole stream blows up with a TypeError that looks like an abort to the user.
+    for (const state of qaActiveStreams.values()) {
+      if (state.chatIdx > idx) state.chatIdx -= 1;
+    }
+    if (activeQaStreamChatIdx > idx) activeQaStreamChatIdx -= 1;
 
     // Determine which chat to switch to
     let nextIdx = activeQaChatIdx;
@@ -287,6 +332,10 @@
   function updateQaScrollBtn() {
     const btn = document.getElementById('qa-scroll-bottom-btn');
     if (!btn) return;
+    if (_currentTab !== 'qa') {
+      btn.hidden = true;
+      return;
+    }
     const toastVisible = qaReplyReadyToast && !qaReplyReadyToast.hidden;
     const root = getActiveChatCol();
     const farUp = root
@@ -300,12 +349,34 @@
   function init() {
     postToContent({ type: 'GET_SETTINGS' });
 
+    // SAFETY NET: pre-hydrate tool state from localStorage immediately on init,
+    // before EXTENSION_READY / TRANSCRIPT_READY arrive. This guarantees flashcards
+    // survive a hard reload even if those messages are slow, lossy, or carry a
+    // different URL than what was saved. The proper URL-keyed restore in
+    // tryRestoreFromCache will run later and (if it finds a real match) overwrite
+    // these with the canonical snapshot — but if it finds nothing, we still have
+    // the user's last work on screen instead of an empty panel.
+    try {
+      const eager = readToolOutputsLocalFallback();
+      console.log('[ETH-DBG] init: eager localStorage hydrate', {
+        has: !!eager,
+        flashcards: eager?.flashcards?.cards?.length || 0,
+        lectureUrl: eager?.lectureUrl || null
+      });
+      if (toolOutputsHasData(eager)) {
+        applyToolOutputsSnapshot(eager);
+      }
+    } catch (e) {
+      console.warn('[ETH-DBG] init: eager hydrate failed', e);
+    }
+
     // Tab switching
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => switchTab(btn.dataset.tab));
     });
 
     themeToggle.addEventListener('click', toggleTheme);
+    statusDismiss?.addEventListener('click', dismissStatus);
     uiSettingsBtn?.addEventListener('click', () => {
       chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' });
     });
@@ -379,6 +450,24 @@
       localStorage.setItem('eth-copilot-qa-thinking', qaThinkingSel.value || 'none');
     });
     if (qaThinkingSel) qaThinkingSel.value = localStorage.getItem('eth-copilot-qa-thinking') || 'none';
+    if (qaCustomization) {
+      qaCustomization.open = localStorage.getItem('eth-copilot-qa-customization-open') === '1';
+      qaCustomization.addEventListener('toggle', () => {
+        localStorage.setItem('eth-copilot-qa-customization-open', qaCustomization.open ? '1' : '0');
+      });
+    }
+    qaResponseLengthSel?.addEventListener('change', () => {
+      localStorage.setItem('eth-copilot-qa-response-length', qaResponseLengthSel.value || 'default');
+    });
+    if (qaResponseLengthSel) {
+      qaResponseLengthSel.value = localStorage.getItem('eth-copilot-qa-response-length') || 'default';
+    }
+    qaResponseStyleSel?.addEventListener('change', () => {
+      localStorage.setItem('eth-copilot-qa-response-style', qaResponseStyleSel.value || 'default');
+    });
+    if (qaResponseStyleSel) {
+      qaResponseStyleSel.value = localStorage.getItem('eth-copilot-qa-response-style') || 'default';
+    }
     genFallbackCb?.addEventListener('change', () => {
       genSettings?.classList.toggle('disabled-controls', genFallbackCb.checked);
     });
@@ -536,7 +625,12 @@
     document.getElementById('quiz-grade-wrong')?.addEventListener('click', () => quizGrade(false));
     document.getElementById('quiz-quit-btn')?.addEventListener('click', () => showQuizPanel('settings'));
     document.getElementById('quiz-restart-btn')?.addEventListener('click', () => showQuizPanel('settings'));
-    document.getElementById('quiz-results-close-btn')?.addEventListener('click', () => { quizState = null; showQuizPanel('settings'); });
+    document.getElementById('quiz-results-close-btn')?.addEventListener('click', () => {
+      quizState = null;
+      quizData = [];
+      showQuizPanel('settings');
+      persistToolOutputs();
+    });
     initPillGroup('quiz-count-pills');
     initPillGroup('quiz-type-pills');
 
@@ -606,9 +700,10 @@
       const u = new URL(href);
       u.hash = '';
       const path = u.pathname.replace(/\/+$/, '') || '/';
-      return `${u.origin}${path}${u.search}`;
+      // Ignore query params so transient player state does not break cache identity.
+      return `${u.origin}${path}`;
     } catch {
-      return String(href).trim().split('#')[0]?.replace(/\/+$/, '') || '';
+      return String(href).trim().split('#')[0]?.split('?')[0]?.replace(/\/+$/, '') || '';
     }
   }
 
@@ -658,6 +753,252 @@
     return matches[0];
   }
 
+  function buildToolOutputsSnapshot() {
+    // Guard: when quizState is null, the original `length === length` check evaluated
+    // to `undefined === undefined` → true, and then `quizState.scores.every(...)` blew
+    // up with a TypeError. That exception bubbled out of persistToolOutputs and got
+    // silently swallowed by the surrounding try/catch in generateFlashcards — so the
+    // flashcards rendered on screen but were never written to ANY storage. This is
+    // why no `[ETH-DBG] persistToolOutputs: saving` log ever appeared.
+    const quizDone = !!quizState && (
+      quizState.done === true ||
+      (Array.isArray(quizState.scores)
+        && Array.isArray(quizState.questions)
+        && quizState.scores.length === quizState.questions.length
+        && quizState.scores.every(s => s !== null))
+    );
+    return {
+      flashcards: flashcardData.length
+        ? { cards: flashcardData.map(c => ({ front: c.front, back: c.back })), index: flashcardIndex }
+        : null,
+      quiz: quizState?.questions?.length
+        ? {
+            questions: quizState.questions,
+            currentIndex: quizState.currentIndex,
+            scores: quizState.scores,
+            done: !!quizDone
+          }
+        : null,
+      exam: examQuestionData.length ? { questions: examQuestionData } : null,
+      crossExam: crossExamQuestionData.length
+        ? { questions: crossExamQuestionData, topics: crossExamTopics }
+        : null
+    };
+  }
+
+  function toolOutputsHasData(snapshot) {
+    if (!snapshot) return false;
+    return !!(snapshot.flashcards || snapshot.quiz || snapshot.exam || snapshot.crossExam);
+  }
+
+  function readToolOutputsLocalFallback() {
+    try {
+      const raw = localStorage.getItem('eth-copilot-tool-outputs');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return (parsed && typeof parsed === 'object') ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeToolOutputsLocalFallback(payload) {
+    try {
+      localStorage.setItem('eth-copilot-tool-outputs', JSON.stringify(payload));
+    } catch {
+      // Best-effort fallback only.
+    }
+  }
+
+  function clearToolOutputsLocalFallback() {
+    try {
+      localStorage.removeItem('eth-copilot-tool-outputs');
+    } catch {
+      // Best-effort fallback only.
+    }
+  }
+
+  function clearToolOutputsState() {
+    flashcardData = [];
+    flashcardIndex = 0;
+    quizData = [];
+    quizState = null;
+    examQuestionData = [];
+    crossExamQuestionData = [];
+    crossExamTopics = [];
+  }
+
+  function restoreToolOutputsUI() {
+    if (flashcardData.length) {
+      const countLabel = document.getElementById('flashcards-count-label');
+      if (countLabel) countLabel.textContent = `${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}`;
+      renderFlashcardList(flashcardData);
+      showFlashcardsPanel('results');
+    } else {
+      showFlashcardsPanel('settings');
+    }
+
+    if (quizState?.questions?.length) {
+      const quizDone = quizState.done
+        || (quizState.scores?.length === quizState.questions.length
+          && quizState.scores.every(s => s !== null));
+      if (quizDone) {
+        showQuizPanel('results');
+        showQuizResults();
+      } else {
+        showQuizPanel('active');
+        renderQuizQuestion();
+      }
+    } else {
+      showQuizPanel('settings');
+    }
+
+    if (examQuestionData.length) {
+      renderExamQuestionList('exam-question-list', examQuestionData);
+      const countLabel = document.getElementById('exam-count-label');
+      if (countLabel) countLabel.textContent = `${examQuestionData.length} question${examQuestionData.length !== 1 ? 's' : ''}`;
+      showExamPanel('results');
+    } else {
+      showExamPanel('settings');
+    }
+
+    if (crossExamQuestionData.length) {
+      renderCrossExamTopics(crossExamTopics);
+      renderExamQuestionList('cross-exam-question-list', crossExamQuestionData);
+      const countLabel = document.getElementById('cross-exam-count-label');
+      if (countLabel) countLabel.textContent = `${crossExamQuestionData.length} question${crossExamQuestionData.length !== 1 ? 's' : ''}`;
+      showCrossExamPanel('results');
+    } else {
+      showCrossExamPanel('settings');
+    }
+  }
+
+  function applyToolOutputsSnapshot(snapshot) {
+    console.log('[ETH-DBG] applyToolOutputsSnapshot:', {
+      hasSnapshot: !!snapshot,
+      flashcards: snapshot?.flashcards?.cards?.length || 0,
+      quiz: snapshot?.quiz?.questions?.length || 0,
+      exam: snapshot?.exam?.questions?.length || 0
+    });
+    clearToolOutputsState();
+    if (!snapshot) {
+      restoreToolOutputsUI();
+      return;
+    }
+    if (snapshot.flashcards?.cards?.length) {
+      flashcardData = snapshot.flashcards.cards.map(c => ({ front: c.front, back: c.back }));
+      flashcardIndex = Math.min(
+        snapshot.flashcards.index || 0,
+        Math.max(0, flashcardData.length - 1)
+      );
+    }
+    if (snapshot.quiz?.questions?.length) {
+      quizState = {
+        questions: snapshot.quiz.questions,
+        currentIndex: Math.min(snapshot.quiz.currentIndex || 0, snapshot.quiz.questions.length - 1),
+        scores: Array.isArray(snapshot.quiz.scores)
+          ? snapshot.quiz.scores
+          : new Array(snapshot.quiz.questions.length).fill(null),
+        done: !!snapshot.quiz.done
+      };
+      quizData = quizState.questions;
+    }
+    if (snapshot.exam?.questions?.length) {
+      examQuestionData = snapshot.exam.questions;
+    }
+    if (snapshot.crossExam?.questions?.length) {
+      crossExamQuestionData = snapshot.crossExam.questions;
+      crossExamTopics = Array.isArray(snapshot.crossExam.topics) ? snapshot.crossExam.topics : [];
+    }
+    restoreToolOutputsUI();
+  }
+
+  function patchHistoryToolOutputs(snapshot) {
+    if (!currentLectureUrl || !toolOutputsHasData(snapshot)) return;
+    const norm = normalizeLectureUrl(currentLectureUrl);
+    chrome.storage?.local?.get(['guideHistory'], saved => {
+      const history = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
+      const entry = history.find(h => normalizeLectureUrl(h.lectureUrl) === norm);
+      if (!entry) return;
+      entry.toolOutputs = snapshot;
+      storageSet({ guideHistory: history });
+    });
+  }
+
+  function persistToolOutputs() {
+    const snapshot = buildToolOutputsSnapshot();
+    const counts = {
+      flashcards: snapshot.flashcards?.cards?.length || 0,
+      quiz: snapshot.quiz?.questions?.length || 0,
+      exam: snapshot.exam?.questions?.length || 0,
+      crossExam: snapshot.crossExam?.questions?.length || 0
+    };
+    const norm = currentLectureUrl ? normalizeLectureUrl(currentLectureUrl) : null;
+
+    if (!toolOutputsHasData(snapshot)) {
+      console.log('[ETH-DBG] persistToolOutputs: empty snapshot — clearing caches', { norm });
+      chrome.storage?.local?.remove(['currentToolOutputs', 'currentGuideToolOutputs']);
+      clearToolOutputsLocalFallback();
+      return;
+    }
+
+    console.log('[ETH-DBG] persistToolOutputs: saving', { norm, ...counts });
+
+    // Always write to localStorage — this works even before `currentLectureUrl` is
+    // available (e.g. EXTENSION_READY hasn't propagated yet) and survives hard reloads.
+    writeToolOutputsLocalFallback({ lectureUrl: norm || null, ...snapshot, savedAt: Date.now() });
+
+    // Session fallback in chrome.storage.local — also lectureUrl-independent.
+    storageSet({ currentGuideToolOutputs: snapshot });
+
+    // Lecture-keyed cache (only when we know the URL).
+    if (norm) {
+      storageSet({ currentToolOutputs: { lectureUrl: norm, ...snapshot } });
+      patchHistoryToolOutputs(snapshot);
+    } else {
+      console.warn('[ETH-DBG] persistToolOutputs: no currentLectureUrl — skipping lecture-keyed cache, but localStorage + session fallback still saved');
+    }
+  }
+
+  function restoreToolOutputsForLecture(historyEntry, sessionFallbackSnapshot = null) {
+    if (!currentLectureUrl) {
+      console.warn('[ETH-DBG] restoreToolOutputsForLecture: no currentLectureUrl — skipping');
+      return;
+    }
+    const norm = normalizeLectureUrl(currentLectureUrl);
+    const localFallback = readToolOutputsLocalFallback();
+    chrome.storage?.local?.get(['currentToolOutputs', 'currentGuideToolOutputs'], saved => {
+      const cached = saved.currentToolOutputs;
+      let snapshot = null;
+      let source = 'none';
+      if (cached?.lectureUrl === norm && toolOutputsHasData(cached)) {
+        snapshot = cached; source = 'lecture-cache';
+      } else if (toolOutputsHasData(sessionFallbackSnapshot)) {
+        snapshot = sessionFallbackSnapshot; source = 'session-fallback';
+      } else if (toolOutputsHasData(saved.currentGuideToolOutputs)) {
+        snapshot = saved.currentGuideToolOutputs; source = 'guide-tool-cache';
+      } else if (localFallback?.lectureUrl === norm && toolOutputsHasData(localFallback)) {
+        snapshot = localFallback; source = 'localStorage-fallback';
+      } else if (historyEntry?.toolOutputs && toolOutputsHasData(historyEntry.toolOutputs)) {
+        snapshot = historyEntry.toolOutputs; source = 'history-entry';
+      } else if (toolOutputsHasData(localFallback) && (!localFallback.lectureUrl || localFallback.lectureUrl === norm)) {
+        // Last-resort: localStorage snapshot from a session that didn't yet know the URL.
+        snapshot = localFallback; source = 'localStorage-fallback-no-url';
+      }
+      console.log('[ETH-DBG] restoreToolOutputsForLecture:', {
+        source, norm,
+        cachedLectureUrl: cached?.lectureUrl || null,
+        cachedMatches: cached?.lectureUrl === norm,
+        hasSessionFallback: !!sessionFallbackSnapshot,
+        hasGuideToolCache: !!saved.currentGuideToolOutputs,
+        hasLocalFallback: !!localFallback,
+        localFallbackLectureUrl: localFallback?.lectureUrl || null,
+        flashcardCount: snapshot?.flashcards?.cards?.length || 0
+      });
+      applyToolOutputsSnapshot(snapshot);
+    });
+  }
+
   function applyRestoredGuide(guideData, qaFromStorage, persistSession, qaChatsFromStorage) {
     guide = guideData;
     sanitizeGuide(guide);
@@ -690,7 +1031,8 @@
   }
 
   function tryRestoreFromCache(lectureUrl) {
-    if (!lectureUrl) return;
+    console.log('[ETH-DBG] tryRestoreFromCache called with:', lectureUrl);
+    if (!lectureUrl) { console.warn('[ETH-DBG] tryRestoreFromCache: no lectureUrl'); return; }
     currentLectureUrl = lectureUrl;
     initScriptsForCourse(lectureUrl);
     const normNew = normalizeLectureUrl(lectureUrl);
@@ -703,19 +1045,22 @@
     });
 
     chrome.storage?.local?.get(
-      ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages', 'currentQaChats', 'guideHistory'],
+      ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages', 'currentQaChats', 'guideHistory', 'currentGuideToolOutputs'],
       saved => {
         const hist = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
         const normSaved = saved.currentLectureUrl ? normalizeLectureUrl(saved.currentLectureUrl) : '';
         const sessionMatches = normSaved === normNew;
 
         if (!sessionMatches) {
-          chrome.storage?.local?.remove(['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages', 'currentQaChats']);
+          // Do not eagerly delete persisted session/tool caches here.
+          // EXTENSION_READY can briefly report a URL variant that differs from TRANSCRIPT_READY,
+          // and eager deletion would wipe flashcards before a second restore can run.
           resetGuideUI();
           setStatus('loading', 'New lecture detected — waiting for transcript…');
         }
 
         let restoredGuide = false;
+        let historyEntryForTools = null;
 
         if (sessionMatches && saved.currentGuide?.guide?.length) {
           applyRestoredGuide(saved.currentGuide, saved.currentQaMessages, false, saved.currentQaChats);
@@ -725,7 +1070,25 @@
           if (latest?.guide?.guide?.length) {
             applyRestoredGuide(latest.guide, latest.qaMessages, true, latest.qaChatsData);
             restoredGuide = true;
+            historyEntryForTools = latest;
           }
+        }
+
+        console.log('[ETH-DBG] tryRestoreFromCache outcome:', {
+          sessionMatches, restoredGuide,
+          normSaved, normNew,
+          hasCurrentGuide: !!saved.currentGuide?.guide?.length,
+          historyMatches: !!historyEntryForTools,
+          hasGuideToolCache: !!saved.currentGuideToolOutputs
+        });
+        if (restoredGuide) {
+          restoreToolOutputsForLecture(historyEntryForTools, saved.currentGuideToolOutputs || null);
+        } else {
+          // Even if we couldn't restore a guide yet (e.g. TRANSCRIPT_READY not arrived),
+          // still try to restore tool outputs from any available source.
+          // The Tools UI elements are in the DOM regardless of whether the Guide tab is populated.
+          console.log('[ETH-DBG] tryRestoreFromCache: no guide yet — still attempting tool restore');
+          restoreToolOutputsForLecture(null, saved.currentGuideToolOutputs || null);
         }
 
         if (sessionMatches && saved.currentTranscript) {
@@ -751,6 +1114,8 @@
     currentBlockIndex = -1;
     resetQaChats();
     isGenerating = false;
+    clearToolOutputsState();
+    restoreToolOutputsUI();
     guideContent.style.display = 'none';
     guideEmpty.style.display = '';
     generateError.style.display = 'none';
@@ -860,7 +1225,15 @@
 
       case 'EXTENSION_READY':
         setStatus('loading', 'Detecting transcript…');
-        tryRestoreFromCache(msg.lectureUrl);
+        if (msg.lectureUrl) {
+          tryRestoreFromCache(msg.lectureUrl);
+        } else {
+          // Some hard-reload paths deliver EXTENSION_READY before lecture URL is attached.
+          // Try restoring from the last known lecture session as a fallback.
+          chrome.storage?.local?.get(['currentLectureUrl'], saved => {
+            if (saved.currentLectureUrl) tryRestoreFromCache(saved.currentLectureUrl);
+          });
+        }
         break;
 
       case 'SETTINGS':
@@ -876,6 +1249,11 @@
 
       case 'TRANSCRIPT_READY':
         handleTranscriptReady(msg);
+        // Hard reloads can occasionally race and miss the early EXTENSION_READY restore.
+        // Retry restore once transcript provides a reliable lecture URL.
+        if (!guide?.guide?.length && msg.lectureUrl) {
+          tryRestoreFromCache(msg.lectureUrl);
+        }
         break;
 
       case 'TRANSCRIPT_DATE_UPDATE':
@@ -1970,7 +2348,10 @@
     guideContent.style.display = 'none';
     guideEmpty.style.display = '';
     generateError.style.display = 'none';
-    chrome.storage?.local?.remove(['currentGuide', 'currentQaMessages']);
+    chrome.storage?.local?.remove(['currentGuide', 'currentQaMessages', 'currentToolOutputs', 'currentGuideToolOutputs']);
+    clearToolOutputsLocalFallback();
+    clearToolOutputsState();
+    restoreToolOutputsUI();
     hideQaReplyReadyToast();
     const manualSection = document.getElementById('manual-paste-section');
     if (manualSection) manualSection.remove();
@@ -2914,11 +3295,23 @@ Now process the following transcript:`;
     qaInput.value = '';
     qaInput.style.height = 'auto';
 
+    // Smoothly scroll the chat to the bottom after the user's message is appended.
+    // requestAnimationFrame ensures layout has settled (so scrollHeight is correct).
+    const sendCol = getChatCol(sendChatIdx);
+    if (sendCol) {
+      requestAnimationFrame(() => {
+        sendCol.scrollTo({ top: sendCol.scrollHeight, behavior: 'smooth' });
+      });
+    }
+
     // All providers support SSE streaming; use it for progressive rendering
     const useStream = !!settings.provider;
 
-    // Build system prompt with context (including script chunks if available)
-    const systemPrompt = await buildQAPrompt(text);
+    // Build system prompt with context:
+    // first user message in this chat => include full guide once
+    // follow-up messages => transcript window only (no guide payload)
+    const isFirstUserMessageInChat = chatMessages.filter(m => m.role === 'user').length === 1;
+    const systemPrompt = await buildQAPrompt(text, { includeWholeGuide: isFirstUserMessageInChat });
 
     // Prepare streaming message element or typing indicator
     let typingEl = null;
@@ -2980,10 +3373,18 @@ Now process the following transcript:`;
 
       if (!response.success) throw new Error(response.error);
 
+      // The chat may have been re-indexed (because some other chat was closed
+      // during the stream). Use the live chatIdx from streamState if available.
+      const liveChatIdx = streamState ? streamState.chatIdx : sendChatIdx;
       const assistantText = response.data;
-      qaChats[sendChatIdx].messages.push({ role: 'assistant', content: assistantText });
+      if (!qaChats[liveChatIdx]) {
+        // Originating chat was closed mid-stream — nothing to do.
+        console.warn('[ETH-DBG] sendQaMessage: originating chat no longer exists', { liveChatIdx });
+        return;
+      }
+      qaChats[liveChatIdx].messages.push({ role: 'assistant', content: assistantText });
       // Keep qaMessages in sync if this was the active chat
-      if (sendChatIdx === activeQaChatIdx) qaMessages = qaChats[sendChatIdx].messages;
+      if (liveChatIdx === activeQaChatIdx) qaMessages = qaChats[liveChatIdx].messages;
 
       if (useStream) {
         // Stream complete — stop accepting new chunks
@@ -3038,7 +3439,7 @@ Now process the following transcript:`;
       } else {
         // Non-streaming path
         typingEl?.remove();
-        appendChatMsg('assistant', assistantText, false, 'default', sendChatIdx);
+        appendChatMsg('assistant', assistantText, false, 'default', liveChatIdx);
         persistChat();
       }
 
@@ -3053,8 +3454,11 @@ Now process the following transcript:`;
         // If aborted and we have partial content, finalize it instead of removing
         if (err.message === 'Request aborted.' && streamState?.buffer) {
           const partialText = streamState.buffer;
-          qaChats[sendChatIdx].messages.push({ role: 'assistant', content: partialText });
-          if (sendChatIdx === activeQaChatIdx) qaMessages = qaChats[sendChatIdx].messages;
+          const liveChatIdx = streamState ? streamState.chatIdx : sendChatIdx;
+          if (qaChats[liveChatIdx]) {
+            qaChats[liveChatIdx].messages.push({ role: 'assistant', content: partialText });
+            if (liveChatIdx === activeQaChatIdx) qaMessages = qaChats[liveChatIdx].messages;
+          }
           // Finalize the partial bubble with markdown+katex
           if (streamBubble) {
             const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(partialText));
@@ -3078,7 +3482,8 @@ Now process the following transcript:`;
 
       if (err.message !== 'Request aborted.') {
         const humanError = humanizeApiError(err.message);
-        appendErrorMsg(humanError, sendChatIdx);
+        const errChatIdx = streamState ? streamState.chatIdx : sendChatIdx;
+        if (qaChats[errChatIdx]) appendErrorMsg(humanError, errChatIdx);
       }
     } finally {
       onQaInputChange(); // clears stop button since stream is removed
@@ -3169,7 +3574,36 @@ Now process the following transcript:`;
    * - Uses the transcript window content + user query for script retrieval
    * - Includes a compact lecture overview (block titles) for structural awareness
    */
-  async function buildQAPrompt(userQuery) {
+  function buildQaResponseProfilePrompt(userQuery) {
+    const lengthKey = qaResponseLengthSel?.value || 'default';
+    const styleKey = qaResponseStyleSel?.value || 'default';
+    const userAskedEli5 = /\beli5\b/i.test(String(userQuery || ''));
+    const tags = [];
+    const lines = [
+      'Apply response-profile instructions only when [QA_PROFILE_*] tags are present in THIS prompt.',
+      'Do not carry over response-profile behavior from earlier turns if the current prompt has no such tags.'
+    ];
+    if (lengthKey !== 'default' && QA_LENGTH_PROFILE_PROMPTS[lengthKey]) {
+      tags.push('[QA_PROFILE_LENGTH_ACTIVE]');
+      lines.push(`Response depth profile: ${QA_LENGTH_PROFILE_PROMPTS[lengthKey]}`);
+    }
+    if (styleKey !== 'default' && QA_STYLE_PROFILE_PROMPTS[styleKey]) {
+      if (styleKey === 'eli5' && userAskedEli5) {
+        // User already asked for ELI5 explicitly in this message.
+      } else {
+        tags.push('[QA_PROFILE_STYLE_ACTIVE]');
+        lines.push(`Explanation style profile: ${QA_STYLE_PROFILE_PROMPTS[styleKey]}`);
+      }
+    }
+    if (!tags.length) {
+      return '[QA_PROFILE_DEFAULT]\nUse balanced depth and adaptive style.\n' +
+        lines.join('\n') + '\n\n';
+    }
+    return `${tags.join(' ')}\n${lines.join('\n')}\n\n`;
+  }
+
+  async function buildQAPrompt(userQuery, opts = {}) {
+    const includeWholeGuide = !!opts.includeWholeGuide;
     const title = transcript?.lectureTitle || 'Lecture';
     const currentTime = lastVideoTime || 0;
     const WINDOW_SEC = 180; // ±3 minutes
@@ -3187,28 +3621,12 @@ Now process the following transcript:`;
       ? windowCues.map(c => `[${fmtSec(c.start_time)}] ${c.text}`).join('\n')
       : (transcript?.text?.slice(0, 4000) || '(no transcript)');
 
-    // 2. Extract relevant guide blocks for the time window
-    let guideBlocksStr = '(guide not yet generated)';
-    if (guide?.guide?.length) {
-      const relevant = guide.guide.filter(b =>
-        b.end_time >= windowStart && b.start_time <= windowEnd
-      );
-      if (relevant.length) {
-        guideBlocksStr = JSON.stringify(relevant, null, 2);
-      } else {
-        const idx = findBlockIndex(currentTime);
-        guideBlocksStr = JSON.stringify([guide.guide[idx]], null, 2);
-      }
-    }
-
-    // 3. Compact lecture overview (title + time range per block, ~few tokens)
-    let lectureOverview = '';
-    if (guide?.guide?.length) {
-      lectureOverview = '\n--- LECTURE STRUCTURE ---\n' +
-        guide.guide.map((b, i) =>
-          `${i + 1}. [${fmtSec(b.start_time)}-${fmtSec(b.end_time)}] ${b.title}`
-        ).join('\n') + '\n';
-    }
+    // 2. Guide inclusion policy:
+    // - first question in a chat => include full guide
+    // - follow-up questions => no guide payload (transcript window only)
+    const guideBlocksStr = includeWholeGuide && guide?.guide?.length
+      ? JSON.stringify(guide.guide, null, 2)
+      : '';
 
     // 4. Script retrieval using transcript context + user query
     let scriptContext = '';
@@ -3229,19 +3647,18 @@ Now process the following transcript:`;
 
     const hasScript = !!scriptContext;
     const qaExtraPrefix = customPromptExtras.qa ? customPromptExtras.qa.trim() + '\n\n' : '';
+    const qaResponseProfile = buildQaResponseProfilePrompt(userQuery);
 
-    return `${qaExtraPrefix}You are a helpful study assistant for the ETH Zürich lecture: "${title}".
+    return `${qaExtraPrefix}${qaResponseProfile}You are a helpful study assistant for the ETH Zürich lecture: "${title}".
 The student is currently at [${fmtSec(currentTime)}] in the video.
 
-Answer based on the transcript excerpt and guide blocks below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display) whenever math appears. Markdown formatting (e.g., #/## headings, short bullet lists) is allowed when it improves readability, but do not force markdown when plain text is clearer. If the question is about a different part of the lecture, reference the lecture structure to guide the student.
+Answer based on the transcript excerpt below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display) whenever math appears. Markdown formatting (e.g., #/## headings, short bullet lists) is allowed when it improves readability, but do not force markdown when plain text is clearer.
 
 If attached images contain user annotations (circles, highlights, underlines, arrows, or any drawn markings), pay special attention to those annotated regions and address them in extra detail — but do not reduce the depth of your answer for anything else.
-${lectureOverview}
+
 --- TRANSCRIPT (${fmtSec(windowStart)} to ${fmtSec(windowEnd)}) ---
 ${windowText}
-
---- GUIDE BLOCKS (current section) ---
-${guideBlocksStr}${scriptContext}`;
+${guideBlocksStr ? `\n--- GUIDE BLOCKS (full lecture guide; first message only) ---\n${guideBlocksStr}` : ''}${scriptContext}`;
   }
 
   /** Auto-hide the reply-ready toast when user scrolls within this many px of the bottom. */
@@ -3356,6 +3773,10 @@ ${guideBlocksStr}${scriptContext}`;
    * (not “following” the bottom). Uses theme / UI font variables via CSS.
    */
   function showQaReplyReadyToast(targetDiv, content) {
+    if (_currentTab !== 'qa') {
+      hideQaReplyReadyToast();
+      return;
+    }
     // Skip toast if the top of the new message is already visible in the scroll column
     if (targetDiv && targetDiv.isConnected) {
       const root = getActiveChatCol();
@@ -3688,7 +4109,8 @@ ${guideBlocksStr}${scriptContext}`;
         // unlimitedStorage permission allows keeping images; they persist across sessions.
         // Always save first chat's messages to keep history backward-compatible.
         qaMessages: (qaChats[0]?.messages?.length ? qaChats[0].messages : null) || prevSame?.qaMessages || [],
-        qaChatsData: qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages }))
+        qaChatsData: qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages })),
+        toolOutputs: buildToolOutputsSnapshot()
       };
       history.unshift(entry);
       if (history.length > 50) history.length = 50;
@@ -3932,12 +4354,10 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   function buildYearGroup(year, seasonMap, groups, hiddenSet, activeCourseKey, activeYS) {
-    const isActiveYear = activeYS?.year === year;
     const totalGuides  = Object.values(seasonMap).flat().reduce((n, k) => n + (groups[k]?.entries.length || 0), 0);
 
     const details = document.createElement('details');
     details.className = 'history-year-group';
-    if (isActiveYear) details.open = true;
     details.innerHTML = `<summary class="history-year-summary">
       <span class="history-year-chevron">›</span>
       <span class="history-year-label">${escHtml(year)}</span>
@@ -3952,7 +4372,7 @@ ${guideBlocksStr}${scriptContext}`;
 
     for (const season of sortedSeasons) {
       const courseKeys = seasonMap[season];
-      const isActiveSeason = isActiveYear && activeYS?.season === season;
+      const isActiveSeason = !!(activeYS?.year === year && activeYS?.season === season);
       const seasonDetails = buildSeasonGroup(season, courseKeys, groups, hiddenSet, activeCourseKey, isActiveSeason);
       details.appendChild(seasonDetails);
     }
@@ -3965,7 +4385,6 @@ ${guideBlocksStr}${scriptContext}`;
 
     const details = document.createElement('details');
     details.className = 'history-season-group';
-    if (isActiveSeason) details.open = true;
     details.innerHTML = `<summary class="history-season-summary">
       <span class="history-season-chevron">›</span>
       <span class="history-season-label">${escHtml(season)}</span>
@@ -3993,7 +4412,6 @@ ${guideBlocksStr}${scriptContext}`;
 
     const details = document.createElement('details');
     details.className = 'history-course-group';
-    if (hasActive || count <= 3) details.open = true;
 
     const guideWord = count === 1 ? 'guide' : 'guides';
     details.innerHTML = `
@@ -4112,13 +4530,28 @@ ${guideBlocksStr}${scriptContext}`;
     }
     activeQaChatIdx = 0;
     qaMessages = qaChats[0].messages;
+    if (entry.lectureUrl) currentLectureUrl = entry.lectureUrl;
     transcript = transcript || { cues: [], text: '', lectureTitle: entry.lectureTitle, videoDuration: 0 };
+
+    // Persist loaded history entry as the current session so refresh keeps matching lecture identity
+    // and does not clear tool outputs as "new lecture detected".
+    storageSet({
+      currentGuide: guide,
+      currentLectureUrl: currentLectureUrl,
+      currentQaMessages: qaChats[0]?.messages || [],
+      currentQaChats: qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages }))
+    });
 
     showGuideContent();
     setStatus('ready', `Guide loaded · ${guide.guide.length} blocks`);
 
     hideQaReplyReadyToast();
     initQaChatCols();
+    applyToolOutputsSnapshot(entry.toolOutputs || null);
+    if (entry.toolOutputs && toolOutputsHasData(entry.toolOutputs)) {
+      const norm = normalizeLectureUrl(entry.lectureUrl);
+      storageSet({ currentToolOutputs: { lectureUrl: norm, ...entry.toolOutputs } });
+    }
     switchTab('guide');
   }
 
@@ -4244,6 +4677,8 @@ ${guideBlocksStr}${scriptContext}`;
       hideCrossTabNotify();
     } else {
       hideQaReplyReadyToast();
+      const btn = document.getElementById('qa-scroll-bottom-btn');
+      if (btn) btn.hidden = true;
     }
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
@@ -4327,10 +4762,19 @@ ${guideBlocksStr}${scriptContext}`;
   // ─── Status Bar ───────────────────────────────────────────────────────────
 
   function setStatus(type, text) {
+    statusBar.classList.remove('status-dismissed');
     statusBar.className = `status-bar status-${type}`;
     statusText.textContent = text;
     const spinner = statusBar.querySelector('.status-spinner');
     if (spinner) spinner.style.display = type === 'loading' ? 'block' : 'none';
+    if (statusDismiss) {
+      statusDismiss.hidden = type !== 'error' && type !== 'warning';
+    }
+  }
+
+  function dismissStatus() {
+    statusBar.classList.add('status-dismissed');
+    if (statusDismiss) statusDismiss.hidden = true;
   }
 
   // ─── Utilities ────────────────────────────────────────────────────────────
@@ -4863,6 +5307,7 @@ ${guideBlocksStr}${scriptContext}`;
           flashcardData = resp.data?.flashcards || [];
           if (!flashcardData.length) throw new Error('No flashcards returned.');
           flashcardIndex = 0;
+          persistToolOutputs();
           body.innerHTML = '';
           _renderInlineFlashcardResults(body);
         } catch (err) {
@@ -4923,6 +5368,8 @@ ${guideBlocksStr}${scriptContext}`;
     body.querySelector('#it-fc-anki-btn').addEventListener('click', sendFlashcardsToAnki);
     body.querySelector('#it-fc-regen-btn').addEventListener('click', () => {
       flashcardData = [];
+      flashcardIndex = 0;
+      persistToolOutputs();
       body.innerHTML = '';
       _buildInlineFlashcards(body);
     });
@@ -4986,6 +5433,8 @@ ${guideBlocksStr}${scriptContext}`;
         if (!questions.length) throw new Error('No questions returned.');
         quizData = questions;
         quizState = { questions, currentIndex: 0, scores: questions.map(() => null), done: false };
+        quizData = questions;
+        persistToolOutputs();
         openToolSection('tool-quiz');
         showQuizPanel('active');
         renderQuizQuestion();
@@ -5001,6 +5450,16 @@ ${guideBlocksStr}${scriptContext}`;
 
   /** Build the Exam Questions inline panel body */
   function _buildInlineExam(body) {
+    if (examQuestionData.length) {
+      body.innerHTML = `
+        <div class="feature-result-header" style="margin-bottom:8px">
+          <span class="inline-fc-count">${examQuestionData.length} question${examQuestionData.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div id="it-exam-results"></div>
+      `;
+      renderExamQuestionList('it-exam-results', examQuestionData);
+      return;
+    }
     const scopeVal  = getActivePillValue('exam-scope-pills') || 'whole';
     const diffVal   = getActivePillValue('exam-difficulty-pills') || 'mixed';
     const fmtVal    = getActivePillValue('exam-format-pills') || 'open';
@@ -5187,6 +5646,7 @@ ${guideBlocksStr}${scriptContext}`;
       const countLabel = document.getElementById('flashcards-count-label');
       if (countLabel) countLabel.textContent = `${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}`;
       showFlashcardsPanel('results');
+      persistToolOutputs();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.style.display = '';
@@ -5242,6 +5702,7 @@ ${guideBlocksStr}${scriptContext}`;
       flashcardData.splice(idx, 1);
       const countLabel = document.getElementById('flashcards-count-label');
       if (countLabel) countLabel.textContent = `${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}`;
+      persistToolOutputs();
 
       // Show undo toast
       _showFlashcardUndoToast(deletedCard, deletedIdx);
@@ -5296,6 +5757,7 @@ ${guideBlocksStr}${scriptContext}`;
       const countLabel = document.getElementById('flashcards-count-label');
       if (countLabel) countLabel.textContent = `${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}`;
       renderFlashcard(insertAt);
+      persistToolOutputs();
       toast.remove();
       if (_flashcardUndoTimeout) clearTimeout(_flashcardUndoTimeout);
     });
@@ -5323,6 +5785,29 @@ ${guideBlocksStr}${scriptContext}`;
     setStatus('ready', 'Flashcards exported as TSV');
   }
 
+  function formatAnkiConnectError(error) {
+    const parts = Array.isArray(error) ? error : [error];
+    return [...new Set(parts.map(e => String(e).trim()).filter(Boolean))].join('; ');
+  }
+
+  async function ankiConnect(action, params = {}) {
+    const resp = await fetch('http://127.0.0.1:8765', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, version: 6, params })
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(formatAnkiConnectError(data.error));
+    return data.result;
+  }
+
+  async function ensureAnkiDeck(deckName) {
+    const deckNames = await ankiConnect('deckNames');
+    if (!deckNames.includes(deckName)) {
+      await ankiConnect('createDeck', { deck: deckName });
+    }
+  }
+
   async function sendFlashcardsToAnki() {
     const cards = getEditedFlashcards();
     if (!cards.length) return;
@@ -5335,14 +5820,9 @@ ${guideBlocksStr}${scriptContext}`;
       tags: ['lecture-copilot']
     }));
     try {
-      const resp = await fetch('http://127.0.0.1:8765', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'addNotes', version: 6, params: { notes } })
-      });
-      const data = await resp.json();
-      if (data.error) throw new Error(data.error);
-      const added = data.result?.filter(Boolean).length ?? 0;
+      await ensureAnkiDeck(deckName);
+      const result = await ankiConnect('addNotes', { notes });
+      const added = result?.filter(Boolean).length ?? 0;
       setStatus('ready', `${added} card${added !== 1 ? 's' : ''} added to Anki deck "${deckName}"`);
     } catch (err) {
       setStatus('error', 'AnkiConnect error: ' + err.message + '. Is Anki open with AnkiConnect installed?');
@@ -5359,7 +5839,9 @@ ${guideBlocksStr}${scriptContext}`;
 
   function closeQuizModal() {
     quizState = null;
+    quizData = [];
     showQuizPanel('settings');
+    persistToolOutputs();
   }
 
   function showQuizPanel(panel) {
@@ -5416,10 +5898,13 @@ ${guideBlocksStr}${scriptContext}`;
     quizState = {
       questions,
       currentIndex: 0,
-      scores: new Array(questions.length).fill(null)
+      scores: new Array(questions.length).fill(null),
+      done: false
     };
+    quizData = questions;
     showQuizPanel('active');
     renderQuizQuestion();
+    persistToolOutputs();
   }
 
   function renderQuizQuestion() {
@@ -5509,6 +5994,7 @@ ${guideBlocksStr}${scriptContext}`;
 
     // Record score
     quizState.scores[quizState.currentIndex] = isCorrect;
+    persistToolOutputs();
     showQuizAnswerReveal(q, isCorrect);
   }
 
@@ -5550,6 +6036,7 @@ ${guideBlocksStr}${scriptContext}`;
     if (!quizState) return;
     const { questions, currentIndex } = quizState;
     quizState.scores[currentIndex] = correct;
+    persistToolOutputs();
 
     const nextIndex = currentIndex + 1;
     if (nextIndex >= questions.length) {
@@ -5561,6 +6048,8 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   function showQuizResults() {
+    if (quizState) quizState.done = true;
+    persistToolOutputs();
     showQuizPanel('results');
     const { questions, scores } = quizState;
     const correct = scores.filter(Boolean).length;
@@ -5729,7 +6218,38 @@ ${guideBlocksStr}${scriptContext}`;
     }
   }
 
+  function renderCrossExamTopics(topics) {
+    const topicsSection = document.getElementById('cross-exam-topics-section');
+    const topicsList = document.getElementById('cross-exam-topics-list');
+    if (!topics?.length || !topicsList) {
+      if (topicsSection) topicsSection.style.display = 'none';
+      return;
+    }
+    topicsSection.style.display = '';
+    topicsList.innerHTML = '';
+    topics.forEach(t => {
+      const item = document.createElement('div');
+      item.className = 'cross-exam-topic-item';
+      const confClass = `cross-exam-confidence-${t.confidence || 'medium'}`;
+      item.innerHTML = `
+        <div class="cross-exam-topic-header">
+          <span class="cross-exam-topic-name">${escHtml(t.topic)}</span>
+          <span class="cross-exam-confidence ${confClass}">${t.confidence || 'medium'}</span>
+        </div>
+        <div class="cross-exam-topic-rationale">${escHtml(t.rationale || '')}</div>
+      `;
+      topicsList.appendChild(item);
+    });
+  }
+
   function renderExamQuestionList(containerId, questions) {
+    if (containerId === 'exam-question-list' || containerId === 'it-exam-results') {
+      examQuestionData = questions;
+      persistToolOutputs();
+    } else if (containerId === 'cross-exam-question-list') {
+      crossExamQuestionData = questions;
+      persistToolOutputs();
+    }
     const container = document.getElementById(containerId);
     if (!container) return;
     container.innerHTML = '';
@@ -6046,29 +6566,8 @@ ${guideBlocksStr}${scriptContext}`;
       if (!resp.success) throw new Error(resp.error);
       const data = resp.data || {};
 
-      // Render topics
-      const topicsSection = document.getElementById('cross-exam-topics-section');
-      const topicsList    = document.getElementById('cross-exam-topics-list');
-      const topics = data.exam_topics || [];
-      if (topics.length && topicsList) {
-        topicsSection.style.display = '';
-        topicsList.innerHTML = '';
-        topics.forEach(t => {
-          const item = document.createElement('div');
-          item.className = 'cross-exam-topic-item';
-          const confClass = `cross-exam-confidence-${t.confidence || 'medium'}`;
-          item.innerHTML = `
-            <div class="cross-exam-topic-header">
-              <span class="cross-exam-topic-name">${escHtml(t.topic)}</span>
-              <span class="cross-exam-confidence ${confClass}">${t.confidence || 'medium'}</span>
-            </div>
-            <div class="cross-exam-topic-rationale">${escHtml(t.rationale || '')}</div>
-          `;
-          topicsList.appendChild(item);
-        });
-      } else if (topicsSection) {
-        topicsSection.style.display = 'none';
-      }
+      crossExamTopics = data.exam_topics || [];
+      renderCrossExamTopics(crossExamTopics);
 
       // Render questions
       const questions = data.questions || [];
