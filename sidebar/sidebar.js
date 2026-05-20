@@ -70,6 +70,7 @@
   const qaInput      = document.getElementById('qa-input');
   const qaSend       = document.getElementById('qa-send');
   const qaFrameBtn   = document.getElementById('qa-frame-btn');
+  const qaLectureSummaryBtn = document.getElementById('qa-lecture-summary-btn');
   const qaImageStrip = document.getElementById('qa-image-strip');
   const qaAttachBtn  = document.getElementById('qa-attach-btn');
   const qaFileInput  = document.getElementById('qa-file-input');
@@ -129,6 +130,7 @@
   const flashcardsBtn    = document.getElementById('flashcards-btn');
   const quizBtn          = document.getElementById('quiz-btn');
   const examBtn          = document.getElementById('exam-btn');
+  const lectureSummaryBtn = document.getElementById('lecture-summary-btn');
 
   const latexSelectModal = document.getElementById('latex-select-modal');
   const latexModalClose = document.getElementById('latex-modal-close');
@@ -152,6 +154,10 @@
   /** Cross-lecture exam prediction output */
   let crossExamQuestionData = [];
   let crossExamTopics = [];
+  /** Shared lecture summary (one per lecture URL, synced Guide ↔ Q&A) */
+  let lectureSummaryText = null;
+  let lectureSummaryGenerating = false;
+  let lectureSummarySource = null; // 'guide' | 'qa'
   /** Stream buffer for guide streaming */
   let streamBuffer = '';
 
@@ -226,11 +232,12 @@
     renderQaChatBar();
     updateQaScrollBtn();
     onQaInputChange();
+    renderAllQaSummaryPanels();
   }
 
   function addQaChat() {
     const id = _nextChatId++;
-    qaChats.push({ id, name: 'Chat ' + id, messages: [], guideSentForLectureUrl: null });
+    qaChats.push({ id, name: 'Chat ' + id, messages: [], guideSentForLectureUrl: null, summaryInContext: false });
     const newIdx = qaChats.length - 1;
     // Build and append the new column (hidden by default via CSS; switchQaChat activates it)
     const col = _buildChatCol(newIdx);
@@ -312,10 +319,11 @@
     }
     renderQaChatBar();
     updateQaScrollBtn();
+    renderAllQaSummaryPanels();
   }
 
   function resetQaChats() {
-    qaChats = [{ id: 1, name: 'Chat 1', messages: [], guideSentForLectureUrl: null }];
+    qaChats = [{ id: 1, name: 'Chat 1', messages: [], guideSentForLectureUrl: null, summaryInContext: false }];
     activeQaChatIdx = 0;
     _nextChatId = 2;
     qaMessages = qaChats[0].messages;
@@ -508,6 +516,8 @@
       }
     });
 
+    qaLectureSummaryBtn?.addEventListener('click', onQaLectureSummaryClick);
+
     qaFrameBtn?.addEventListener('click', async () => {
       qaFrameBtn.disabled = true;
       const b64 = await captureFrame();
@@ -585,6 +595,9 @@
       openInlineToolPanel('quiz', 'Practice Quiz', _buildInlineQuiz));
     examBtn?.addEventListener('click', () =>
       openInlineToolPanel('exam', 'Exam Questions', _buildInlineExam));
+    lectureSummaryBtn?.addEventListener('click', () =>
+      openInlineToolPanel('summary', 'Lecture Summary', _buildInlineLectureSummary));
+    document.getElementById('guide-inline-tool-body')?.addEventListener('click', onGuideInlineBodyClick);
 
     document.getElementById('guide-inline-tool-close')?.addEventListener('click', closeInlineToolPanel);
 
@@ -996,11 +1009,15 @@
       qaChats = qaChatsFromStorage.map(c => ({
         id: c.id || 1, name: c.name || 'Chat 1',
         messages: Array.isArray(c.messages) ? c.messages : [],
-        guideSentForLectureUrl: c.guideSentForLectureUrl || null
+        guideSentForLectureUrl: c.guideSentForLectureUrl || null,
+        summaryInContext: typeof c.summaryInContext === 'boolean'
+          ? c.summaryInContext
+          : chatSummaryInContextFromMessages(c.messages)
       }));
       _nextChatId = Math.max(...qaChats.map(c => c.id), 1) + 1;
     } else {
-      qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs, guideSentForLectureUrl: null }];
+      qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs, guideSentForLectureUrl: null,
+        summaryInContext: chatSummaryInContextFromMessages(restoredMsgs) }];
       _nextChatId = 2;
     }
     activeQaChatIdx = 0;
@@ -1011,14 +1028,21 @@
         currentLectureUrl: currentLectureUrl,
         currentGuideLectureUrl: normalizeLectureUrl(currentLectureUrl),
         currentQaMessages: qaMessages,
-        currentQaChats: qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages }))
+        currentQaChats: qaChats.map(c => ({
+          id: c.id, name: c.name, messages: c.messages,
+          guideSentForLectureUrl: c.guideSentForLectureUrl || null,
+          summaryInContext: !!c.summaryInContext
+        }))
       });
     }
     setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
     showGuideContent();
     hideQaReplyReadyToast();
+    sanitizeQaChatsSummaryHistory();
     initQaChatCols();
     updateGenerateButton();
+    ensureLectureSummaryRestored({});
+    updateLectureSummaryBtn();
   }
 
   function tryRestoreFromCache(lectureUrl) {
@@ -1042,7 +1066,7 @@
     });
 
     chrome.storage?.local?.get(
-      ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentGuideLectureUrl', 'currentQaMessages', 'currentQaChats', 'guideHistory', 'currentGuideToolOutputs'],
+      ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentGuideLectureUrl', 'currentQaMessages', 'currentQaChats', 'guideHistory', 'currentGuideToolOutputs', 'currentLectureSummary'],
       saved => {
         const hist = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
         const normSaved = saved.currentLectureUrl ? normalizeLectureUrl(saved.currentLectureUrl) : '';
@@ -1061,13 +1085,15 @@
           // attach to the new lecture's URL. History (guideHistory) and lecture-keyed
           // tool caches (currentToolOutputs is URL-scoped) are NOT affected.
           resetGuideUI();
+          clearLectureSummaryState();
           chrome.storage?.local?.remove([
             'currentGuide',
             'currentTranscript',
             'currentQaMessages',
             'currentQaChats',
             'currentGuideToolOutputs',
-            'currentGuideLectureUrl'
+            'currentGuideLectureUrl',
+            'currentLectureSummary'
           ], () => {
             storageSet({ currentLectureUrl: lectureUrl });
           });
@@ -1080,6 +1106,7 @@
         if (sessionMatches && guideUrlMatches && saved.currentGuide?.guide?.length) {
           applyRestoredGuide(saved.currentGuide, saved.currentQaMessages, false, saved.currentQaChats);
           restoredGuide = true;
+          restoreLectureSummaryFromStorage(saved);
         } else {
           if (sessionMatches && !guideUrlMatches && saved.currentGuide?.guide?.length) {
             console.warn('[ETH-DBG] Refusing to restore currentGuide — its lecture URL does not match current page', { normGuideUrl, normNew });
@@ -1089,8 +1116,17 @@
             applyRestoredGuide(latest.guide, latest.qaMessages, true, latest.qaChatsData);
             restoredGuide = true;
             historyEntryForTools = latest;
+            if (latest.lectureSummary) {
+              lectureSummaryText = latest.lectureSummary;
+              lectureSummarySource = latest.lectureSummarySource || null;
+              persistLectureSummary();
+            } else {
+              restoreLectureSummaryFromStorage(saved);
+            }
           }
         }
+        if (sessionMatches) ensureLectureSummaryRestored(saved);
+        if (restoredGuide || lectureSummaryReady()) updateLectureSummaryBtn();
 
         console.log('[ETH-DBG] tryRestoreFromCache decided:', {
           sessionMatches, guideUrlMatches, restoredGuide,
@@ -1134,6 +1170,7 @@
     guideLanguage = '';
     transcript = null;
     currentBlockIndex = -1;
+    clearLectureSummaryState();
     resetQaChats();
     isGenerating = false;
     clearToolOutputsState();
@@ -1494,9 +1531,14 @@
     const reqId = msg?.requestId;
     if (!reqId) return;
 
-    // Route to the correct QA stream (multiple can be active simultaneously)
+    // Route to QA or lecture-summary streams (multiple can be active simultaneously)
     if (qaActiveStreams.has(reqId)) {
-      handleQaStreamChunk(msg);
+      const streamState = qaActiveStreams.get(reqId);
+      if (streamState?.kind === 'lecture-summary') {
+        handleLectureSummaryStreamChunk(msg, streamState);
+      } else {
+        handleQaStreamChunk(msg);
+      }
       return;
     }
 
@@ -2210,6 +2252,7 @@
       generateBtn.title = 'Set your API key in the extension popup first';
     }
     updateGuideAbortBtn();
+    updateLectureSummaryBtn();
   }
 
   function updateGuideAbortBtn() {
@@ -2644,6 +2687,7 @@ Now process the following transcript:`;
   function showGuideContent() {
     guideEmpty.style.display = 'none';
     guideContent.style.display = 'flex';
+    updateLectureSummaryBtn();
     syncAutoFollowCheckbox();
     let startIdx = 0;
     if (autoTimeFollow && !autoFollowPaused && guide?.guide?.length) {
@@ -3273,11 +3317,610 @@ Now process the following transcript:`;
     }
   }
 
+  const LECTURE_SUMMARY_USER_LABEL = '[Lecture Summary Request]';
+  const LECTURE_SUMMARY_ADD_TO_CONTEXT_LABEL = '[Lecture summary added to context]';
+  const LECTURE_SUMMARY_REMOVE_FROM_CONTEXT_LABEL = '[Lecture summary removed from context]';
+
+  function lectureSummaryReady() {
+    return !!(lectureSummaryText || '').trim() && !lectureSummaryGenerating;
+  }
+
+  function resolveStreamAssistantText(responseData, streamState) {
+    const fromBuffer = (streamState?.buffer || '').trim();
+    const fromResponse = (responseData || '').trim();
+    return fromBuffer || fromResponse || '';
+  }
+
+  /** Remove summary generation and context-marker messages — summary lives in storage + system prompt only. */
+  function stripLectureSummaryChatMessages(messages) {
+    if (!Array.isArray(messages)) return [];
+    const out = [];
+    let skipNextAssistant = false;
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.role === 'user' && m.content === LECTURE_SUMMARY_USER_LABEL) {
+        skipNextAssistant = true;
+        continue;
+      }
+      if (skipNextAssistant && m.role === 'assistant') {
+        skipNextAssistant = false;
+        continue;
+      }
+      skipNextAssistant = false;
+      if (m.role === 'user' && (
+        m.content === LECTURE_SUMMARY_ADD_TO_CONTEXT_LABEL ||
+        m.content === LECTURE_SUMMARY_REMOVE_FROM_CONTEXT_LABEL
+      )) continue;
+      out.push(m);
+    }
+    return out;
+  }
+
+  function chatSummaryInContextFromMessages(messages) {
+    let inContext = false;
+    for (const m of messages || []) {
+      if (m.content === LECTURE_SUMMARY_ADD_TO_CONTEXT_LABEL) inContext = true;
+      if (m.content === LECTURE_SUMMARY_REMOVE_FROM_CONTEXT_LABEL) inContext = false;
+    }
+    return inContext;
+  }
+
+  function sanitizeQaChatsSummaryHistory() {
+    let changed = false;
+    for (const chat of qaChats) {
+      const stripped = stripLectureSummaryChatMessages(chat.messages);
+      if (stripped.length !== (chat.messages?.length || 0)) {
+        chat.messages = stripped;
+        changed = true;
+      }
+    }
+    if (changed) {
+      qaMessages = qaChats[activeQaChatIdx]?.messages || [];
+      persistChat();
+    }
+  }
+
+  function inferLectureSummaryFromChats() {
+    for (const chat of qaChats) {
+      const msgs = chat.messages || [];
+      for (let i = msgs.length - 1; i >= 1; i--) {
+        if (msgs[i].role === 'assistant' && msgs[i - 1].role === 'user' &&
+            msgs[i - 1].content === LECTURE_SUMMARY_USER_LABEL) {
+          const t = (msgs[i].content || '').trim();
+          if (t) return t;
+        }
+      }
+    }
+    return null;
+  }
+
+  function ensureLectureSummaryRestored(saved) {
+    if (!lectureSummaryText) restoreLectureSummaryFromStorage(saved || {});
+    if (!lectureSummaryText) {
+      const inferred = inferLectureSummaryFromChats();
+      if (inferred) {
+        lectureSummaryText = inferred;
+        lectureSummarySource = lectureSummarySource || 'qa';
+        persistLectureSummary();
+        sanitizeQaChatsSummaryHistory();
+      }
+    }
+  }
+
+  function isLectureSummaryGenerating() {
+    return lectureSummaryGenerating;
+  }
+
+  function clearLectureSummaryState() {
+    lectureSummaryText = null;
+    lectureSummarySource = null;
+    lectureSummaryGenerating = false;
+    _lectureSummaryQaChatIdx = null;
+    removeAllQaSummaryPanels();
+    chrome.storage?.local?.remove(['currentLectureSummary']);
+  }
+
+  function persistLectureSummary() {
+    const text = (lectureSummaryText || '').trim();
+    if (!text || !currentLectureUrl) return;
+    const norm = normalizeLectureUrl(currentLectureUrl);
+    storageSet({
+      currentLectureSummary: {
+        lectureUrl: norm,
+        text: lectureSummaryText,
+        source: lectureSummarySource
+      }
+    });
+    chrome.storage?.local?.get(['guideHistory'], saved => {
+      const history = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
+      const entry = history.find(h => normalizeLectureUrl(h.lectureUrl) === norm);
+      if (entry) {
+        entry.lectureSummary = lectureSummaryText;
+        storageSet({ guideHistory: history });
+      }
+    });
+  }
+
+  function restoreLectureSummaryFromStorage(saved) {
+    const cached = saved?.currentLectureSummary;
+    if (!cached?.text || !currentLectureUrl) return;
+    if (normalizeLectureUrl(cached.lectureUrl) !== normalizeLectureUrl(currentLectureUrl)) return;
+    lectureSummaryText = cached.text;
+    lectureSummarySource = cached.source || null;
+  }
+
+  function setLectureSummaryComplete(text, source) {
+    lectureSummaryText = text;
+    lectureSummarySource = source;
+    persistLectureSummary();
+    refreshInlineLectureSummaryIfOpen();
+    updateLectureSummaryBtn();
+  }
+
+  function syncSummaryUi() {
+    updateLectureSummaryBtn();
+    refreshInlineLectureSummaryIfOpen();
+    renderAllQaSummaryPanels();
+  }
+
+  /** DOM-only summary panel in Q&A — never stored in chat.messages or sent to the API. */
+  function renderQaSummaryPanelForChat(chatIdx, opts = {}) {
+    const col = getChatCol(chatIdx);
+    if (!col) return null;
+    col.querySelector('.qa-lecture-summary-panel')?.remove();
+
+    const generatingHere = opts.streaming || (isLectureSummaryGenerating() && _lectureSummaryQaChatIdx === chatIdx);
+    if (!lectureSummaryReady() && !generatingHere) return null;
+
+    const chat = qaChats[chatIdx];
+    const inContext = !!chat?.summaryInContext;
+    const panel = document.createElement('div');
+    panel.className = 'qa-lecture-summary-panel';
+    panel.dataset.qaUiOnly = '1';
+
+    const contextTip = inContext
+      ? 'This chat includes the summary in the AI system prompt (not as chat messages).'
+      : 'This chat does not include the summary in the AI system prompt — use Add to context on the button below.';
+    const badgeClass = inContext ? 'qa-summary-badge-on' : 'qa-summary-badge-off';
+    const badgeText = inContext ? 'In AI context' : 'Not in AI context';
+
+    panel.innerHTML = `
+      <div class="qa-lecture-summary-panel-head">
+        <span class="qa-lecture-summary-panel-title">Lecture summary</span>
+        <span class="qa-summary-context-badge ${badgeClass}" title="${escHtml(contextTip)}">${badgeText}</span>
+      </div>
+      <p class="qa-lecture-summary-panel-hint" title="This panel is for reading only. Your normal Q&amp;A messages are sent separately; the summary is injected via the system prompt only when In AI context.">
+        For reading only — not sent as chat history. AI uses it via system prompt when marked “In AI context”.
+      </p>
+      <div class="qa-lecture-summary-panel-body"></div>`;
+
+    const body = panel.querySelector('.qa-lecture-summary-panel-body');
+    if (generatingHere) {
+      body.innerHTML = `
+        <p class="inline-tool-hint">Generating…</p>
+        <div class="lecture-summary-stream">
+          <div class="chat-msg assistant">
+            <div class="chat-bubble qa-summary-stream-bubble">
+              <div class="qa-katex-zone"></div>
+              <span class="qa-stream-cursor" aria-hidden="true"></span>
+            </div>
+          </div>
+        </div>`;
+    } else {
+      body.innerHTML = '<div class="lecture-summary-view"></div>';
+      renderLectureSummaryMarkdown(body.querySelector('.lecture-summary-view'), lectureSummaryText);
+    }
+
+    col.appendChild(panel);
+    requestAnimationFrame(() => {
+      col.scrollTo({ top: col.scrollHeight, behavior: 'smooth' });
+    });
+    return panel.querySelector('.qa-summary-stream-bubble');
+  }
+
+  function renderAllQaSummaryPanels() {
+    for (let i = 0; i < qaChats.length; i++) renderQaSummaryPanelForChat(i);
+  }
+
+  function removeAllQaSummaryPanels() {
+    document.querySelectorAll('.qa-lecture-summary-panel').forEach(el => el.remove());
+  }
+
+  function renderLectureSummaryMarkdown(container, text) {
+    if (!container) return;
+    const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(text || ''));
+    container.innerHTML = renderMarkdown(finalNorm);
+    applyKatex(container);
+    container.querySelectorAll('.qa-timestamp-link').forEach(btn => {
+      btn.setAttribute('type', 'button');
+    });
+  }
+
+  function onGuideInlineBodyClick(e) {
+    const ts = e.target?.closest?.('.qa-timestamp-link[data-seconds]');
+    if (!ts) return;
+    e.preventDefault();
+    const seconds = Number(ts.dataset.seconds);
+    if (!Number.isFinite(seconds) || seconds < 0) return;
+    postToContent({ type: 'SEEK_VIDEO', time: seconds });
+  }
+
+  function refreshInlineLectureSummaryIfOpen() {
+    if (_inlineToolActive !== 'summary') return;
+    const bodyEl = document.getElementById('guide-inline-tool-body');
+    if (bodyEl) _buildInlineLectureSummary(bodyEl);
+  }
+
+  function updateLectureSummaryBtn() {
+    if (!qaLectureSummaryBtn) return;
+    const labelEl = qaLectureSummaryBtn.querySelector('.attach-text');
+    const hasSettings = hasUsableSettings();
+    const hasTranscript = !!transcript?.text;
+    const hasGuide = !!guide?.guide?.length;
+    const streaming = isChatStreaming(activeQaChatIdx);
+    const chat = qaChats[activeQaChatIdx];
+    const ready = lectureSummaryReady();
+    const generating = isLectureSummaryGenerating();
+
+    if (generating) {
+      qaLectureSummaryBtn.disabled = true;
+      qaLectureSummaryBtn.title = 'Generating lecture summary — shown below in this panel (not added to chat history)';
+      if (labelEl) labelEl.textContent = 'Generating…';
+      return;
+    }
+
+    if (ready) {
+      if (chat?.summaryInContext) {
+        qaLectureSummaryBtn.disabled = streaming;
+        qaLectureSummaryBtn.title =
+          'Summary is in this chat\'s AI system prompt (not as messages). Click to stop using it for new replies. The panel above stays for reading.';
+        if (labelEl) labelEl.textContent = 'Remove from context';
+      } else {
+        qaLectureSummaryBtn.disabled = !hasSettings || streaming;
+        qaLectureSummaryBtn.title =
+          'Inject the saved summary into this chat\'s system prompt only — not into chat history. Other chats are unaffected.';
+        if (labelEl) labelEl.textContent = 'Add to context';
+      }
+      return;
+    }
+
+    qaLectureSummaryBtn.disabled = !hasSettings || !hasTranscript || !hasGuide || streaming;
+    if (labelEl) labelEl.textContent = 'Lecture summary';
+    if (!hasSettings) {
+      qaLectureSummaryBtn.title = 'Add an API key in Settings first';
+    } else if (!hasTranscript) {
+      qaLectureSummaryBtn.title = 'Waiting for transcript to load';
+    } else if (!hasGuide) {
+      qaLectureSummaryBtn.title = 'Generate a guide first';
+    } else if (streaming) {
+      qaLectureSummaryBtn.title = 'Wait for the current reply to finish';
+    } else {
+      qaLectureSummaryBtn.title =
+        'Generate exam-focused summary (full guide + transcript). Shown in the panel below — not stored as chat messages. This chat will include it in the AI system prompt automatically.';
+    }
+  }
+
+  function onQaLectureSummaryClick() {
+    if (isLectureSummaryGenerating()) return;
+    const chat = qaChats[activeQaChatIdx];
+    if (lectureSummaryReady() && chat?.summaryInContext) {
+      removeLectureSummaryFromChatContext(activeQaChatIdx);
+    } else if (lectureSummaryReady()) {
+      addLectureSummaryToChatContext(activeQaChatIdx);
+    } else {
+      runLectureSummaryGeneration({ source: 'qa', chatIdx: activeQaChatIdx });
+    }
+  }
+
+  function removeLectureSummaryFromChatContext(chatIdx) {
+    if (isLectureSummaryGenerating()) return;
+    const chat = qaChats[chatIdx];
+    if (!chat?.summaryInContext) return;
+
+    chat.summaryInContext = false;
+    persistChat();
+    syncSummaryUi();
+    setStatus('ready', 'Lecture summary removed from this chat\'s AI context');
+  }
+
+  function addLectureSummaryToChatContext(chatIdx) {
+    if (!lectureSummaryReady() || isLectureSummaryGenerating()) return;
+    const chat = qaChats[chatIdx];
+    if (!chat || chat.summaryInContext) return;
+
+    chat.summaryInContext = true;
+    persistChat();
+    syncSummaryUi();
+    setStatus('ready', 'Lecture summary added to this chat\'s AI context (system prompt only)');
+  }
+
+  function buildFullTranscriptText() {
+    if (transcript?.cues?.length) {
+      return transcript.cues.map(c => `[${fmtSec(c.start_time)}] ${c.text}`).join('\n');
+    }
+    return transcript?.text || '(no transcript)';
+  }
+
+  function buildLectureSummaryPrompt() {
+    const title = transcript?.lectureTitle || guide?.lecture_title || 'Lecture';
+    const guideBlocksStr = guide?.guide?.length
+      ? JSON.stringify(guide.guide, null, 2)
+      : '(guide not available)';
+    const fullTranscript = buildFullTranscriptText();
+    const qaExtraPrefix = customPromptExtras.qa ? customPromptExtras.qa.trim() + '\n\n' : '';
+
+    return `${qaExtraPrefix}You are an expert ETH Zürich exam preparation tutor. Produce ONE comprehensive lecture summary for exam study based ONLY on the materials below.
+
+MUST:
+- Cover every major topic from the FULL GUIDE and FULL TRANSCRIPT — nothing important omitted
+- Prioritize exam-relevant content: definitions, theorems, key arguments, formulas, algorithms, and typical proof patterns
+- Add a dedicated section on likely exam questions and what examiners often test
+- Add practical tips, common mistakes, and memory hooks where the lecture supports them
+- Use clear markdown (## sections, bullets). Use LaTeX ($...$ inline, $$...$$ display) for math
+- Reference timestamps [HH:MM:SS] when anchoring content to the video
+
+MUST NOT:
+- Invent facts, topics, or exam hints not supported by the guide or transcript
+- Filler, motivational padding, or meta-commentary about being an AI
+- Repeat the same point in multiple sections
+
+Tone: dense and useful — complete coverage without unnecessary verbosity.
+
+--- FULL TRANSCRIPT (${title}) ---
+${fullTranscript}
+
+--- FULL GUIDE (${title}) ---
+${guideBlocksStr}`;
+  }
+
+  let _lectureSummaryGuideBody = null;
+  let _lectureSummaryQaChatIdx = null;
+
+  function handleLectureSummaryStreamChunk(msg, streamState) {
+    if (streamState.source === 'guide') {
+      handleGuideSummaryStreamChunk(msg, streamState);
+    } else if (streamState.qaSummaryBubble) {
+      handleGuideSummaryStreamChunk(msg, { ...streamState, guideStreamBubble: streamState.qaSummaryBubble });
+    }
+  }
+
+  function handleGuideSummaryStreamChunk(msg, streamState) {
+    if (!streamState.guideStreamBubble) return;
+    streamState.buffer += msg.text || '';
+    if (!streamState.rafPending) {
+      streamState.rafPending = true;
+      requestAnimationFrame(() => flushGuideSummaryStream(streamState));
+    }
+  }
+
+  function flushGuideSummaryStream(state) {
+    state.rafPending = false;
+    const bubble = state.guideStreamBubble;
+    if (!bubble) return;
+    const buf = state.buffer;
+    const cursor = bubble.querySelector('.qa-stream-cursor');
+    const katexZ = bubble.querySelector('.qa-katex-zone');
+    let katexCutoff = state.katexEnd;
+    let i = katexCutoff;
+    while (i < buf.length - 1) {
+      if (buf[i] === '$' && buf[i + 1] === '$') {
+        const closeIdx = buf.indexOf('$$', i + 2);
+        if (closeIdx !== -1) { katexCutoff = closeIdx + 2; i = closeIdx + 2; }
+        else break;
+      } else { i++; }
+    }
+    if (katexCutoff > state.katexEnd && katexZ) {
+      katexZ.textContent = buf.slice(0, katexCutoff);
+      applyKatex(katexZ);
+      state.katexEnd = katexCutoff;
+      Array.from(bubble.childNodes).forEach(node => {
+        if (node !== katexZ && node !== cursor) node.remove();
+      });
+      state.stableEnd = katexCutoff;
+    }
+    const newText = buf.slice(state.stableEnd);
+    if (newText) {
+      newText.split('\n').forEach((line, idx) => {
+        if (idx > 0) {
+          const br = document.createElement('br');
+          cursor ? bubble.insertBefore(br, cursor) : bubble.appendChild(br);
+        }
+        if (line.length > 0) {
+          const span = document.createElement('span');
+          span.className = 'qa-chunk';
+          span.innerHTML = applyStreamingLineMarkdown(line);
+          cursor ? bubble.insertBefore(span, cursor) : bubble.appendChild(span);
+        }
+      });
+      state.stableEnd = buf.length;
+    }
+  }
+
+  function _renderGuideSummaryStreaming(body) {
+    body.innerHTML = `
+      <p class="inline-tool-hint">Generating lecture summary…</p>
+      <div class="lecture-summary-stream">
+        <div class="chat-msg assistant">
+          <div class="chat-bubble">
+            <div class="qa-katex-zone"></div>
+            <span class="qa-stream-cursor" aria-hidden="true"></span>
+          </div>
+        </div>
+      </div>`;
+    return body.querySelector('.chat-bubble');
+  }
+
+  function _finishGuideSummaryStreamBubble(bubble, text) {
+    if (!bubble) return;
+    const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(text || ''));
+    bubble.style.transition = 'opacity 0.12s ease';
+    bubble.style.opacity = '0.2';
+    setTimeout(() => {
+      bubble.innerHTML = renderMarkdown(finalNorm);
+      applyKatex(bubble);
+      bubble.style.opacity = '1';
+      setTimeout(() => { bubble.style.transition = ''; }, 180);
+    }, 120);
+  }
+
+  async function runLectureSummaryGeneration({ source, chatIdx, guideBodyEl }) {
+    if (!hasUsableSettings() || !transcript?.text || !guide?.guide?.length) return;
+    if (isLectureSummaryGenerating() || lectureSummaryReady()) return;
+
+    const sendChatIdx = source === 'qa' ? (chatIdx ?? activeQaChatIdx) : null;
+    if (source === 'qa' && isChatStreaming(sendChatIdx)) return;
+
+    lectureSummaryGenerating = true;
+    lectureSummarySource = source;
+    _lectureSummaryGuideBody = guideBodyEl || _lectureSummaryGuideBody;
+    syncSummaryUi();
+
+    if (source === 'qa') {
+      hideQaReplyReadyToast();
+      _lectureSummaryQaChatIdx = sendChatIdx;
+    } else if (guideBodyEl) {
+      _lectureSummaryGuideBody = guideBodyEl;
+      openInlineToolPanel('summary', 'Lecture Summary', _buildInlineLectureSummary);
+    }
+
+    setStatus('loading', 'Generating lecture summary…');
+
+    const systemPrompt = buildLectureSummaryPrompt();
+    const useStream = !!settings.provider;
+    const apiUserMessage = 'Generate the complete lecture summary now. Follow every instruction in the system prompt.';
+
+    let typingEl = null;
+    let streamEl = null;
+    let streamBubble = null;
+    let guideStreamBubble = null;
+
+    let qaSummaryBubble = null;
+    if (source === 'guide' && _lectureSummaryGuideBody) {
+      if (useStream) {
+        guideStreamBubble = _renderGuideSummaryStreaming(_lectureSummaryGuideBody);
+      } else {
+        _lectureSummaryGuideBody.innerHTML = '<p class="inline-tool-hint">Generating lecture summary…</p>';
+      }
+    } else if (source === 'qa' && useStream) {
+      qaSummaryBubble = renderQaSummaryPanelForChat(sendChatIdx, { streaming: true });
+    } else if (source === 'qa') {
+      renderQaSummaryPanelForChat(sendChatIdx, { streaming: true });
+    }
+
+    let streamState = null;
+    let req = null;
+
+    try {
+      const qaTemp = qaTempSlider ? qaTempSlider.value / 100 : 0.35;
+      const qaThinking = qaThinkingSel?.value || 'none';
+
+      req = apiRequest({
+        type: 'CHAT',
+        messages: [{ role: 'user', content: apiUserMessage }],
+        systemPrompt,
+        provider: settings.provider,
+        model: settings.model || null,
+        apiKey: settings.apiKey,
+        localBase: getLocalBase(),
+        chatTemperature: qaTemp,
+        chatThinking: qaThinking,
+        useStream
+      });
+
+      if (useStream) {
+        streamState = {
+          kind: 'lecture-summary',
+          source,
+          chatIdx: source === 'qa' ? null : sendChatIdx,
+          el: streamEl,
+          bubble: streamBubble,
+          guideStreamBubble,
+          qaSummaryBubble,
+          buffer: '',
+          stableEnd: 0,
+          katexEnd: 0,
+          rafPending: false,
+          katexThrottle: null,
+          abortFn: req.abort
+        };
+        qaActiveStreams.set(req._requestId, streamState);
+        onQaInputChange();
+      }
+
+      const response = await req;
+      if (!response.success) throw new Error(response.error);
+
+      const assistantText = resolveStreamAssistantText(response.data, streamState);
+      lectureSummaryGenerating = false;
+      if (assistantText) {
+        setLectureSummaryComplete(assistantText, source);
+        saveToHistory();
+      }
+
+      if (source === 'qa' && assistantText && qaChats[sendChatIdx]) {
+        if (streamState) qaActiveStreams.delete(req._requestId);
+        qaChats[sendChatIdx].summaryInContext = true;
+        persistChat();
+        renderQaSummaryPanelForChat(sendChatIdx);
+        setStatus('ready', 'Lecture summary ready below — included in this chat\'s AI context (system prompt, not chat history)');
+        refreshInlineLectureSummaryIfOpen();
+      } else if (source === 'guide') {
+        if (useStream) {
+          if (streamState) qaActiveStreams.delete(req._requestId);
+          _finishGuideSummaryStreamBubble(guideStreamBubble, assistantText);
+          setTimeout(() => refreshInlineLectureSummaryIfOpen(), 200);
+        } else {
+          refreshInlineLectureSummaryIfOpen();
+        }
+      }
+    } catch (err) {
+      lectureSummaryGenerating = false;
+      if (streamState) {
+        if (streamState.katexThrottle) { clearTimeout(streamState.katexThrottle); streamState.katexThrottle = null; }
+        if (req?._requestId) qaActiveStreams.delete(req._requestId);
+      }
+      if (source === 'qa') {
+        if (err.message === 'Request aborted.' && streamState?.buffer?.trim()) {
+          setLectureSummaryComplete(streamState.buffer, source);
+          saveToHistory();
+          if (qaChats[sendChatIdx]) {
+            qaChats[sendChatIdx].summaryInContext = true;
+            persistChat();
+            renderQaSummaryPanelForChat(sendChatIdx);
+          }
+          setStatus('ready', 'Partial summary saved — in AI context for this chat');
+        } else if (err.message !== 'Request aborted.') {
+          setStatus('error', humanizeApiError(err.message));
+          renderQaSummaryPanelForChat(sendChatIdx);
+        }
+      } else if (source === 'guide' && _lectureSummaryGuideBody) {
+        if (err.message === 'Request aborted.' && streamState?.buffer?.trim()) {
+          setLectureSummaryComplete(streamState.buffer, source);
+          refreshInlineLectureSummaryIfOpen();
+        } else if (err.message !== 'Request aborted.') {
+          _lectureSummaryGuideBody.innerHTML = `<p class="inline-tool-error">${escHtml(humanizeApiError(err.message))}</p>`;
+        } else {
+          refreshInlineLectureSummaryIfOpen();
+        }
+      }
+      syncSummaryUi();
+    } finally {
+      _lectureSummaryQaChatIdx = null;
+      if (lectureSummaryGenerating) {
+        lectureSummaryGenerating = false;
+        syncSummaryUi();
+      }
+      onQaInputChange();
+      restoreMainStatus();
+    }
+  }
+
   function onQaInputChange() {
     const hasText = qaInput.value.trim().length > 0;
     const hasSettings = hasUsableSettings();
     const hasTranscript = transcript?.text;
     const activeChatStreaming = isChatStreaming(activeQaChatIdx);
+    updateLectureSummaryBtn();
     // Toggle between send and stop mode
     if (activeChatStreaming) {
       qaSend.classList.add('qa-send-stop');
@@ -3340,7 +3983,7 @@ Now process the following transcript:`;
     // The API always receives the full chat history in `messages`, so the model has
     // complete context. The system prompt being rebuilt each turn keeps the
     // response-profile tags, current video timestamp, and transcript window current.
-    const systemPrompt = await buildQAPrompt(text);
+    const systemPrompt = await buildQAPrompt(text, { chatIdx: sendChatIdx });
 
     // Prepare streaming message element or typing indicator
     let typingEl = null;
@@ -3370,7 +4013,9 @@ Now process the following transcript:`;
 
       req = apiRequest({
         type: 'CHAT',
-        messages: chatMessages.map(m => ({ role: m.role, content: m.content, ...(m.images?.length ? { images: m.images } : {}) })),
+        messages: stripLectureSummaryChatMessages(chatMessages).map(m => ({
+          role: m.role, content: m.content, ...(m.images?.length ? { images: m.images } : {})
+        })),
         systemPrompt,
         provider: settings.provider,
         model: settings.model || null,
@@ -3631,7 +4276,8 @@ Now process the following transcript:`;
     return `${tags.join(' ')}\n${lines.join('\n')}\n\n`;
   }
 
-  async function buildQAPrompt(userQuery) {
+  async function buildQAPrompt(userQuery, options = {}) {
+    const chatIdx = options.chatIdx ?? activeQaChatIdx;
     const title = transcript?.lectureTitle || 'Lecture';
     const currentTime = lastVideoTime || 0;
     const WINDOW_SEC = 180; // ±3 minutes
@@ -3687,7 +4333,21 @@ Now process the following transcript:`;
     const qaExtraPrefix = customPromptExtras.qa ? customPromptExtras.qa.trim() + '\n\n' : '';
     const qaResponseProfile = buildQaResponseProfilePrompt(userQuery);
 
-    return `${qaExtraPrefix}${qaResponseProfile}You are a helpful study assistant for the ETH Zürich lecture: "${title}".
+    let summaryBlock = '';
+    const chat = qaChats[chatIdx];
+    if (chat?.summaryInContext && lectureSummaryReady()) {
+      summaryBlock = `
+--- LECTURE SUMMARY (active for this chat — system prompt only, NOT in message history) ---
+The student enabled the lecture summary for this chat. The summary text below is NOT in the conversation messages; this is the only place you receive it. Answer questions about it from this section. Treat it as authoritative alongside the guide and transcript.
+
+${lectureSummaryText}
+
+--- END LECTURE SUMMARY ---
+
+`;
+    }
+
+    return `${qaExtraPrefix}${qaResponseProfile}${summaryBlock}You are a helpful study assistant for the ETH Zürich lecture: "${title}".
 The student is currently at [${fmtSec(currentTime)}] in the video.
 
 Answer based on the transcript excerpt and guide below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display) whenever math appears. Markdown formatting (e.g., #/## headings, short bullet lists) is allowed when it improves readability, but do not force markdown when plain text is clearer. If the question is about a different part of the lecture, reference the lecture structure to guide the student.
@@ -4102,10 +4762,14 @@ ${guideBlocksStr}${scriptContext}`;
   // ─── History Persistence ──────────────────────────────────────────────────
 
   function persistChat() {
-    // Save all chats — store as array of {id, name, messages, guideSentForLectureUrl}
+    for (const chat of qaChats) {
+      chat.messages = stripLectureSummaryChatMessages(chat.messages);
+    }
+    qaMessages = qaChats[activeQaChatIdx]?.messages || [];
     const allChats = qaChats.map(c => ({
       id: c.id, name: c.name, messages: c.messages,
-      guideSentForLectureUrl: c.guideSentForLectureUrl || null
+      guideSentForLectureUrl: c.guideSentForLectureUrl || null,
+      summaryInContext: !!c.summaryInContext
     }));
     storageSet({ currentQaMessages: qaChats[0]?.messages || [], currentQaChats: allChats });
     saveToHistory();
@@ -4154,8 +4818,11 @@ ${guideBlocksStr}${scriptContext}`;
         qaMessages: (qaChats[0]?.messages?.length ? qaChats[0].messages : null) || prevSame?.qaMessages || [],
         qaChatsData: qaChats.map(c => ({
           id: c.id, name: c.name, messages: c.messages,
-          guideSentForLectureUrl: c.guideSentForLectureUrl || null
+          guideSentForLectureUrl: c.guideSentForLectureUrl || null,
+          summaryInContext: !!c.summaryInContext
         })),
+        lectureSummary: (lectureSummaryText || '').trim() ? lectureSummaryText : (prevSame?.lectureSummary || null),
+        lectureSummarySource: (lectureSummaryText || '').trim() ? lectureSummarySource : (prevSame?.lectureSummarySource || null),
         toolOutputs: buildToolOutputsSnapshot()
       };
       history.unshift(entry);
@@ -4574,16 +5241,27 @@ ${guideBlocksStr}${scriptContext}`;
       qaChats = entry.qaChatsData.map(c => ({
         id: c.id || 1, name: c.name || 'Chat 1',
         messages: Array.isArray(c.messages) ? c.messages : [],
-        guideSentForLectureUrl: c.guideSentForLectureUrl || null
+        guideSentForLectureUrl: c.guideSentForLectureUrl || null,
+        summaryInContext: typeof c.summaryInContext === 'boolean'
+          ? c.summaryInContext
+          : chatSummaryInContextFromMessages(c.messages)
       }));
       _nextChatId = Math.max(...qaChats.map(c => c.id), 1) + 1;
     } else {
-      qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs, guideSentForLectureUrl: null }];
+      qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs, guideSentForLectureUrl: null,
+        summaryInContext: chatSummaryInContextFromMessages(restoredMsgs) }];
       _nextChatId = 2;
     }
     activeQaChatIdx = 0;
     qaMessages = qaChats[0].messages;
     if (entry.lectureUrl) currentLectureUrl = entry.lectureUrl;
+    if (entry.lectureSummary) {
+      lectureSummaryText = entry.lectureSummary;
+      lectureSummarySource = entry.lectureSummarySource || null;
+      persistLectureSummary();
+    } else {
+      clearLectureSummaryState();
+    }
     transcript = transcript || { cues: [], text: '', lectureTitle: entry.lectureTitle, videoDuration: 0 };
 
     // Persist loaded history entry as the current session so refresh keeps matching lecture identity
@@ -4593,14 +5271,26 @@ ${guideBlocksStr}${scriptContext}`;
       currentLectureUrl: currentLectureUrl,
       currentGuideLectureUrl: normalizeLectureUrl(currentLectureUrl),
       currentQaMessages: qaChats[0]?.messages || [],
-      currentQaChats: qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages }))
+      currentQaChats: qaChats.map(c => ({
+        id: c.id, name: c.name, messages: c.messages,
+        guideSentForLectureUrl: c.guideSentForLectureUrl || null,
+        summaryInContext: !!c.summaryInContext
+      })),
+      currentLectureSummary: entry.lectureSummary ? {
+        lectureUrl: normalizeLectureUrl(entry.lectureUrl),
+        text: entry.lectureSummary,
+        source: entry.lectureSummarySource || null
+      } : undefined
     });
 
     showGuideContent();
     setStatus('ready', `Guide loaded · ${guide.guide.length} blocks`);
 
     hideQaReplyReadyToast();
+    sanitizeQaChatsSummaryHistory();
     initQaChatCols();
+    ensureLectureSummaryRestored({});
+    updateLectureSummaryBtn();
     applyToolOutputsSnapshot(entry.toolOutputs || null);
     if (entry.toolOutputs && toolOutputsHasData(entry.toolOutputs)) {
       const norm = normalizeLectureUrl(entry.lectureUrl);
@@ -4975,6 +5665,33 @@ ${guideBlocksStr}${scriptContext}`;
     return guideObj.guide.map(b => buildExportBlockHtml(b)).join('');
   }
 
+  function openSummaryPrintWindow() {
+    if (!lectureSummaryReady()) {
+      setStatus('warning', 'Generate a lecture summary first');
+      return;
+    }
+    if (typeof chrome === 'undefined' || !chrome.runtime?.getURL) {
+      setStatus('error', 'Export unavailable in this context');
+      return;
+    }
+    const tmp = document.createElement('div');
+    renderLectureSummaryMarkdown(tmp, lectureSummaryText);
+    const title = transcript?.lectureTitle || guide?.lecture_title || 'Lecture summary';
+    const payload = {
+      title,
+      subtitle: 'Exam-focused lecture summary · ETH Lecture Copilot',
+      bodyHtml: tmp.innerHTML
+    };
+    try {
+      localStorage.setItem('eth-copilot-print-summary', JSON.stringify(payload));
+      window.open(chrome.runtime.getURL('sidebar/print-summary.html'), '_blank');
+      setStatus('ready', 'Print view opened — use “Save as PDF” in the print dialog');
+    } catch (e) {
+      console.error('[Copilot] export summary PDF', e);
+      setStatus('error', 'Export failed: ' + (e.message || String(e)));
+    }
+  }
+
   function openGuidePrintWindow(guideObj, lectureTitle) {
     if (!guideObj?.guide?.length) {
       setStatus('warning', 'No guide to export');
@@ -5197,11 +5914,11 @@ ${guideBlocksStr}${scriptContext}`;
   // ─── Inline guide tool panel ──────────────────────────────────────────────
   // Opens a split-panel within the Guide tab instead of switching to Tools tab.
 
-  let _inlineToolActive = null;   // 'flashcards' | 'quiz' | 'exam' | null
+  let _inlineToolActive = null;   // 'flashcards' | 'quiz' | 'exam' | 'summary' | null
 
   /**
    * Open (or toggle) the inline tool panel at the bottom of the Guide tab.
-   * @param {'flashcards'|'quiz'|'exam'} toolKey
+   * @param {'flashcards'|'quiz'|'exam'|'summary'} toolKey
    * @param {string} titleText   Panel header label
    * @param {Function} buildFn   Called with the body element to populate it
    */
@@ -5299,6 +6016,45 @@ ${guideBlocksStr}${scriptContext}`;
     return `<select id="${id}" class="gen-setting-select">${
       langs.map(([v,l]) => `<option value="${v}"${v===sel?' selected':''}>${l}</option>`).join('')
     }</select>`;
+  }
+
+  /** Build the Lecture Summary inline panel body (synced with Q&A) */
+  function _buildInlineLectureSummary(body) {
+    if (isLectureSummaryGenerating()) {
+      if (lectureSummarySource === 'qa') {
+        body.innerHTML = '<p class="inline-tool-hint">Generating in Q&amp;A — switch to that tab to watch progress. This panel updates when complete.</p>';
+        return;
+      }
+      _lectureSummaryGuideBody = body;
+      _renderGuideSummaryStreaming(body);
+      return;
+    }
+    if (lectureSummaryReady()) {
+      const srcHint = lectureSummarySource === 'qa'
+        ? '<p class="inline-tool-hint">Generated in Q&amp;A — synced here for reading, resize, and export.</p>'
+        : (lectureSummarySource === 'guide'
+          ? '<p class="inline-tool-hint">Generated here — use Q&amp;A “Add to context” per chat when you want the AI to use it.</p>'
+          : '');
+      body.innerHTML = `
+        ${srcHint}
+        <div class="inline-tool-actions lecture-summary-actions">
+          <button type="button" class="history-load-btn lecture-summary-export-pdf-btn">Export PDF</button>
+        </div>
+        <div class="lecture-summary-view"></div>`;
+      renderLectureSummaryMarkdown(body.querySelector('.lecture-summary-view'), lectureSummaryText);
+      body.querySelector('.lecture-summary-export-pdf-btn')?.addEventListener('click', openSummaryPrintWindow);
+      return;
+    }
+    const canGen = hasUsableSettings() && transcript?.text && guide?.guide?.length;
+    body.innerHTML = `
+      <p class="inline-tool-hint">One-shot exam-focused summary from the full guide and transcript. Synced with the Q&amp;A tab.</p>
+      <button type="button" class="btn-primary inline-summary-generate-btn" ${canGen ? '' : 'disabled'}>
+        Generate lecture summary
+      </button>`;
+    body.querySelector('.inline-summary-generate-btn')?.addEventListener('click', () => {
+      if (!canGen || isLectureSummaryGenerating() || lectureSummaryReady()) return;
+      runLectureSummaryGeneration({ source: 'guide', guideBodyEl: body });
+    });
   }
 
   /** Build the Flashcards inline panel body */

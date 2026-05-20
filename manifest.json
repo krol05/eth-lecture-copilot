@@ -75,6 +75,8 @@
         "sidebar/print-guide.html",
         "sidebar/print-guide.css",
         "sidebar/print-guide.js",
+        "sidebar/print-summary.html",
+        "sidebar/print-summary.js",
         "lib/ui-settings.js",
         "lib/fuzzy-retrieval.js",
         "lib/prompts.js",

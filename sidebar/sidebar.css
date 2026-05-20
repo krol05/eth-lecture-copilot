@@ -1220,6 +1220,127 @@ body {
   margin: 0;
 }
 
+.lecture-summary-view {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.lecture-summary-view h1,
+.lecture-summary-view h2,
+.lecture-summary-view h3 {
+  margin: 0.75em 0 0.35em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.lecture-summary-view h1:first-child,
+.lecture-summary-view h2:first-child,
+.lecture-summary-view h3:first-child {
+  margin-top: 0;
+}
+
+.lecture-summary-view ul,
+.lecture-summary-view ol {
+  margin: 0.4em 0;
+  padding-left: 1.25em;
+}
+
+.lecture-summary-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 120px;
+}
+
+/* Q&A read-only summary panel (not in chat.messages / API history) */
+.qa-lecture-summary-panel {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  flex-shrink: 0;
+}
+
+.qa-lecture-summary-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.qa-lecture-summary-panel-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+}
+
+.qa-summary-context-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: help;
+}
+
+.qa-summary-badge-on {
+  color: var(--accent);
+  background: rgba(33, 92, 175, 0.12);
+}
+
+.qa-summary-badge-off {
+  color: var(--text-muted);
+  background: var(--bg-3);
+}
+
+.qa-lecture-summary-panel-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+  cursor: help;
+}
+
+.qa-lecture-summary-panel-body .lecture-summary-view {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.lecture-summary-actions {
+  margin-bottom: 8px;
+}
+
+.lecture-summary-view .qa-timestamp-link,
+.lecture-summary-stream .qa-timestamp-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.lecture-summary-view .qa-timestamp-link:hover,
+.lecture-summary-stream .qa-timestamp-link:hover {
+  color: var(--accent-hover);
+}
+
+.lecture-summary-view .qa-timestamp-link:focus-visible,
+.lecture-summary-stream .qa-timestamp-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
 /* Label + control row */
 .inline-tool-row {
   display: flex;
@@ -2464,6 +2585,16 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
+}
+
+.lecture-summary-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.lecture-summary-pill {
+  color: var(--accent);
 }
 
 .attach-frame-btn {
