@@ -230,7 +230,7 @@
 
   function addQaChat() {
     const id = _nextChatId++;
-    qaChats.push({ id, name: 'Chat ' + id, messages: [] });
+    qaChats.push({ id, name: 'Chat ' + id, messages: [], guideSentForLectureUrl: null });
     const newIdx = qaChats.length - 1;
     // Build and append the new column (hidden by default via CSS; switchQaChat activates it)
     const col = _buildChatCol(newIdx);
@@ -315,7 +315,7 @@
   }
 
   function resetQaChats() {
-    qaChats = [{ id: 1, name: 'Chat 1', messages: [] }];
+    qaChats = [{ id: 1, name: 'Chat 1', messages: [], guideSentForLectureUrl: null }];
     activeQaChatIdx = 0;
     _nextChatId = 2;
     qaMessages = qaChats[0].messages;
@@ -993,10 +993,14 @@
     const restoredMsgs = Array.isArray(qaFromStorage) ? qaFromStorage : [];
     // Restore multi-chat state if available, else fall back to single chat
     if (Array.isArray(qaChatsFromStorage) && qaChatsFromStorage.length > 0) {
-      qaChats = qaChatsFromStorage.map(c => ({ id: c.id || 1, name: c.name || 'Chat 1', messages: Array.isArray(c.messages) ? c.messages : [] }));
+      qaChats = qaChatsFromStorage.map(c => ({
+        id: c.id || 1, name: c.name || 'Chat 1',
+        messages: Array.isArray(c.messages) ? c.messages : [],
+        guideSentForLectureUrl: c.guideSentForLectureUrl || null
+      }));
       _nextChatId = Math.max(...qaChats.map(c => c.id), 1) + 1;
     } else {
-      qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs }];
+      qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs, guideSentForLectureUrl: null }];
       _nextChatId = 2;
     }
     activeQaChatIdx = 0;
@@ -3327,11 +3331,11 @@ Now process the following transcript:`;
     // All providers support SSE streaming; use it for progressive rendering
     const useStream = !!settings.provider;
 
-    // Build system prompt with context:
-    // first user message in this chat => include full guide once
-    // follow-up messages => transcript window only (no guide payload)
-    const isFirstUserMessageInChat = chatMessages.filter(m => m.role === 'user').length === 1;
-    const systemPrompt = await buildQAPrompt(text, { includeWholeGuide: isFirstUserMessageInChat });
+    // Build system prompt fresh on every message — full guide + current transcript window.
+    // The API always receives the full chat history in `messages`, so the model has
+    // complete context. The system prompt being rebuilt each turn keeps the
+    // response-profile tags, current video timestamp, and transcript window current.
+    const systemPrompt = await buildQAPrompt(text);
 
     // Prepare streaming message element or typing indicator
     let typingEl = null;
@@ -3622,8 +3626,7 @@ Now process the following transcript:`;
     return `${tags.join(' ')}\n${lines.join('\n')}\n\n`;
   }
 
-  async function buildQAPrompt(userQuery, opts = {}) {
-    const includeWholeGuide = !!opts.includeWholeGuide;
+  async function buildQAPrompt(userQuery) {
     const title = transcript?.lectureTitle || 'Lecture';
     const currentTime = lastVideoTime || 0;
     const WINDOW_SEC = 180; // ±3 minutes
@@ -3641,12 +3644,22 @@ Now process the following transcript:`;
       ? windowCues.map(c => `[${fmtSec(c.start_time)}] ${c.text}`).join('\n')
       : (transcript?.text?.slice(0, 4000) || '(no transcript)');
 
-    // 2. Guide inclusion policy:
-    // - first question in a chat => include full guide
-    // - follow-up questions => no guide payload (transcript window only)
-    const guideBlocksStr = includeWholeGuide && guide?.guide?.length
-      ? JSON.stringify(guide.guide, null, 2)
-      : '';
+    // 2. Full guide — always included when available so the model has complete
+    //    lecture context on every turn. The API receives the full message history
+    //    separately, so rebuilding the system prompt each turn is intentional.
+    let guideBlocksStr = '(guide not yet generated)';
+    if (guide?.guide?.length) {
+      guideBlocksStr = JSON.stringify(guide.guide, null, 2);
+    }
+
+    // 3. Compact lecture overview so the model can orient itself quickly
+    let lectureOverview = '';
+    if (guide?.guide?.length) {
+      lectureOverview = '\n--- LECTURE STRUCTURE ---\n' +
+        guide.guide.map((b, i) =>
+          `${i + 1}. [${fmtSec(b.start_time)}-${fmtSec(b.end_time)}] ${b.title}`
+        ).join('\n') + '\n';
+    }
 
     // 4. Script retrieval using transcript context + user query
     let scriptContext = '';
@@ -3672,13 +3685,15 @@ Now process the following transcript:`;
     return `${qaExtraPrefix}${qaResponseProfile}You are a helpful study assistant for the ETH Zürich lecture: "${title}".
 The student is currently at [${fmtSec(currentTime)}] in the video.
 
-Answer based on the transcript excerpt below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display) whenever math appears. Markdown formatting (e.g., #/## headings, short bullet lists) is allowed when it improves readability, but do not force markdown when plain text is clearer.
+Answer based on the transcript excerpt and guide below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display) whenever math appears. Markdown formatting (e.g., #/## headings, short bullet lists) is allowed when it improves readability, but do not force markdown when plain text is clearer. If the question is about a different part of the lecture, reference the lecture structure to guide the student.
 
 If attached images contain user annotations (circles, highlights, underlines, arrows, or any drawn markings), pay special attention to those annotated regions and address them in extra detail — but do not reduce the depth of your answer for anything else.
-
+${lectureOverview}
 --- TRANSCRIPT (${fmtSec(windowStart)} to ${fmtSec(windowEnd)}) ---
 ${windowText}
-${guideBlocksStr ? `\n--- GUIDE BLOCKS (full lecture guide; first message only) ---\n${guideBlocksStr}` : ''}${scriptContext}`;
+
+--- FULL GUIDE ---
+${guideBlocksStr}${scriptContext}`;
   }
 
   /** Auto-hide the reply-ready toast when user scrolls within this many px of the bottom. */
@@ -4082,8 +4097,11 @@ ${guideBlocksStr ? `\n--- GUIDE BLOCKS (full lecture guide; first message only) 
   // ─── History Persistence ──────────────────────────────────────────────────
 
   function persistChat() {
-    // Save all chats — store as array of {id, name, messages}
-    const allChats = qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages }));
+    // Save all chats — store as array of {id, name, messages, guideSentForLectureUrl}
+    const allChats = qaChats.map(c => ({
+      id: c.id, name: c.name, messages: c.messages,
+      guideSentForLectureUrl: c.guideSentForLectureUrl || null
+    }));
     storageSet({ currentQaMessages: qaChats[0]?.messages || [], currentQaChats: allChats });
     saveToHistory();
   }
@@ -4129,7 +4147,10 @@ ${guideBlocksStr ? `\n--- GUIDE BLOCKS (full lecture guide; first message only) 
         // unlimitedStorage permission allows keeping images; they persist across sessions.
         // Always save first chat's messages to keep history backward-compatible.
         qaMessages: (qaChats[0]?.messages?.length ? qaChats[0].messages : null) || prevSame?.qaMessages || [],
-        qaChatsData: qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages })),
+        qaChatsData: qaChats.map(c => ({
+          id: c.id, name: c.name, messages: c.messages,
+          guideSentForLectureUrl: c.guideSentForLectureUrl || null
+        })),
         toolOutputs: buildToolOutputsSnapshot()
       };
       history.unshift(entry);
@@ -4542,10 +4563,14 @@ ${guideBlocksStr ? `\n--- GUIDE BLOCKS (full lecture guide; first message only) 
     guide = entry.guide;
     const restoredMsgs = Array.isArray(entry.qaMessages) ? entry.qaMessages : [];
     if (Array.isArray(entry.qaChatsData) && entry.qaChatsData.length > 0) {
-      qaChats = entry.qaChatsData.map(c => ({ id: c.id || 1, name: c.name || 'Chat 1', messages: Array.isArray(c.messages) ? c.messages : [] }));
+      qaChats = entry.qaChatsData.map(c => ({
+        id: c.id || 1, name: c.name || 'Chat 1',
+        messages: Array.isArray(c.messages) ? c.messages : [],
+        guideSentForLectureUrl: c.guideSentForLectureUrl || null
+      }));
       _nextChatId = Math.max(...qaChats.map(c => c.id), 1) + 1;
     } else {
-      qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs }];
+      qaChats = [{ id: 1, name: 'Chat 1', messages: restoredMsgs, guideSentForLectureUrl: null }];
       _nextChatId = 2;
     }
     activeQaChatIdx = 0;
