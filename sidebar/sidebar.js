@@ -1345,6 +1345,11 @@
     window.parent.postMessage(msg, 'https://video.ethz.ch');
   }
 
+  function goToLecture(lectureUrl) {
+    if (!lectureUrl) return;
+    postToContent({ type: 'NAVIGATE_TO_LECTURE', url: lectureUrl });
+  }
+
   function makeRequestId() {
     return 'req_' + (++requestIdCounter);
   }
@@ -4383,10 +4388,12 @@ ${guideBlocksStr}${scriptContext}`;
       <div class="history-recent-item-title">${escHtml(entry.lectureTitle)}</div>
       ${lectureDateLabel ? `<div class="history-guide-date">Guide created: ${guideDateLabel}</div>` : ''}
       <div class="history-actions history-recent-actions">
+        ${!isActive && entry.lectureUrl ? '<button class="history-go-btn" type="button" title="Open this lecture in the video player">Go to lecture</button>' : ''}
         <button class="history-load-btn" title="Load guide">Load</button>
         <button class="history-pdf-btn" type="button" title="Export as PDF">PDF</button>
       </div>
     `;
+    div.querySelector('.history-go-btn')?.addEventListener('click', () => goToLecture(entry.lectureUrl));
     div.querySelector('.history-load-btn').addEventListener('click', () => loadHistoryEntry(entry));
     div.querySelector('.history-pdf-btn').addEventListener('click', () => {
       if (entry.guide?.guide?.length) openGuidePrintWindow(entry.guide, entry.lectureTitle);
@@ -4513,13 +4520,14 @@ ${guideBlocksStr}${scriptContext}`;
         </div>
         ${guideDateLabel ? `<div class="history-guide-date">Guide created: ${guideDateLabel}</div>` : ''}
         <div class="history-actions">
-          <a class="history-link" href="${escAttr(entry.lectureUrl)}" target="_blank" title="Open lecture page">Open lecture</a>
+          ${!isActive && entry.lectureUrl ? '<button class="history-go-btn" type="button" title="Open this lecture in the video player">Go to lecture</button>' : ''}
           <button class="history-load-btn" title="Load guide">Load</button>
           <button class="history-pdf-btn" type="button" title="Export as PDF">PDF</button>
           ${!isActive ? `<button class="history-delete-btn" title="Delete guide">Delete</button>` : ''}
         </div>
       `;
 
+      item.querySelector('.history-go-btn')?.addEventListener('click', () => goToLecture(entry.lectureUrl));
       item.querySelector('.history-load-btn').addEventListener('click', () => loadHistoryEntry(entry));
       item.querySelector('.history-pdf-btn').addEventListener('click', () => {
         if (entry.guide?.guide?.length) openGuidePrintWindow(entry.guide, entry.lectureTitle);

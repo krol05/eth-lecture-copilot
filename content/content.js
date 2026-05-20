@@ -971,6 +971,17 @@
       case 'TOGGLE_FOCUS':
         toggleFocusMode();
         break;
+
+      case 'NAVIGATE_TO_LECTURE':
+        if (msg.url && typeof msg.url === 'string') {
+          try {
+            const target = new URL(msg.url, location.href).href;
+            if (target !== location.href) location.href = target;
+          } catch {
+            // ignore invalid URLs
+          }
+        }
+        break;
     }
   }
 

@@ -3518,6 +3518,7 @@ body {
 
 .history-load-btn,
 .history-pdf-btn,
+.history-go-btn,
 .history-delete-btn {
   font-size: 10.5px;
   padding: 3px 9px;
@@ -3531,7 +3532,8 @@ body {
 }
 
 .history-pdf-btn:hover,
-.history-load-btn:hover {
+.history-load-btn:hover,
+.history-go-btn:hover {
   background: var(--accent-dim);
   color: var(--accent);
   border-color: var(--accent);
