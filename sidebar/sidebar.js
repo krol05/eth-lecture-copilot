@@ -349,27 +349,6 @@
   function init() {
     postToContent({ type: 'GET_SETTINGS' });
 
-    // SAFETY NET: pre-hydrate tool state from localStorage immediately on init,
-    // before EXTENSION_READY / TRANSCRIPT_READY arrive. This guarantees flashcards
-    // survive a hard reload even if those messages are slow, lossy, or carry a
-    // different URL than what was saved. The proper URL-keyed restore in
-    // tryRestoreFromCache will run later and (if it finds a real match) overwrite
-    // these with the canonical snapshot — but if it finds nothing, we still have
-    // the user's last work on screen instead of an empty panel.
-    try {
-      const eager = readToolOutputsLocalFallback();
-      console.log('[ETH-DBG] init: eager localStorage hydrate', {
-        has: !!eager,
-        flashcards: eager?.flashcards?.cards?.length || 0,
-        lectureUrl: eager?.lectureUrl || null
-      });
-      if (toolOutputsHasData(eager)) {
-        applyToolOutputsSnapshot(eager);
-      }
-    } catch (e) {
-      console.warn('[ETH-DBG] init: eager hydrate failed', e);
-    }
-
     // Tab switching
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => switchTab(btn.dataset.tab));
@@ -791,6 +770,13 @@
     return !!(snapshot.flashcards || snapshot.quiz || snapshot.exam || snapshot.crossExam);
   }
 
+  /** Tool snapshot must belong to this lecture (prevents cross-lecture bleed). */
+  function toolSnapshotMatchesLecture(snapshot, norm) {
+    if (!snapshot || !toolOutputsHasData(snapshot) || !norm) return false;
+    const snapNorm = snapshot.lectureUrl ? normalizeLectureUrl(snapshot.lectureUrl) : '';
+    return snapNorm === norm;
+  }
+
   function readToolOutputsLocalFallback() {
     try {
       const raw = localStorage.getItem('eth-copilot-tool-outputs');
@@ -948,8 +934,8 @@
     // available (e.g. EXTENSION_READY hasn't propagated yet) and survives hard reloads.
     writeToolOutputsLocalFallback({ lectureUrl: norm || null, ...snapshot, savedAt: Date.now() });
 
-    // Session fallback in chrome.storage.local — also lectureUrl-independent.
-    storageSet({ currentGuideToolOutputs: snapshot });
+    // Session fallback — always tagged with lecture URL so it cannot restore on another lecture.
+    storageSet({ currentGuideToolOutputs: { lectureUrl: norm || null, ...snapshot } });
 
     // Lecture-keyed cache (only when we know the URL).
     if (norm) {
@@ -973,17 +959,17 @@
       let source = 'none';
       if (cached?.lectureUrl === norm && toolOutputsHasData(cached)) {
         snapshot = cached; source = 'lecture-cache';
-      } else if (toolOutputsHasData(sessionFallbackSnapshot)) {
+      } else if (historyEntry?.toolOutputs && toolOutputsHasData(historyEntry.toolOutputs)) {
+        snapshot = historyEntry.toolOutputs; source = 'history-entry';
+      } else if (toolSnapshotMatchesLecture(sessionFallbackSnapshot, norm)) {
         snapshot = sessionFallbackSnapshot; source = 'session-fallback';
-      } else if (toolOutputsHasData(saved.currentGuideToolOutputs)) {
+      } else if (sessionFallbackSnapshot && toolOutputsHasData(sessionFallbackSnapshot) && !sessionFallbackSnapshot.lectureUrl) {
+        // Legacy cache shape (no lectureUrl) — only passed when sessionMatches is true.
+        snapshot = sessionFallbackSnapshot; source = 'session-fallback-legacy';
+      } else if (toolSnapshotMatchesLecture(saved.currentGuideToolOutputs, norm)) {
         snapshot = saved.currentGuideToolOutputs; source = 'guide-tool-cache';
       } else if (localFallback?.lectureUrl === norm && toolOutputsHasData(localFallback)) {
         snapshot = localFallback; source = 'localStorage-fallback';
-      } else if (historyEntry?.toolOutputs && toolOutputsHasData(historyEntry.toolOutputs)) {
-        snapshot = historyEntry.toolOutputs; source = 'history-entry';
-      } else if (toolOutputsHasData(localFallback) && (!localFallback.lectureUrl || localFallback.lectureUrl === norm)) {
-        // Last-resort: localStorage snapshot from a session that didn't yet know the URL.
-        snapshot = localFallback; source = 'localStorage-fallback-no-url';
       }
       console.log('[ETH-DBG] restoreToolOutputsForLecture:', {
         source, norm,
@@ -1019,6 +1005,7 @@
       storageSet({
         currentGuide: guide,
         currentLectureUrl: currentLectureUrl,
+        currentGuideLectureUrl: normalizeLectureUrl(currentLectureUrl),
         currentQaMessages: qaMessages,
         currentQaChats: qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages }))
       });
@@ -1033,9 +1020,15 @@
   function tryRestoreFromCache(lectureUrl) {
     console.log('[ETH-DBG] tryRestoreFromCache called with:', lectureUrl);
     if (!lectureUrl) { console.warn('[ETH-DBG] tryRestoreFromCache: no lectureUrl'); return; }
+    const normNew = normalizeLectureUrl(lectureUrl);
+    const normPrev = currentLectureUrl ? normalizeLectureUrl(currentLectureUrl) : '';
+    // SPA navigation can fire EXTENSION_READY with a stale href; drop in-memory state
+    // immediately when the page URL changes so we never keep showing the last lecture.
+    if (guide?.guide?.length && normPrev && normPrev !== normNew) {
+      resetGuideUI();
+    }
     currentLectureUrl = lectureUrl;
     initScriptsForCourse(lectureUrl);
-    const normNew = normalizeLectureUrl(lectureUrl);
 
     // Load custom prompt extras (non-blocking, best-effort)
     chrome.storage?.local?.get(['customPromptExtras'], (r) => {
@@ -1045,27 +1038,48 @@
     });
 
     chrome.storage?.local?.get(
-      ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentQaMessages', 'currentQaChats', 'guideHistory', 'currentGuideToolOutputs'],
+      ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentGuideLectureUrl', 'currentQaMessages', 'currentQaChats', 'guideHistory', 'currentGuideToolOutputs'],
       saved => {
         const hist = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
         const normSaved = saved.currentLectureUrl ? normalizeLectureUrl(saved.currentLectureUrl) : '';
+        const normGuideUrl = saved.currentGuideLectureUrl ? normalizeLectureUrl(saved.currentGuideLectureUrl) : '';
+        // sessionMatches: storage's lecture marker matches the current page.
+        // guideUrlMatches: defense-in-depth — the saved guide itself was generated
+        // for this lecture. If either fails, do NOT apply the saved currentGuide.
         const sessionMatches = normSaved === normNew;
+        const guideUrlMatches = !!normGuideUrl && normGuideUrl === normNew;
 
         if (!sessionMatches) {
-          // Do not eagerly delete persisted session/tool caches here.
-          // EXTENSION_READY can briefly report a URL variant that differs from TRANSCRIPT_READY,
-          // and eager deletion would wipe flashcards before a second restore can run.
+          // CRITICAL: atomically swap session state. If we only update currentLectureUrl,
+          // the stale currentGuide remains in storage and a later restore (e.g. from
+          // TRANSCRIPT_READY) will see sessionMatches=true and load the WRONG lecture's
+          // guide. We must clear every per-lecture session key here so no orphan can
+          // attach to the new lecture's URL. History (guideHistory) and lecture-keyed
+          // tool caches (currentToolOutputs is URL-scoped) are NOT affected.
           resetGuideUI();
+          chrome.storage?.local?.remove([
+            'currentGuide',
+            'currentTranscript',
+            'currentQaMessages',
+            'currentQaChats',
+            'currentGuideToolOutputs',
+            'currentGuideLectureUrl'
+          ], () => {
+            storageSet({ currentLectureUrl: lectureUrl });
+          });
           setStatus('loading', 'New lecture detected — waiting for transcript…');
         }
 
         let restoredGuide = false;
         let historyEntryForTools = null;
 
-        if (sessionMatches && saved.currentGuide?.guide?.length) {
+        if (sessionMatches && guideUrlMatches && saved.currentGuide?.guide?.length) {
           applyRestoredGuide(saved.currentGuide, saved.currentQaMessages, false, saved.currentQaChats);
           restoredGuide = true;
         } else {
+          if (sessionMatches && !guideUrlMatches && saved.currentGuide?.guide?.length) {
+            console.warn('[ETH-DBG] Refusing to restore currentGuide — its lecture URL does not match current page', { normGuideUrl, normNew });
+          }
           const latest = pickLatestHistoryForUrl(hist, lectureUrl);
           if (latest?.guide?.guide?.length) {
             applyRestoredGuide(latest.guide, latest.qaMessages, true, latest.qaChatsData);
@@ -1074,6 +1088,12 @@
           }
         }
 
+        console.log('[ETH-DBG] tryRestoreFromCache decided:', {
+          sessionMatches, guideUrlMatches, restoredGuide,
+          normSaved, normNew, normGuideUrl,
+          willApplyCurrentGuide: sessionMatches && guideUrlMatches && !!saved.currentGuide?.guide?.length
+        });
+
         console.log('[ETH-DBG] tryRestoreFromCache outcome:', {
           sessionMatches, restoredGuide,
           normSaved, normNew,
@@ -1081,14 +1101,12 @@
           historyMatches: !!historyEntryForTools,
           hasGuideToolCache: !!saved.currentGuideToolOutputs
         });
+        const sessionToolFallback = sessionMatches ? (saved.currentGuideToolOutputs || null) : null;
         if (restoredGuide) {
-          restoreToolOutputsForLecture(historyEntryForTools, saved.currentGuideToolOutputs || null);
+          restoreToolOutputsForLecture(historyEntryForTools, sessionToolFallback);
         } else {
-          // Even if we couldn't restore a guide yet (e.g. TRANSCRIPT_READY not arrived),
-          // still try to restore tool outputs from any available source.
-          // The Tools UI elements are in the DOM regardless of whether the Guide tab is populated.
-          console.log('[ETH-DBG] tryRestoreFromCache: no guide yet — still attempting tool restore');
-          restoreToolOutputsForLecture(null, saved.currentGuideToolOutputs || null);
+          console.log('[ETH-DBG] tryRestoreFromCache: no guide yet — tool restore for this lecture only');
+          restoreToolOutputsForLecture(historyEntryForTools, sessionToolFallback);
         }
 
         if (sessionMatches && saved.currentTranscript) {
@@ -1227,13 +1245,9 @@
         setStatus('loading', 'Detecting transcript…');
         if (msg.lectureUrl) {
           tryRestoreFromCache(msg.lectureUrl);
-        } else {
-          // Some hard-reload paths deliver EXTENSION_READY before lecture URL is attached.
-          // Try restoring from the last known lecture session as a fallback.
-          chrome.storage?.local?.get(['currentLectureUrl'], saved => {
-            if (saved.currentLectureUrl) tryRestoreFromCache(saved.currentLectureUrl);
-          });
         }
+        // Do NOT restore from saved currentLectureUrl here — on SPA navigation that
+        // reloads the previous lecture's guide on the new video page.
         break;
 
       case 'SETTINGS':
@@ -1247,14 +1261,16 @@
         handleTranscriptStatus(msg);
         break;
 
-      case 'TRANSCRIPT_READY':
+      case 'TRANSCRIPT_READY': {
+        const normIncoming = msg.lectureUrl ? normalizeLectureUrl(msg.lectureUrl) : '';
+        const normBefore = currentLectureUrl ? normalizeLectureUrl(currentLectureUrl) : '';
+        const guideIsForOtherLecture = guide?.guide?.length && normBefore && normIncoming && normBefore !== normIncoming;
         handleTranscriptReady(msg);
-        // Hard reloads can occasionally race and miss the early EXTENSION_READY restore.
-        // Retry restore once transcript provides a reliable lecture URL.
-        if (!guide?.guide?.length && msg.lectureUrl) {
+        if (msg.lectureUrl && (!guide?.guide?.length || guideIsForOtherLecture)) {
           tryRestoreFromCache(msg.lectureUrl);
         }
         break;
+      }
 
       case 'TRANSCRIPT_DATE_UPDATE':
         if (transcript && msg.lectureDate && !transcript.lectureDate) {
@@ -2273,7 +2289,11 @@
       guideLanguage = guideLang;
       guide._language = guideLang;
 
-      storageSet({ currentGuide: guide, currentLectureUrl: currentLectureUrl });
+      storageSet({
+        currentGuide: guide,
+        currentLectureUrl: currentLectureUrl,
+        currentGuideLectureUrl: normalizeLectureUrl(currentLectureUrl)
+      });
       saveToHistory();
       _syncToolLanguageSelects();
 
@@ -2348,7 +2368,7 @@
     guideContent.style.display = 'none';
     guideEmpty.style.display = '';
     generateError.style.display = 'none';
-    chrome.storage?.local?.remove(['currentGuide', 'currentQaMessages', 'currentToolOutputs', 'currentGuideToolOutputs']);
+    chrome.storage?.local?.remove(['currentGuide', 'currentGuideLectureUrl', 'currentQaMessages', 'currentQaChats', 'currentToolOutputs', 'currentGuideToolOutputs']);
     clearToolOutputsLocalFallback();
     clearToolOutputsState();
     restoreToolOutputsUI();
@@ -4538,6 +4558,7 @@ ${guideBlocksStr ? `\n--- GUIDE BLOCKS (full lecture guide; first message only) 
     storageSet({
       currentGuide: guide,
       currentLectureUrl: currentLectureUrl,
+      currentGuideLectureUrl: normalizeLectureUrl(currentLectureUrl),
       currentQaMessages: qaChats[0]?.messages || [],
       currentQaChats: qaChats.map(c => ({ id: c.id, name: c.name, messages: c.messages }))
     });
@@ -4550,7 +4571,10 @@ ${guideBlocksStr ? `\n--- GUIDE BLOCKS (full lecture guide; first message only) 
     applyToolOutputsSnapshot(entry.toolOutputs || null);
     if (entry.toolOutputs && toolOutputsHasData(entry.toolOutputs)) {
       const norm = normalizeLectureUrl(entry.lectureUrl);
-      storageSet({ currentToolOutputs: { lectureUrl: norm, ...entry.toolOutputs } });
+      storageSet({
+        currentToolOutputs: { lectureUrl: norm, ...entry.toolOutputs },
+        currentGuideToolOutputs: { lectureUrl: norm, ...entry.toolOutputs }
+      });
     }
     switchTab('guide');
   }
