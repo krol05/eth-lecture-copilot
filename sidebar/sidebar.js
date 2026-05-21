@@ -36,7 +36,7 @@
   // Per-stream state — keyed by requestId. Allows simultaneous streams across chats.
   const qaActiveStreams = new Map();
   // qaActiveStreams value shape:
-  // { chatIdx, el, bubble, buffer, dollarCount, stableEnd, katexEnd, rafPending, katexThrottle, abortFn }
+  // { chatIdx, el, bubble, buffer, stableEnd, katexEnd, rafPending, rafHandle, finalized, katexThrottle, abortFn }
 
   function isChatStreaming(chatIdx) {
     for (const s of qaActiveStreams.values()) {
@@ -262,6 +262,7 @@
     for (const [reqId, state] of qaActiveStreams.entries()) {
       if (state.chatIdx === idx) {
         try { state.abortFn?.(); } catch (_) {}
+        QaStreamFlush.stopStreamFlush(state);
         qaActiveStreams.delete(reqId);
       }
     }
@@ -1650,12 +1651,9 @@
 
   function handleQaStreamChunk(msg) {
     const state = qaActiveStreams.get(msg.requestId);
-    if (!state || !state.bubble) return;
+    if (!state || !state.bubble || state.finalized) return;
     state.buffer += msg.text || '';
-    if (!state.rafPending) {
-      state.rafPending = true;
-      requestAnimationFrame(() => flushQaStream(state));
-    }
+    QaStreamFlush.scheduleStreamFlush(state, flushQaStream);
   }
 
   /**
@@ -1677,8 +1675,8 @@
    *  render with a smooth opacity crossfade.
    */
   function flushQaStream(state) {
-    state.rafPending = false;
-    if (!state.bubble) return;
+    if (!state?.bubble || state.finalized) return;
+    if (!QaStreamFlush.isStreamingChatBubble(state.bubble)) return;
 
     const buf    = state.buffer;
     const cursor = state.bubble.querySelector('.qa-stream-cursor');
@@ -3709,18 +3707,15 @@ ${guideBlocksStr}`;
   }
 
   function handleGuideSummaryStreamChunk(msg, streamState) {
-    if (!streamState.guideStreamBubble) return;
+    if (!streamState.guideStreamBubble || streamState.finalized) return;
     streamState.buffer += msg.text || '';
-    if (!streamState.rafPending) {
-      streamState.rafPending = true;
-      requestAnimationFrame(() => flushGuideSummaryStream(streamState));
-    }
+    QaStreamFlush.scheduleStreamFlush(streamState, flushGuideSummaryStream);
   }
 
   function flushGuideSummaryStream(state) {
-    state.rafPending = false;
     const bubble = state.guideStreamBubble;
-    if (!bubble) return;
+    if (!bubble || state.finalized) return;
+    if (!QaStreamFlush.isStreamingChatBubble(bubble)) return;
     const buf = state.buffer;
     const cursor = bubble.querySelector('.qa-stream-cursor');
     const katexZ = bubble.querySelector('.qa-katex-zone');
@@ -3774,8 +3769,9 @@ ${guideBlocksStr}`;
     return body.querySelector('.chat-bubble');
   }
 
-  function _finishGuideSummaryStreamBubble(bubble, text) {
+  function _finishGuideSummaryStreamBubble(bubble, text, streamState) {
     if (!bubble) return;
+    if (streamState) QaStreamFlush.stopStreamFlush(streamState);
     const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(text || ''));
     bubble.style.transition = 'opacity 0.12s ease';
     bubble.style.opacity = '0.2';
@@ -3882,7 +3878,10 @@ ${guideBlocksStr}`;
       }
 
       if (source === 'qa' && assistantText && qaChats[sendChatIdx]) {
-        if (streamState) qaActiveStreams.delete(req._requestId);
+        if (streamState) {
+          QaStreamFlush.stopStreamFlush(streamState);
+          qaActiveStreams.delete(req._requestId);
+        }
         qaChats[sendChatIdx].summaryInContext = true;
         persistChat();
         renderQaSummaryPanelForChat(sendChatIdx);
@@ -3890,8 +3889,11 @@ ${guideBlocksStr}`;
         refreshInlineLectureSummaryIfOpen();
       } else if (source === 'guide') {
         if (useStream) {
-          if (streamState) qaActiveStreams.delete(req._requestId);
-          _finishGuideSummaryStreamBubble(guideStreamBubble, assistantText);
+          if (streamState) {
+            QaStreamFlush.stopStreamFlush(streamState);
+            qaActiveStreams.delete(req._requestId);
+          }
+          _finishGuideSummaryStreamBubble(guideStreamBubble, assistantText, streamState);
           setTimeout(() => refreshInlineLectureSummaryIfOpen(), 200);
         } else {
           refreshInlineLectureSummaryIfOpen();
@@ -3901,6 +3903,7 @@ ${guideBlocksStr}`;
       lectureSummaryGenerating = false;
       if (streamState) {
         if (streamState.katexThrottle) { clearTimeout(streamState.katexThrottle); streamState.katexThrottle = null; }
+        QaStreamFlush.stopStreamFlush(streamState);
         if (req?._requestId) qaActiveStreams.delete(req._requestId);
       }
       if (source === 'qa') {
@@ -4085,9 +4088,10 @@ ${guideBlocksStr}`;
       if (liveChatIdx === activeQaChatIdx) qaMessages = qaChats[liveChatIdx].messages;
 
       if (useStream) {
-        // Stream complete — stop accepting new chunks
+        // Stream complete — stop accepting new chunks and cancel stale rAF flushes
         if (streamState) {
           if (streamState.katexThrottle) { clearTimeout(streamState.katexThrottle); streamState.katexThrottle = null; }
+          QaStreamFlush.stopStreamFlush(streamState);
           qaActiveStreams.delete(req._requestId);
         }
 
@@ -4145,6 +4149,7 @@ ${guideBlocksStr}`;
       // Clean up streaming state on error/abort
       if (streamState) {
         if (streamState.katexThrottle) { clearTimeout(streamState.katexThrottle); streamState.katexThrottle = null; }
+        QaStreamFlush.stopStreamFlush(streamState);
         if (req?._requestId) qaActiveStreams.delete(req._requestId);
       }
 
@@ -6673,12 +6678,9 @@ ${guideBlocksStr}${scriptContext}`;
 
   function handleToolAskStreamChunk(msg) {
     const state = toolAskActiveStreams.get(msg.requestId);
-    if (!state?.bubble) return;
+    if (!state?.bubble || state.finalized) return;
     state.buffer += msg.text || '';
-    if (!state.rafPending) {
-      state.rafPending = true;
-      requestAnimationFrame(() => flushQaStream(state));
-    }
+    QaStreamFlush.scheduleStreamFlush(state, flushQaStream);
   }
 
   async function sendToolAskMessage() {
@@ -6747,7 +6749,10 @@ ${guideBlocksStr}${scriptContext}`;
         toolAskSessions[sessionKey].messages.push({ role: 'assistant', content: assistantText });
       }
       if (useStream) {
-        toolAskActiveStreams.delete(req._requestId);
+        if (streamState) {
+          QaStreamFlush.stopStreamFlush(streamState);
+          toolAskActiveStreams.delete(req._requestId);
+        }
         if (streamBubble) {
           const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(assistantText));
           streamBubble.innerHTML = renderMarkdown(finalNorm);
@@ -6757,7 +6762,10 @@ ${guideBlocksStr}${scriptContext}`;
       persistToolAskSessions();
       renderToolAskPanel();
     } catch (err) {
-      if (streamState) toolAskActiveStreams.delete(req?._requestId);
+      if (streamState) {
+        QaStreamFlush.stopStreamFlush(streamState);
+        toolAskActiveStreams.delete(req?._requestId);
+      }
       if (err.message === 'Request aborted.' && streamState?.buffer?.trim()) {
         if (toolAskSessions[sessionKey]) {
           toolAskSessions[sessionKey].messages.push({ role: 'assistant', content: streamState.buffer });
