@@ -5443,6 +5443,9 @@ ${guideBlocksStr}${scriptContext}`;
   let _currentTab = 'guide';
 
   function switchTab(tabName) {
+    if (tabName !== _currentTab) {
+      closeToolAskPanel();
+    }
     _currentTab = tabName;
     if (tabName === 'qa') {
       hideCrossTabNotify();
@@ -5961,6 +5964,8 @@ ${guideBlocksStr}${scriptContext}`;
       return;
     }
 
+    if (_inlineToolActive) closeToolAskPanel();
+
     _inlineToolActive = toolKey;
     nameEl.textContent = titleText;
     bodyEl.innerHTML   = '';
@@ -5984,6 +5989,7 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   function closeInlineToolPanel() {
+    closeToolAskPanel();
     const guideContent = document.getElementById('guide-content');
     const panel        = document.getElementById('guide-inline-tool');
     if (panel) {
@@ -6595,12 +6601,18 @@ ${guideBlocksStr}${scriptContext}`;
     toolAskPanel.hidden = false;
     document.body.classList.add('tool-ask-open');
     persistToolAskSessions();
+    requestAnimationFrame(updateToolAskPanelHeight);
     toolAskInput?.focus();
   }
 
   function closeToolAskPanel() {
+    for (const [reqId, state] of toolAskActiveStreams.entries()) {
+      state.abortFn?.();
+      toolAskActiveStreams.delete(reqId);
+    }
     if (toolAskPanel) toolAskPanel.hidden = true;
     document.body.classList.remove('tool-ask-open');
+    document.documentElement.style.removeProperty('--tool-ask-panel-h');
     toolAskActiveSessionKey = null;
   }
 
@@ -6627,6 +6639,7 @@ ${guideBlocksStr}${scriptContext}`;
     }
     toolAskMessagesEl.scrollTop = toolAskMessagesEl.scrollHeight;
     updateToolAskSendBtn();
+    requestAnimationFrame(updateToolAskPanelHeight);
   }
 
   function updateToolAskSendBtn() {
@@ -6772,6 +6785,17 @@ ${guideBlocksStr}${scriptContext}`;
     updateToolAskSendBtn();
   }
 
+  function updateToolAskPanelHeight() {
+    if (!toolAskPanel || toolAskPanel.hidden) {
+      document.documentElement.style.removeProperty('--tool-ask-panel-h');
+      return;
+    }
+    const h = toolAskPanel.getBoundingClientRect().height;
+    if (h > 0) {
+      document.documentElement.style.setProperty('--tool-ask-panel-h', `${Math.ceil(h)}px`);
+    }
+  }
+
   function initToolAskPanel() {
     document.getElementById('tool-ask-close')?.addEventListener('click', closeToolAskPanel);
     toolAskSendBtn?.addEventListener('click', () => {
@@ -6793,6 +6817,11 @@ ${guideBlocksStr}${scriptContext}`;
     toolAskTempSlider?.addEventListener('input', () => {
       if (toolAskTempValue) toolAskTempValue.textContent = (toolAskTempSlider.value / 100).toFixed(2);
     });
+    document.getElementById('tool-ask-customization')?.addEventListener('toggle', updateToolAskPanelHeight);
+    if (window.ResizeObserver && toolAskPanel) {
+      const ro = new ResizeObserver(updateToolAskPanelHeight);
+      ro.observe(toolAskPanel);
+    }
   }
 
   function openFlashcardsModal() {
