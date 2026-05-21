@@ -744,6 +744,7 @@
             </div>
           </div>
           <div id="quiz-action-row" class="quiz-action-row">
+            <span id="quiz-ask-slot" class="quiz-ask-slot"></span>
             <button id="quiz-reveal-btn" class="primary-btn" type="button">Show Answer</button>
             <button id="quiz-submit-mc-btn" class="primary-btn" type="button" style="display:none">Submit</button>
           </div>
@@ -1043,6 +1044,67 @@
         <button class="qa-img-ed-action-btn" id="qa-img-ed-cancel">Cancel</button>
         <button class="qa-img-ed-action-btn primary" id="qa-img-ed-done">Done</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Ephemeral "Ask about this item" chat (flashcards, quiz, exam, cross-exam) -->
+  <div id="tool-ask-panel" class="tool-ask-panel" hidden>
+    <div class="tool-ask-panel-head">
+      <span id="tool-ask-title" class="tool-ask-title">Ask about this item</span>
+      <button id="tool-ask-close" class="icon-btn tool-ask-close-btn" type="button" title="Close" aria-label="Close">×</button>
+    </div>
+    <details id="tool-ask-customization" class="qa-customization tool-ask-customization">
+      <summary class="qa-customization-summary">
+        <span>Customization</span>
+        <span class="qa-customization-meta">Thinking, Temp, Profiles</span>
+      </summary>
+      <div class="qa-customization-body">
+        <div class="qa-temp-row">
+          <label class="qa-temp-label" for="tool-ask-temp-slider">Temp</label>
+          <input type="range" id="tool-ask-temp-slider" min="0" max="100" value="35" step="1">
+          <span id="tool-ask-temp-value" class="gen-slider-value">0.35</span>
+        </div>
+        <div class="qa-temp-row">
+          <label class="qa-temp-label" for="tool-ask-thinking-select">Thinking</label>
+          <select id="tool-ask-thinking-select" class="gen-setting-select">
+            <option value="none" selected>None</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+        <div class="qa-temp-row qa-profile-row">
+          <label class="qa-temp-label" for="tool-ask-length-select">Response depth</label>
+          <select id="tool-ask-length-select" class="gen-setting-select">
+            <option value="default" selected>Balanced (Default)</option>
+            <option value="ultra_concise">Lightning Summary</option>
+            <option value="concise">Concise Explanation</option>
+            <option value="thorough">Thorough Walkthrough</option>
+            <option value="deep_lecture">Deep Dive (Lecture Bound)</option>
+            <option value="deep_extended">Deep Dive + Extensions</option>
+          </select>
+        </div>
+        <div class="qa-temp-row qa-profile-row">
+          <label class="qa-temp-label" for="tool-ask-style-select">Explanation style</label>
+          <select id="tool-ask-style-select" class="gen-setting-select">
+            <option value="default" selected>Adaptive (Default)</option>
+            <option value="eli5">ELI5</option>
+            <option value="friendly">Friendly Beginner</option>
+            <option value="plain">Plain Language</option>
+            <option value="structured">Structured Basics</option>
+            <option value="tutor">Step-by-Step Tutor</option>
+            <option value="technical">Technical Precision</option>
+            <option value="formal">Formal Rigor</option>
+          </select>
+        </div>
+      </div>
+    </details>
+    <div id="tool-ask-messages" class="tool-ask-messages"></div>
+    <div class="tool-ask-input-row">
+      <textarea id="tool-ask-input" rows="2" placeholder="Ask about this item…"></textarea>
+      <button id="tool-ask-send" class="icon-btn qa-send-btn" type="button" title="Send (Enter)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
     </div>
   </div>
 
