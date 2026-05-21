@@ -650,10 +650,13 @@
         <div id="flashcards-results" class="tool-panel" style="display:none">
           <div class="feature-result-header">
             <button id="flashcards-back-btn" class="feature-back-btn" type="button">← Settings</button>
-            <span id="flashcards-count-label" class="feature-result-count"></span>
+            <div class="feature-result-titles">
+              <span id="flashcards-count-label" class="feature-result-count"></span>
+              <span id="flashcards-deck-title-label" class="flashcard-deck-title-label" hidden></span>
+            </div>
             <div class="feature-result-actions">
               <button id="flashcards-export-tsv" class="history-load-btn" type="button" title="Export as TSV for Anki manual import">TSV</button>
-              <button id="flashcards-export-anki" class="history-load-btn" type="button" title="Send directly to Anki via AnkiConnect">Anki</button>
+              <button id="flashcards-export-anki" class="history-load-btn" type="button" title="Send to Anki (Subject::DeckTitle sub-deck from AI-generated deck name)">Anki</button>
             </div>
           </div>
           <!-- Paginated card navigation -->
