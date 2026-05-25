@@ -140,6 +140,15 @@
           <input type="text" id="gen-lang-custom" class="gen-setting-input" placeholder="e.g. Swahili, Polish…">
         </div>
         <div class="gen-setting-row">
+          <label class="gen-setting-label" for="gen-mode-select">Guide mode
+            <span class="setting-hint" tabindex="0" data-tip="Reliable = current proven guide format.&#10;Study Flow = experimental mixed layout that lets concepts, formulas, definitions, and notes appear in a smarter study order while keeping fallback fields.">?</span>
+          </label>
+          <select id="gen-mode-select" class="gen-setting-select">
+            <option value="reliable" selected>Reliable</option>
+            <option value="study_flow">Study Flow (experimental)</option>
+          </select>
+        </div>
+        <div class="gen-setting-row">
           <label class="gen-setting-label" for="gen-detail-select">Block detail
             <span class="setting-hint" tabindex="0" data-tip="How much information per block:&#10;Low = brief bullet points (~1-2 sentences)&#10;Medium = solid explanations (~2-3 sentences)&#10;High = thorough coverage (~3-5 sentences)&#10;Very High = exam-grade depth (~4-8 sentences)&#10;&#10;Higher detail → more tokens per block → may hit context limits on smaller models">?</span>
           </label>
@@ -610,11 +619,19 @@
             </div>
           </div>
           <div class="gen-setting-row">
-            <label class="gen-setting-label">Style</label>
-            <div class="pill-group" id="flashcards-style-pills">
-              <button class="pill" data-value="recall" type="button">Recall</button>
-              <button class="pill" data-value="definition" type="button">Definition</button>
-              <button class="pill pill-active" data-value="mixed" type="button">Mixed</button>
+            <label class="gen-setting-label">Card types</label>
+            <div class="pill-group flashcard-type-pills" id="flashcards-card-type-pills" data-multi-select="true">
+              <button class="pill pill-active" data-value="auto" type="button" aria-pressed="true">Auto</button>
+              <button class="pill" data-value="recall" type="button" aria-pressed="false">Recall</button>
+              <button class="pill" data-value="definition" type="button" aria-pressed="false">Definition</button>
+              <button class="pill" data-value="concept" type="button" aria-pressed="false">Concept</button>
+              <button class="pill" data-value="application" type="button" aria-pressed="false">Application</button>
+              <button class="pill" data-value="comparison" type="button" aria-pressed="false">Comparison</button>
+              <button class="pill" data-value="process" type="button" aria-pressed="false">Process</button>
+              <button class="pill" data-value="cause_effect" type="button" aria-pressed="false">Cause / effect</button>
+              <button class="pill" data-value="example" type="button" aria-pressed="false">Example</button>
+              <button class="pill" data-value="misconception" type="button" aria-pressed="false">Misconception</button>
+              <button class="pill" data-value="formula_rule" type="button" aria-pressed="false">Formula / rule</button>
             </div>
           </div>
           <label class="auto-follow-toggle tools-formula-toggle" title="Include cards that drill formulas and notation">
@@ -1113,9 +1130,11 @@
   <!-- Scripts -->
   <script src="../lib/katex/katex.min.js"></script>
   <script src="../lib/katex/auto-render.min.js"></script>
+  <script src="../lib/debug.js"></script>
   <script src="../lib/ui-settings.js"></script>
   <script src="../lib/fuzzy-retrieval.js"></script>
   <script src="../lib/qa-stream-flush.js"></script>
+  <script src="../lib/flashcards.js"></script>
   <script src="../lib/prompts.js"></script>
   <script src="scripts.js"></script>
   <script src="sidebar.js"></script>

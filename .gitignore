@@ -3,3 +3,7 @@
 node_modules/
 .env
 remotion-showcase/
+.claude/
+.superpowers/
+PLAN.md
+coverage/

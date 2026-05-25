@@ -1546,55 +1546,84 @@ body {
 
 /* Key Concepts */
 .concepts-list {
-  counter-reset: concept;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 8px;
   list-style: none;
   padding-left: 0;
   margin-left: 0;
 }
 
-.concepts-list li {
-  counter-increment: concept;
+.study-flow-list {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
   gap: 10px;
+}
+
+.concept-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   font-size: var(--ui-font-content-size);
   color: var(--text-primary);
   line-height: 1.6;
-  padding: 5px 8px;
+  padding: 11px 12px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius-sm);
-  transition: background var(--transition);
+  background:
+    linear-gradient(90deg, var(--accent-dim), transparent 42%),
+    var(--bg-1);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+  transition:
+    background 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.concepts-list li:hover {
-  background: var(--accent-dim);
+.concept-card:hover {
+  border-color: var(--border-strong);
+  background:
+    linear-gradient(90deg, var(--accent-dim), transparent 58%),
+    var(--bg-1);
 }
 
-.concepts-list .concept-text {
+.concept-card .concept-text {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   min-width: 0;
-  flex: 1;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
-/* Badge is a real flex item — no absolute positioning, so it pushes text right */
-.concepts-list li::before {
-  content: counter(concept);
-  display: block;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  min-width: 18px;
-  background: var(--accent);
-  color: var(--bg-0);
-  border-radius: 50%;
+.concept-lead {
+  color: var(--text-primary);
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.concept-body {
+  color: var(--text-secondary);
+  line-height: 1.58;
+}
+
+/* Compact concept label; no numbering so concept cards scan like study notes. */
+.concept-kind {
+  align-self: flex-start;
+  max-width: 100%;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 2px 6px;
   font-size: 9px;
   font-weight: 800;
   font-family: var(--font-mono);
-  text-align: center;
-  line-height: 18px;
-  margin-top: 3px;
-  opacity: 0.85;
+  letter-spacing: 0.4px;
+  line-height: 1.25;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
 }
 
 /* Formulas */
@@ -3861,9 +3890,8 @@ body {
 }
 
 /* ─── Guide block content breathing ──────────────────────────────────────── */
-/* Slightly more generous concept list breathing */
-.concepts-list li {
-  padding: 4px 0 4px 14px;
+/* Slightly more generous concept card breathing */
+.concepts-list .concept-card {
   line-height: 1.6;
 }
 
@@ -4291,6 +4319,78 @@ body {
 
 .flashcard-back {
   background: var(--bg-1);
+}
+
+.flashcard-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 7px 10px;
+  background: var(--bg-0);
+  border-top: 1px solid var(--border);
+}
+
+.flashcard-meta-item {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--bg-1);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.flashcard-meta-label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.flashcard-meta-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flashcard-meta-note {
+  flex-basis: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.flashcard-meta-note summary {
+  cursor: pointer;
+  padding: 4px 7px;
+  list-style: none;
+}
+
+.flashcard-meta-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.flashcard-meta-note summary::after {
+  content: "Show";
+  margin-left: 6px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.flashcard-meta-note[open] summary::after {
+  content: "Hide";
+}
+
+.flashcard-meta-note-body {
+  padding: 0 7px 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
 }
 
 .flashcard-side-label {

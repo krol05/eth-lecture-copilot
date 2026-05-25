@@ -9,7 +9,10 @@
  *                      OpenRouter, Groq, Together, Cerebras, and any other OAI-compat provider
  */
 
-importScripts(chrome.runtime.getURL('lib/guide-parse.js'));
+importScripts(
+  chrome.runtime.getURL('lib/debug.js'),
+  chrome.runtime.getURL('lib/guide-parse.js')
+);
 
 // ─── Provider config (must match lib/providers-config.js) ────────────────────
 // Inlined here because service workers can't import arbitrary files in MV3.
@@ -233,6 +236,7 @@ function oaiReasoningEffort(provider, model, thinking) {
 }
 
 function emitApiProgress(sender, requestId, stage, detail = '') {
+  globalThis.CopilotDebug?.log('background.progress', { requestId, stage, detail });
   const tabId = sender?.tab?.id;
   if (!tabId || !requestId) return;
   chrome.tabs.sendMessage(tabId, {
@@ -241,6 +245,30 @@ function emitApiProgress(sender, requestId, stage, detail = '') {
     stage,
     detail
   }).catch(() => {});
+}
+
+function debugRequestMeta(type, requestId, provider, model, msg) {
+  globalThis.CopilotDebug?.log('background.request.received', {
+    requestId,
+    type,
+    provider,
+    model,
+    systemPrompt: msg?.systemPrompt,
+    message: msg
+  });
+}
+
+function debugRawResponse(type, requestId, raw) {
+  globalThis.CopilotDebug?.log('background.response.raw', {
+    requestId,
+    type,
+    raw,
+    length: typeof raw === 'string' ? raw.length : null
+  });
+}
+
+function debugParsedResponse(type, requestId, parsed) {
+  globalThis.CopilotDebug?.log('background.response.parsed', { requestId, type, parsed });
 }
 
 async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts = {}) {
@@ -287,6 +315,13 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
   }
 
   const authHeader = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};
+  globalThis.CopilotDebug?.log('background.provider.oai.request', {
+    url: `${normalizedBase}/chat/completions`,
+    model,
+    systemPrompt,
+    messages,
+    body
+  });
 
   const resp = await fetch(`${normalizedBase}/chat/completions`, {
     method: 'POST',
@@ -302,7 +337,9 @@ async function callOAICompat(base, model, apiKey, messages, systemPrompt, opts =
 
   if (!resp.ok) throw new Error(`${normalizedBase} → ${resp.status}: ${await resp.text()}`);
   const d = await resp.json();
-  return d.choices?.[0]?.message?.content ?? '';
+  const text = d.choices?.[0]?.message?.content ?? '';
+  globalThis.CopilotDebug?.log('background.provider.oai.response', { status: resp.status, json: d, text });
+  return text;
 }
 
 // ─── Anthropic handler ────────────────────────────────────────────────────────
@@ -354,6 +391,13 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
   } else {
     body.temperature = opts.temperature ?? 0.4;
   }
+  globalThis.CopilotDebug?.log('background.provider.anthropic.request', {
+    url: 'https://api.anthropic.com/v1/messages',
+    model,
+    systemPrompt,
+    messages,
+    body
+  });
 
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -369,6 +413,7 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
 
   if (!resp.ok) throw new Error(`Anthropic → ${resp.status}: ${await resp.text()}`);
   const d = await resp.json();
+  globalThis.CopilotDebug?.log('background.provider.anthropic.response', { status: resp.status, json: d });
   if (useThinking) {
     const textBlock = d.content?.find(b => b.type === 'text');
     return textBlock?.text ?? '';
@@ -411,6 +456,13 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
     contents,
     generationConfig
   };
+  globalThis.CopilotDebug?.log('background.provider.google.request', {
+    url,
+    model,
+    systemPrompt,
+    messages,
+    body
+  });
 
   const resp = await fetch(url, {
     method: 'POST',
@@ -427,12 +479,18 @@ async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
   if (cand?.finishReason === 'MAX_TOKENS') {
     console.warn('[BG] Gemini finishReason=MAX_TOKENS — guide output may be incomplete');
   }
+  globalThis.CopilotDebug?.log('background.provider.google.response', { status: resp.status, json: d, text });
   return text;
 }
 
 // ─── Streaming helpers ────────────────────────────────────────────────────────
 
 function emitStreamChunk(sender, requestId, text) {
+  globalThis.CopilotDebug?.log('background.stream.chunk.toContent', {
+    requestId,
+    text,
+    length: typeof text === 'string' ? text.length : null
+  });
   const tabId = sender?.tab?.id;
   if (!tabId || !requestId) return;
   chrome.tabs.sendMessage(tabId, {
@@ -458,14 +516,23 @@ async function readSSEStream(resp, onChunk) {
       if (trimmed.startsWith('data: ')) {
         try {
           const json = JSON.parse(trimmed.slice(6));
+          globalThis.CopilotDebug?.log('background.sse.parsed', { line: trimmed, json });
           onChunk(json);
-        } catch {}
+        } catch (err) {
+          globalThis.CopilotDebug?.warn('background.sse.parseError', { line: trimmed, error: err.message });
+        }
       }
     }
   }
   // flush remaining
   if (buf.trim() && buf.trim() !== 'data: [DONE]' && buf.trim().startsWith('data: ')) {
-    try { onChunk(JSON.parse(buf.trim().slice(6))); } catch {}
+    try {
+      const json = JSON.parse(buf.trim().slice(6));
+      globalThis.CopilotDebug?.log('background.sse.parsedFlush', { line: buf.trim(), json });
+      onChunk(json);
+    } catch (err) {
+      globalThis.CopilotDebug?.warn('background.sse.parseFlushError', { line: buf.trim(), error: err.message });
+    }
   }
 }
 
@@ -497,6 +564,13 @@ async function callOAICompatStream(base, model, apiKey, messages, systemPrompt, 
   if (!isOSeries) body.temperature = opts.temperature ?? 0.1;
 
   const authHeader = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};
+  globalThis.CopilotDebug?.log('background.provider.oai.stream.request', {
+    url: `${normalizedBase}/chat/completions`,
+    model,
+    systemPrompt,
+    messages,
+    body
+  });
   const resp = await fetch(`${normalizedBase}/chat/completions`, {
     method: 'POST',
     ...(maybeTimeoutSignal(opts.timeoutMs) ? { signal: maybeTimeoutSignal(opts.timeoutMs) } : {}),
@@ -511,9 +585,11 @@ async function callOAICompatStream(base, model, apiKey, messages, systemPrompt, 
     const delta = chunk.choices?.[0]?.delta?.content;
     if (delta) {
       fullText += delta;
+      globalThis.CopilotDebug?.log('background.provider.oai.stream.delta', { delta, fullText });
       opts.onChunk?.(delta, fullText);
     }
   });
+  globalThis.CopilotDebug?.log('background.provider.oai.stream.complete', { fullText, length: fullText.length });
   return fullText;
 }
 
@@ -544,6 +620,13 @@ async function callAnthropicStream(model, apiKey, messages, systemPrompt, opts =
     stream: true,
     temperature: opts.temperature ?? 0.1
   };
+  globalThis.CopilotDebug?.log('background.provider.anthropic.stream.request', {
+    url: 'https://api.anthropic.com/v1/messages',
+    model,
+    systemPrompt,
+    messages,
+    body
+  });
 
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -565,10 +648,12 @@ async function callAnthropicStream(model, apiKey, messages, systemPrompt, opts =
       const delta = chunk.delta.text || '';
       if (delta) {
         fullText += delta;
+        globalThis.CopilotDebug?.log('background.provider.anthropic.stream.delta', { delta, fullText });
         opts.onChunk?.(delta, fullText);
       }
     }
   });
+  globalThis.CopilotDebug?.log('background.provider.anthropic.stream.complete', { fullText, length: fullText.length });
   return fullText;
 }
 
@@ -601,6 +686,13 @@ async function callGoogleStream(model, apiKey, messages, systemPrompt, opts = {}
       thinkingConfig: geminiThinkingConfig(model, 'none')
     }
   };
+  globalThis.CopilotDebug?.log('background.provider.google.stream.request', {
+    url,
+    model,
+    systemPrompt,
+    messages,
+    body
+  });
 
   const resp = await fetch(url, {
     method: 'POST',
@@ -616,9 +708,11 @@ async function callGoogleStream(model, apiKey, messages, systemPrompt, opts = {}
     const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
     if (text) {
       fullText += text;
+      globalThis.CopilotDebug?.log('background.provider.google.stream.delta', { delta: text, fullText });
       opts.onChunk?.(text, fullText);
     }
   });
+  globalThis.CopilotDebug?.log('background.provider.google.stream.complete', { fullText, length: fullText.length });
   return fullText;
 }
 
@@ -665,6 +759,11 @@ async function callAIStream(provider, model, apiKey, messages, systemPrompt, opt
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[BG] onMessage:', message?.type);
+  globalThis.CopilotDebug?.log('background.onMessage', {
+    type: message?.type,
+    requestId: message?._copilotRequestId,
+    message
+  });
 
   if (message?.type === 'OPEN_OPTIONS') {
     chrome.runtime.openOptionsPage();
@@ -683,8 +782,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const requestId = message?._copilotRequestId || null;
   const progress = (stage, detail = '') => emitApiProgress(sender, requestId, stage, detail);
   handleMessage(message, progress, sender, requestId).then(
-    result => sendResponse({ success: true, data: result }),
-    err    => sendResponse({ success: false, error: err.message })
+    result => {
+      globalThis.CopilotDebug?.log('background.onMessage.success', {
+        requestId,
+        type: message?.type,
+        result
+      });
+      sendResponse({ success: true, data: result });
+    },
+    err => {
+      globalThis.CopilotDebug?.error('background.onMessage.error', {
+        requestId,
+        type: message?.type,
+        error: err?.message || String(err),
+        stack: err?.stack
+      });
+      sendResponse({ success: false, error: err.message });
+    }
   );
   return true;
 });
@@ -694,6 +808,7 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
 
   const { type, provider, apiKey, localBase } = msg;
   const model = msg.model || DEFAULT_MODELS[provider];
+  debugRequestMeta(type, requestId, provider, model, msg);
   // localBase is passed for 'local' type providers; included in opts so callAI can forward it
   const baseOpts = localBase ? { localBase } : {};
 
@@ -767,7 +882,20 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
               [{ role: 'user', content: transcriptText }], systemPrompt, { ...opts, maxTokens: retryTokens });
       }
       progress('provider_finished', 'Response body received');
-      return parseGuideResponse(raw);
+      debugRawResponse(type, requestId, raw);
+      try {
+        const parsed = parseGuideResponse(raw);
+        debugParsedResponse(type, requestId, parsed);
+        return parsed;
+      } catch (err) {
+        globalThis.CopilotDebug?.error('background.parse.guide.error', {
+          requestId,
+          type,
+          error: err?.message || String(err),
+          raw
+        });
+        throw err;
+      }
     }
 
     case 'CHAT': {
@@ -783,9 +911,11 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
         thinking: chatThinking,
         ...(chatStream ? { onChunk: (delta) => emitStreamChunk(sender, requestId, delta) } : {})
       };
-      return chatStream
-        ? callAIStream(provider, model, apiKey, messages, systemPrompt, chatOpts)
-        : callAI(provider, model, apiKey, messages, systemPrompt, chatOpts);
+      const raw = chatStream
+        ? await callAIStream(provider, model, apiKey, messages, systemPrompt, chatOpts)
+        : await callAI(provider, model, apiKey, messages, systemPrompt, chatOpts);
+      debugRawResponse(type, requestId, raw);
+      return raw;
     }
 
     case 'FETCH_VTT': {
@@ -808,7 +938,10 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
         systemPrompt,
         { ...baseOpts, provider, temperature: 0.45, maxTokens: maxTok, timeoutMs: 120000, jsonMode: true }
       );
-      return safeParseJson(raw);
+      debugRawResponse(type, requestId, raw);
+      const parsed = safeParseJson(raw, { type, requestId });
+      debugParsedResponse(type, requestId, parsed);
+      return parsed;
     }
 
     case 'QUIZ_REQUEST': {
@@ -819,7 +952,10 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
         systemPrompt,
         { ...baseOpts, provider, temperature: 0.45, maxTokens: maxTok, timeoutMs: 120000, jsonMode: true }
       );
-      return safeParseJson(raw);
+      debugRawResponse(type, requestId, raw);
+      const parsed = safeParseJson(raw, { type, requestId });
+      debugParsedResponse(type, requestId, parsed);
+      return parsed;
     }
 
     case 'EXAM_QUESTIONS_REQUEST': {
@@ -830,7 +966,10 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
         systemPrompt,
         { ...baseOpts, provider, temperature: 0.5, maxTokens: maxTok, timeoutMs: 120000, jsonMode: true }
       );
-      return safeParseJson(raw);
+      debugRawResponse(type, requestId, raw);
+      const parsed = safeParseJson(raw, { type, requestId });
+      debugParsedResponse(type, requestId, parsed);
+      return parsed;
     }
 
     case 'CROSS_LECTURE_EXAM_REQUEST': {
@@ -841,7 +980,10 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
         systemPrompt,
         { ...baseOpts, provider, temperature: 0.5, maxTokens: maxTok, timeoutMs: 180000, jsonMode: true }
       );
-      return safeParseJson(raw);
+      debugRawResponse(type, requestId, raw);
+      const parsed = safeParseJson(raw, { type, requestId });
+      debugParsedResponse(type, requestId, parsed);
+      return parsed;
     }
 
     default:
@@ -849,20 +991,31 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
   }
 }
 
-function safeParseJson(raw) {
+function safeParseJson(raw, debugMeta = {}) {
   if (typeof raw === 'object' && raw !== null) return raw;
   const s = String(raw || '');
-  try { return JSON.parse(s); } catch {}
+  globalThis.CopilotDebug?.log('background.safeParseJson.attempt', { ...debugMeta, phase: 'raw', raw: s });
+  try { return JSON.parse(s); } catch (err) {
+    globalThis.CopilotDebug?.warn('background.safeParseJson.failed', { ...debugMeta, phase: 'raw', error: err.message, raw: s });
+  }
   // Strip markdown fences
   const stripped = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
-  try { return JSON.parse(stripped); } catch {}
+  globalThis.CopilotDebug?.log('background.safeParseJson.attempt', { ...debugMeta, phase: 'stripped', raw: stripped });
+  try { return JSON.parse(stripped); } catch (err) {
+    globalThis.CopilotDebug?.warn('background.safeParseJson.failed', { ...debugMeta, phase: 'stripped', error: err.message, raw: stripped });
+  }
   // Find the first { or [ and try from there
   const start = Math.min(
     s.indexOf('{') >= 0 ? s.indexOf('{') : Infinity,
     s.indexOf('[') >= 0 ? s.indexOf('[') : Infinity
   );
   if (start < Infinity) {
-    try { return JSON.parse(s.slice(start)); } catch {}
+    const sliced = s.slice(start);
+    globalThis.CopilotDebug?.log('background.safeParseJson.attempt', { ...debugMeta, phase: 'sliced', raw: sliced });
+    try { return JSON.parse(sliced); } catch (err) {
+      globalThis.CopilotDebug?.warn('background.safeParseJson.failed', { ...debugMeta, phase: 'sliced', error: err.message, raw: sliced });
+    }
   }
+  globalThis.CopilotDebug?.error('background.safeParseJson.giveUp', { ...debugMeta, raw: s });
   throw new Error('Failed to parse JSON from AI response: ' + s.slice(0, 200));
 }

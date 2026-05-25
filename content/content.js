@@ -48,6 +48,7 @@
   // ─── Entry Point ─────────────────────────────────────────────────────────────
 
   function init() {
+    window.CopilotDebug?.log('content.init', { href: location.href });
     // Only activate on pages that have a video player
     if (!isLecturePage()) return;
 
@@ -79,6 +80,11 @@
 
     chrome.runtime.onMessage.addListener((msg) => {
       if (!msg?.type) return;
+      window.CopilotDebug?.log('content.runtime.onMessage', {
+        type: msg.type,
+        requestId: msg.requestId,
+        message: msg
+      });
       if (msg.type === 'SETTINGS_UPDATED') {
         chrome.storage.local.get(['provider', 'model', 'apiKey', 'localBases'], settings => {
           postToSidebar({ type: 'SETTINGS', settings });
@@ -934,6 +940,11 @@
     const msg = e.data;
     if (!msg?._copilot) return;
     if (!msg?.type) return;
+    window.CopilotDebug?.log('content.onSidebarMessage', {
+      type: msg.type,
+      requestId: msg.requestId,
+      message: msg
+    });
 
     switch (msg.type) {
       case 'SEEK_VIDEO':
@@ -959,6 +970,11 @@
         break;
 
       case 'API_REQUEST':
+        window.CopilotDebug?.log('content.message.API_REQUEST', {
+          requestId: msg.requestId,
+          payloadType: msg.payload?.type,
+          payload: msg.payload
+        });
         forwardApiRequest(msg.payload, msg.requestId);
         break;
 
@@ -1046,10 +1062,16 @@
 
   function forwardApiRequest(payload, requestId) {
     console.log('[ETH Copilot] forwardApiRequest →', payload.type, requestId);
+    window.CopilotDebug?.log('content.forwardApiRequest.send', {
+      requestId,
+      payloadType: payload?.type,
+      payload
+    });
     chrome.runtime.sendMessage({ ...payload, _copilotRequestId: requestId }, response => {
       const err = chrome.runtime.lastError?.message;
       if (err) {
         console.error('[ETH Copilot] sendMessage error:', err);
+        window.CopilotDebug?.error('content.forwardApiRequest.runtimeError', { requestId, error: err });
         postToSidebar({
           type: 'API_RESPONSE',
           requestId,
@@ -1058,6 +1080,11 @@
         return;
       }
       console.log('[ETH Copilot] Response:', response?.success);
+      window.CopilotDebug?.log('content.forwardApiRequest.response', {
+        requestId,
+        payloadType: payload?.type,
+        response
+      });
       postToSidebar({
         type: 'API_RESPONSE',
         requestId,

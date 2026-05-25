@@ -91,6 +91,7 @@
   const genLangSel     = document.getElementById('gen-lang-select');
   const genLangCustomRow = document.getElementById('gen-lang-custom-row');
   const genLangCustom  = document.getElementById('gen-lang-custom');
+  const genModeSel     = document.getElementById('gen-mode-select');
   const genDetailSel   = document.getElementById('gen-detail-select');
   const genCountSel    = document.getElementById('gen-count-select');
   const genCustomTokenRow = document.getElementById('gen-custom-token-row');
@@ -361,6 +362,7 @@
   // ─── Init ─────────────────────────────────────────────────────────────────
 
   function init() {
+    installDebugActionLogging();
     postToContent({ type: 'GET_SETTINGS' });
 
     // Tab switching
@@ -389,7 +391,7 @@
     document.getElementById('guide-content-abort-btn')?.addEventListener('click', abortGuideGeneration);
     exportPdfBtn?.addEventListener('click', () => {
       if (guide?.guide?.length) {
-        openGuidePrintWindow(guide, transcript?.lectureTitle || guide?.lecture_title);
+        openGuidePrintWindow(guide, getGuideTitle(guide));
       }
     });
     copyLatexMultiBtn?.addEventListener('click', openLatexSelectModal);
@@ -613,7 +615,7 @@
     document.getElementById('flashcards-export-tsv')?.addEventListener('click', exportFlashcardsAsTSV);
     document.getElementById('flashcards-export-anki')?.addEventListener('click', sendFlashcardsToAnki);
     initPillGroup('flashcards-count-pills');
-    initPillGroup('flashcards-style-pills');
+    initFlashcardTypePills('flashcards-card-type-pills');
 
     // Quiz tool
     document.getElementById('quiz-generate-btn')?.addEventListener('click', generateQuiz);
@@ -693,6 +695,37 @@
     setStatus('loading', 'Waiting for video page…');
   }
 
+  function installDebugActionLogging() {
+    document.addEventListener('click', e => {
+      const el = e.target?.closest?.('button,a,summary,[role="button"]');
+      if (!el) return;
+      window.CopilotDebug?.log('sidebar.ui.click', {
+        tag: el.tagName,
+        id: el.id || '',
+        className: el.className || '',
+        text: (el.textContent || '').trim().slice(0, 120),
+        dataset: { ...el.dataset }
+      });
+    }, true);
+    document.addEventListener('change', e => {
+      const el = e.target;
+      if (!el || !('value' in el)) return;
+      window.CopilotDebug?.log('sidebar.ui.change', {
+        tag: el.tagName,
+        id: el.id || '',
+        type: el.type || '',
+        value: el.type === 'password' ? '[REDACTED]' : el.value,
+        checked: !!el.checked
+      });
+    }, true);
+    document.addEventListener('submit', e => {
+      window.CopilotDebug?.log('sidebar.ui.submit', {
+        id: e.target?.id || '',
+        className: e.target?.className || ''
+      });
+    }, true);
+  }
+
   function normalizeLectureUrl(href) {
     if (!href) return '';
     try {
@@ -769,7 +802,7 @@
     return {
       flashcards: flashcardData.length
         ? {
-            cards: flashcardData.map(c => ({ front: c.front, back: c.back })),
+            cards: flashcardData.map(c => ({ ...c })),
             index: flashcardIndex,
             deckTitle: flashcardDeckTitle || null
           }
@@ -898,8 +931,10 @@
       return;
     }
     if (snapshot.flashcards?.cards?.length) {
-      flashcardData = snapshot.flashcards.cards.map(c => ({ front: c.front, back: c.back }));
-      flashcardDeckTitle = snapshot.flashcards.deckTitle || null;
+      flashcardData = (window.normalizeFlashcardsResponse
+        ? window.normalizeFlashcardsResponse({ flashcards: snapshot.flashcards.cards })
+        : snapshot.flashcards.cards.map(c => ({ front: String(c.front ?? ''), back: String(c.back ?? '') })));
+      flashcardDeckTitle = getGuideTitle(guide) || snapshot.flashcards.deckTitle || null;
       flashcardIndex = Math.min(
         snapshot.flashcards.index || 0,
         Math.max(0, flashcardData.length - 1)
@@ -1298,6 +1333,11 @@
     if (e.origin !== 'https://video.ethz.ch') return;
     const msg = e.data;
     if (!msg?.type) return;
+    window.CopilotDebug?.log('sidebar.onContentMessage', {
+      type: msg.type,
+      requestId: msg.requestId,
+      message: msg
+    });
 
     switch (msg.type) {
 
@@ -1397,6 +1437,11 @@
 
   function postToContent(msg) {
     msg._copilot = true;
+    window.CopilotDebug?.log('sidebar.postToContent', {
+      type: msg?.type,
+      requestId: msg?.requestId,
+      message: msg
+    });
     // Target only video.ethz.ch — prevents message leakage to other origins.
     window.parent.postMessage(msg, 'https://video.ethz.ch');
   }
@@ -1412,6 +1457,14 @@
 
   function apiRequest(payload) {
     const id = makeRequestId();
+    window.CopilotDebug?.log('sidebar.apiRequest.create', {
+      requestId: id,
+      payloadType: payload?.type,
+      provider: payload?.provider,
+      model: payload?.model,
+      systemPrompt: payload?.systemPrompt,
+      payload
+    });
     let _rejectFn = null;
     const promise = new Promise((resolve, reject) => {
       _rejectFn = reject;
@@ -1461,6 +1514,11 @@
       pendingRequests[id] = resolve;
       const originalResolve = pendingRequests[id];
       pendingRequests[id] = (data) => {
+        window.CopilotDebug?.log('sidebar.apiRequest.resolve', {
+          requestId: id,
+          payloadType: payload?.type,
+          response: data
+        });
         cleanup();
         if (isGuideRequest && activeGuideRequestId === id) activeGuideRequestId = null;
         originalResolve(data);
@@ -1470,6 +1528,7 @@
     // Expose the requestId on the promise so callers that need streaming context can read it
     promise._requestId = id;
     promise.abort = () => {
+      window.CopilotDebug?.warn('sidebar.apiRequest.abort', { requestId: id, payloadType: payload?.type });
       if (_rejectFn) {
         delete pendingRequests[id];
         if (activeGuideRequestId === id) activeGuideRequestId = null;
@@ -1532,7 +1591,16 @@
           depth--;
           i++;
           if (depth === 0) {
-            try { blocks.push(JSON.parse(jsonStr.slice(objStart, i))); } catch (_) {}
+            const objText = jsonStr.slice(objStart, i);
+            try {
+              blocks.push(JSON.parse(objText));
+            } catch (err) {
+              window.CopilotDebug?.warn('sidebar.extractStreamedBlocks.parseError', {
+                error: err.message,
+                objectText: objText,
+                fullJsonSoFar: jsonStr
+              });
+            }
             break;
           }
           continue;
@@ -1549,6 +1617,11 @@
   function handleStreamChunk(msg) {
     const reqId = msg?.requestId;
     if (!reqId) return;
+    window.CopilotDebug?.log('sidebar.stream.chunk.received', {
+      requestId: reqId,
+      text: msg.text,
+      length: typeof msg.text === 'string' ? msg.text.length : null
+    });
 
     // Route tool-ask streams (isolated from main Q&A)
     if (toolAskActiveStreams.has(reqId)) {
@@ -2314,7 +2387,10 @@
     const maxTokens = selectedGuideMaxTokens(guideDetail, guideCount, settings.provider, settings.model);
 
     const guideLang = getSelectedLanguage();
-    const systemPrompt = buildGuidePrompt(guideDetail, guideCount, guideLang);
+    const guideMode = !useFallback && genModeSel?.value === 'study_flow' ? 'study_flow' : 'reliable';
+    const systemPrompt = guideMode === 'study_flow'
+      ? buildStudyFlowGuidePrompt(guideDetail, guideCount, guideLang)
+      : buildGuidePrompt(guideDetail, guideCount, guideLang);
     // All providers support SSE streaming:
     //   - OAI-compat / local (LiteLLM, Ollama, etc.) → callOAICompatStream
     //   - Anthropic → callAnthropicStream
@@ -2362,6 +2438,7 @@
       guide = sanitizeGuide(guide);
       guideLanguage = guideLang;
       guide._language = guideLang;
+      guide._guide_mode = guideMode;
 
       storageSet({
         currentGuide: guide,
@@ -2598,8 +2675,8 @@
     const c = GUIDE_COUNT_PROFILES[count] || GUIDE_COUNT_PROFILES.very_high;
     const extraPrefix = customPromptExtras.guide ? customPromptExtras.guide.trim() + '\n\n' : '';
     const langInstruction = lang
-      ? `\n\nLANGUAGE: Write ALL text content (titles, key_concepts, definitions, notes) in ${lang}. Keep JSON keys, LaTeX, and technical notation unchanged.`
-      : `\n\nLANGUAGE: Detect the dominant natural language of the transcript and write ALL text content (lecture_title, titles, key_concepts, definitions, notes) in that same language. Do not default to English unless the transcript itself is mainly English. Keep JSON keys, LaTeX, and technical notation unchanged.`;
+      ? `\n\nLANGUAGE: Write ALL text content (lecture_title, guide_title, titles, key_concepts, definitions, notes) in ${lang}. Keep JSON keys, LaTeX, and technical notation unchanged.`
+      : `\n\nLANGUAGE: Detect the dominant natural language of the transcript and write ALL text content (lecture_title, guide_title, titles, key_concepts, definitions, notes) in that same language. Do not default to English unless the transcript itself is mainly English. Keep JSON keys, LaTeX, and technical notation unchanged.`;
 
     return `${extraPrefix}You are an expert academic assistant that converts lecture transcripts into structured study guides.
 
@@ -2607,7 +2684,7 @@ Your task: Read the provided lecture transcript and produce a JSON lecture guide
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown fences, no explanation, no preamble:
 
-{"lecture_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string"}]}
+{"lecture_title":"string","guide_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string"}]}
 
 BLOCK COUNT (${c.label} — target ${c.range} blocks):
 - ${c.rule}
@@ -2621,6 +2698,7 @@ BLOCK DETAIL (${d.label}):
 GENERAL RULES:
 - The language instruction is mandatory. Examples below are only schema examples; do not copy their English language unless the transcript language is English.
 - Blocks follow the logical flow of the lecture. One coherent topic = one block.
+- guide_title is mandatory: generate a short, specific title for this guide's main topic, e.g. "Introduction to Caches". Do not use the course name unless the lecture is genuinely a course overview.
 - Do NOT hallucinate. Only extract content actually in the transcript.
 - Do NOT produce shallow one-liners unless the detail level is set to Low.
 - The output token limit is only a ceiling for long lectures. Be complete, but do not pad, repeat, or spend extra tokens when the transcript does not need them.
@@ -2630,9 +2708,18 @@ GENERAL RULES:
 
 EXAMPLE:
 Input: "[00:00:00] BFS visits nodes level by level using a queue. [00:01:00] Time complexity is O(V+E). [00:02:00] DFS uses a stack. [00:03:00] Also O(V+E)."
-Output: {"lecture_title":"Graph Traversal","total_duration_seconds":180,"guide":[{"start_time":0,"end_time":90,"title":"Breadth-First Search","key_concepts":["BFS explores a graph level by level, starting from a source node and visiting all its direct neighbours before moving to nodes two edges away","The algorithm uses a FIFO queue: enqueue the start node, then repeatedly dequeue the front, enqueue all unvisited neighbours, and mark them visited","BFS naturally finds shortest paths in unweighted graphs because it visits nodes in order of increasing distance from the source","Time complexity is O(V+E) because every vertex is enqueued/dequeued once and every edge is inspected once"],"formulas":[{"label":"BFS Time Complexity","latex":"O(V + E)"}],"definitions":[{"term":"BFS","definition":"Breadth-First Search: a graph traversal that visits all neighbours of a node before going deeper, guaranteeing shortest-path discovery in unweighted graphs"}],"notes":""},{"start_time":90,"end_time":180,"title":"Depth-First Search","key_concepts":["DFS explores as deep as possible along each branch before backtracking, making it suitable for detecting cycles and topological sorting","Can be implemented with an explicit stack or via recursion (the call stack acts as the implicit stack)","Like BFS, DFS runs in O(V+E) time, but it does NOT guarantee shortest paths","DFS is the foundation for many advanced algorithms: topological sort, strongly connected components, and cycle detection"],"formulas":[{"label":"DFS Time Complexity","latex":"O(V + E)"}],"definitions":[{"term":"DFS","definition":"Depth-First Search: a graph traversal that goes deep along each path first, backtracking only when a dead end is reached"}],"notes":"Both BFS and DFS share O(V+E) complexity but have very different properties — BFS gives shortest paths, DFS is better for structural analysis like cycle detection."}]}
+Output: {"lecture_title":"Graph Traversal","guide_title":"Breadth-First and Depth-First Search","total_duration_seconds":180,"guide":[{"start_time":0,"end_time":90,"title":"Breadth-First Search","key_concepts":["BFS explores a graph level by level, starting from a source node and visiting all its direct neighbours before moving to nodes two edges away","The algorithm uses a FIFO queue: enqueue the start node, then repeatedly dequeue the front, enqueue all unvisited neighbours, and mark them visited","BFS naturally finds shortest paths in unweighted graphs because it visits nodes in order of increasing distance from the source","Time complexity is O(V+E) because every vertex is enqueued/dequeued once and every edge is inspected once"],"formulas":[{"label":"BFS Time Complexity","latex":"O(V + E)"}],"definitions":[{"term":"BFS","definition":"Breadth-First Search: a graph traversal that visits all neighbours of a node before going deeper, guaranteeing shortest-path discovery in unweighted graphs"}],"notes":""},{"start_time":90,"end_time":180,"title":"Depth-First Search","key_concepts":["DFS explores as deep as possible along each branch before backtracking, making it suitable for detecting cycles and topological sorting","Can be implemented with an explicit stack or via recursion (the call stack acts as the implicit stack)","Like BFS, DFS runs in O(V+E) time, but it does NOT guarantee shortest paths","DFS is the foundation for many advanced algorithms: topological sort, strongly connected components, and cycle detection"],"formulas":[{"label":"DFS Time Complexity","latex":"O(V + E)"}],"definitions":[{"term":"DFS","definition":"Depth-First Search: a graph traversal that goes deep along each path first, backtracking only when a dead end is reached"}],"notes":"Both BFS and DFS share O(V+E) complexity but have very different properties — BFS gives shortest paths, DFS is better for structural analysis like cycle detection."}]}
 
 Now process the following transcript:`;
+  }
+
+  function buildStudyFlowGuidePrompt(detail, count, lang) {
+    const base = buildGuidePrompt(detail, count, lang);
+    const marker = '\n\nNow process the following transcript:';
+    const insert = `\n\nEXPERIMENTAL STUDY FLOW MODE:\n- Keep the normal fields exactly as specified above. They remain the canonical source of content.\n- Additionally, each guide block MAY include a compact "study_flow" array that controls display order without duplicating content.\n- study_flow items must reference existing content by zero-based index instead of repeating text:\n  {"type":"concept","index":0,"label":"Core idea"}\n  {"type":"formula","index":0}\n  {"type":"definition","index":0}\n  {"type":"note"}\n- Valid type values: "concept", "formula", "definition", "note".\n- For concept items, add a short label when helpful: examples include "Core idea", "Mechanism", "Tradeoff", "Condition", "Exam hint", "Pitfall", "Example". Keep labels under 24 characters.\n- Order study_flow for learning: introduce the idea, then place supporting definitions, formulas, warnings, or examples immediately after the concept they clarify.\n- Do NOT duplicate concept/formula/definition/note text inside study_flow. Only use type, index, and optional label.\n- If a block has no natural mixed order, still include study_flow with concepts first followed by formulas, definitions, and note.\n\nEXPERIMENTAL OUTPUT FORMAT EXTENSION:\n{"lecture_title":"string","guide_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string","study_flow":[{"type":"concept","index":0,"label":"Core idea"},{"type":"definition","index":0},{"type":"formula","index":0},{"type":"note"}]}]}`;
+
+    if (!base.includes(marker)) return `${base}${insert}`;
+    return base.replace(marker, `${insert}${marker}`);
   }
 
   function toSeconds(v) {
@@ -2668,19 +2755,46 @@ Now process the following transcript:`;
     return 0;
   }
 
+  function sanitizeStudyFlow(block) {
+    if (!Array.isArray(block.study_flow)) return [];
+    const maxByType = {
+      concept: Array.isArray(block.key_concepts) ? block.key_concepts.length : 0,
+      formula: Array.isArray(block.formulas) ? block.formulas.length : 0,
+      definition: Array.isArray(block.definitions) ? block.definitions.length : 0,
+      note: String(block.notes || '').trim() ? 1 : 0
+    };
+
+    return block.study_flow
+      .map(item => {
+        if (!item || typeof item !== 'object') return null;
+        const type = String(item.type || '').trim().toLowerCase();
+        if (!['concept', 'formula', 'definition', 'note'].includes(type)) return null;
+        if (type === 'note') return maxByType.note ? { type: 'note' } : null;
+        const index = Number.isInteger(item.index) ? item.index : parseInt(item.index, 10);
+        if (!Number.isInteger(index) || index < 0 || index >= maxByType[type]) return null;
+        const label = typeof item.label === 'string' ? item.label.trim().slice(0, 24) : '';
+        return label ? { type, index, label } : { type, index };
+      })
+      .filter(Boolean);
+  }
+
   function sanitizeGuide(g) {
     if (!Array.isArray(g.guide)) return g;
 
     // Coerce timestamps first
-    const blocks = g.guide.map(b => ({
-      start_time: toSeconds(b.start_time),
-      end_time: toSeconds(b.end_time),
-      title: b.title ?? 'Untitled Section',
-      key_concepts: Array.isArray(b.key_concepts) ? b.key_concepts : [],
-      formulas: Array.isArray(b.formulas) ? b.formulas : [],
-      definitions: Array.isArray(b.definitions) ? b.definitions : [],
-      notes: typeof b.notes === 'string' ? b.notes : ''
-    }));
+    const blocks = g.guide.map(b => {
+      const block = {
+        start_time: toSeconds(b.start_time),
+        end_time: toSeconds(b.end_time),
+        title: b.title ?? 'Untitled Section',
+        key_concepts: Array.isArray(b.key_concepts) ? b.key_concepts : [],
+        formulas: Array.isArray(b.formulas) ? b.formulas : [],
+        definitions: Array.isArray(b.definitions) ? b.definitions : [],
+        notes: typeof b.notes === 'string' ? b.notes : ''
+      };
+      block.study_flow = sanitizeStudyFlow({ ...b, ...block });
+      return block;
+    });
 
     // Sort by time (some models may output blocks slightly out of order)
     blocks.sort((a, b) => (a.start_time - b.start_time));
@@ -2701,7 +2815,24 @@ Now process the following transcript:`;
     }
 
     g.guide = blocks;
+    g.guide_title = getGuideTitle(g);
     return g;
+  }
+
+  function getGuideTitle(guideObj = guide) {
+    const explicit = typeof guideObj?.guide_title === 'string' ? guideObj.guide_title.trim() : '';
+    if (explicit) return explicit.slice(0, 120);
+    const legacy = typeof guideObj?.guideTitle === 'string' ? guideObj.guideTitle.trim() : '';
+    if (legacy) return legacy.slice(0, 120);
+    const firstBlock = typeof guideObj?.guide?.[0]?.title === 'string' ? guideObj.guide[0].title.trim() : '';
+    const lecture = typeof guideObj?.lecture_title === 'string' ? guideObj.lecture_title.trim() : '';
+    return (firstBlock || lecture || transcript?.lectureTitle || 'Lecture').slice(0, 120);
+  }
+
+  function getHistoryDisplayTitle(entry) {
+    const fromEntry = typeof entry?.guideTitle === 'string' ? entry.guideTitle.trim() : '';
+    if (fromEntry) return fromEntry;
+    return getGuideTitle(entry?.guide) || entry?.lectureTitle || 'Lecture';
   }
 
   // ─── Guide Display ────────────────────────────────────────────────────────
@@ -2836,6 +2967,104 @@ Now process the following transcript:`;
     return 0;
   }
 
+  function splitConceptText(concept) {
+    const text = String(concept || '').trim();
+    if (!text) return { lead: '', body: '' };
+    const sentenceMatch = text.match(/^(.{24,220}?[.!?])\s+(.+)$/s);
+    if (sentenceMatch) {
+      return { lead: sentenceMatch[1].trim(), body: sentenceMatch[2].trim() };
+    }
+    const clauseMatch = text.match(/^(.{24,160}?[,;:])\s+(.+)$/s);
+    if (clauseMatch) {
+      return { lead: clauseMatch[1].replace(/[,;:]$/, '').trim(), body: clauseMatch[2].trim() };
+    }
+    return { lead: text, body: '' };
+  }
+
+  function renderConceptItem(concept, label = '', tag = 'li') {
+    const cleanLabel = String(label || '').trim();
+    const showLabel = cleanLabel && cleanLabel.toLowerCase() !== 'concept';
+    const { lead, body } = splitConceptText(concept);
+    return `<${tag} class="concept-card">
+      ${showLabel ? `<span class="concept-kind">${escHtml(cleanLabel)}</span>` : ''}
+      <span class="concept-text">
+        <span class="concept-lead">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(lead)))}</span>
+        ${body ? `<span class="concept-body">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(body)))}</span>` : ''}
+      </span>
+    </${tag}>`;
+  }
+
+  function renderFormulaCard(f) {
+    return `<div class="formula-card">
+      <div class="formula-label">${escHtml(f.label)}</div>
+      <div class="formula-render" data-latex="${escAttr(f.latex)}"></div>
+    </div>`;
+  }
+
+  function renderDefinitionItem(d) {
+    return `<div class="definition-item">
+      <div class="definition-term"><span class="definition-term-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(d.term)))}</span></div>
+      <div class="definition-text"><span class="definition-body-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(d.definition)))}</span></div>
+    </div>`;
+  }
+
+  function renderNotesBox(notes) {
+    return `<div class="notes-box">
+      <div class="notes-icon-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span class="notes-icon-label">Note</span>
+      </div>
+      <div class="notes-text"><span class="notes-body-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(notes)))}</span></div>
+    </div>`;
+  }
+
+  function renderStudyFlow(block) {
+    if (!Array.isArray(block.study_flow) || !block.study_flow.length) return '';
+    const used = {
+      concept: new Set(),
+      formula: new Set(),
+      definition: new Set(),
+      note: false
+    };
+    const parts = [];
+
+    for (const item of block.study_flow) {
+      if (item.type === 'concept' && block.key_concepts?.[item.index]) {
+        used.concept.add(item.index);
+        parts.push(renderConceptItem(block.key_concepts[item.index], item.label || 'Concept', 'div'));
+      } else if (item.type === 'formula' && block.formulas?.[item.index]) {
+        used.formula.add(item.index);
+        parts.push(renderFormulaCard(block.formulas[item.index]));
+      } else if (item.type === 'definition' && block.definitions?.[item.index]) {
+        used.definition.add(item.index);
+        parts.push(renderDefinitionItem(block.definitions[item.index]));
+      } else if (item.type === 'note' && block.notes?.trim() && !used.note) {
+        used.note = true;
+        parts.push(renderNotesBox(block.notes));
+      }
+    }
+
+    block.key_concepts?.forEach((concept, index) => {
+      if (!used.concept.has(index)) parts.push(renderConceptItem(concept, '', 'div'));
+    });
+    block.formulas?.forEach((formula, index) => {
+      if (!used.formula.has(index)) parts.push(renderFormulaCard(formula));
+    });
+    block.definitions?.forEach((definition, index) => {
+      if (!used.definition.has(index)) parts.push(renderDefinitionItem(definition));
+    });
+    if (block.notes?.trim() && !used.note) parts.push(renderNotesBox(block.notes));
+
+    return `<div>
+      <div class="section-label">Study Flow</div>
+      <div class="study-flow-list">${parts.join('')}</div>
+    </div>`;
+  }
+
   function renderBlock(idx) {
     if (!guide?.guide) return;
     const blocks = guide.guide;
@@ -2874,57 +3103,35 @@ Now process the following transcript:`;
       </div>
     `;
 
-    // Key concepts
-    if (block.key_concepts?.length) {
+    const studyFlowHtml = renderStudyFlow(block);
+
+    if (studyFlowHtml) {
+      html += studyFlowHtml;
+    } else if (block.key_concepts?.length) {
       html += `<div>
         <div class="section-label">Key Concepts</div>
         <ul class="concepts-list">
-          ${block.key_concepts.map(c => `<li><span class="concept-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(c)))}</span></li>`).join('')}
+          ${block.key_concepts.map(c => renderConceptItem(c)).join('')}
         </ul>
       </div>`;
-    }
 
-    // Formulas
-    if (block.formulas?.length) {
-      html += `<div>
-        <div class="section-label">Formulas</div>
-        ${block.formulas.map(f => `
-          <div class="formula-card">
-            <div class="formula-label">${escHtml(f.label)}</div>
-            <div class="formula-render" data-latex="${escAttr(f.latex)}"></div>
-          </div>
-        `).join('')}
-      </div>`;
-    }
+      if (block.formulas?.length) {
+        html += `<div>
+          <div class="section-label">Formulas</div>
+          ${block.formulas.map(f => renderFormulaCard(f)).join('')}
+        </div>`;
+      }
 
-    // Definitions
-    if (block.definitions?.length) {
-      html += `<div>
-        <div class="section-label">Definitions</div>
-        ${block.definitions.map(d => `
-          <div class="definition-item">
-            <div class="definition-term"><span class="definition-term-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(d.term)))}</span></div>
-            <div class="definition-text"><span class="definition-body-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(d.definition)))}</span></div>
-          </div>
-        `).join('')}
-      </div>`;
-    }
+      if (block.definitions?.length) {
+        html += `<div>
+          <div class="section-label">Definitions</div>
+          ${block.definitions.map(d => renderDefinitionItem(d)).join('')}
+        </div>`;
+      }
 
-    // Notes
-    if (block.notes?.trim()) {
-      html += `
-        <div class="notes-box">
-          <div class="notes-icon-row">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="8" x2="12" y2="12"/>
-              <line x1="12" y1="16" x2="12.01" y2="16"/>
-            </svg>
-            <span class="notes-icon-label">Note</span>
-          </div>
-          <div class="notes-text"><span class="notes-body-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(block.notes)))}</span></div>
-        </div>
-      `;
+      if (block.notes?.trim()) {
+        html += renderNotesBox(block.notes);
+      }
     }
 
     // ── Freeze visually during render to eliminate KaTeX-induced flicker ──
@@ -2935,7 +3142,7 @@ Now process the following transcript:`;
     guideBlock.innerHTML = html;
 
     if (typeof renderMathInElement === 'function') {
-      guideBlock.querySelectorAll('.concepts-list .concept-text').forEach(el => {
+      guideBlock.querySelectorAll('.concept-card .concept-text').forEach(el => {
         renderMathInElement(el, {
           delimiters: [
             { left: '$$', right: '$$', display: true },
@@ -4835,6 +5042,7 @@ ${guideBlocksStr}${scriptContext}`;
       const entry = {
         lectureUrl:    currentLectureUrl,
         lectureTitle:  transcript?.lectureTitle || guide?.lecture_title || 'Lecture',
+        guideTitle:    getGuideTitle(guide),
         lectureDate:   transcript?.lectureDate  || null,
         guideDate:     new Date().toISOString(),
         date:          new Date().toISOString(),   // kept for back-compat
@@ -4934,8 +5142,9 @@ ${guideBlocksStr}${scriptContext}`;
         ...e,
         courseKey:  e.courseKey  || deriveCourseKeyFromUrl(e.lectureUrl),
         courseName: _nameConflict(e) ? _deriveName(e) : e.courseName,
+        guideTitle: e.guideTitle || getGuideTitle(e.guide),
       }));
-      if (history.some(e => _nameConflict(e))) {
+      if (history.some(e => _nameConflict(e) || !e.guideTitle)) {
         storageSet({ guideHistory: patchedHistory });
       }
 
@@ -5081,7 +5290,7 @@ ${guideBlocksStr}${scriptContext}`;
         <span class="history-recent-course">${escHtml(entry.courseName || '—')}</span>
         <span class="history-recent-date">${lectureDateLabel ? lectureDateLabel : guideDateLabel}</span>
       </div>
-      <div class="history-recent-item-title">${escHtml(entry.lectureTitle)}</div>
+      <div class="history-recent-item-title">${escHtml(getHistoryDisplayTitle(entry))}</div>
       ${lectureDateLabel ? `<div class="history-guide-date">Guide created: ${guideDateLabel}</div>` : ''}
       <div class="history-actions history-recent-actions">
         ${!isActive && entry.lectureUrl ? '<button class="history-go-btn" type="button" title="Open this lecture in the video player">Go to lecture</button>' : ''}
@@ -5092,7 +5301,7 @@ ${guideBlocksStr}${scriptContext}`;
     div.querySelector('.history-go-btn')?.addEventListener('click', () => goToLecture(entry.lectureUrl));
     div.querySelector('.history-load-btn').addEventListener('click', () => loadHistoryEntry(entry));
     div.querySelector('.history-pdf-btn').addEventListener('click', () => {
-      if (entry.guide?.guide?.length) openGuidePrintWindow(entry.guide, entry.lectureTitle);
+      if (entry.guide?.guide?.length) openGuidePrintWindow(entry.guide, getHistoryDisplayTitle(entry));
     });
     return div;
   }
@@ -5207,7 +5416,7 @@ ${guideBlocksStr}${scriptContext}`;
       item.innerHTML = `
         <div class="history-item-header">
           <span class="history-lecture-num">${num}</span>
-          <span class="history-title">${escHtml(entry.lectureTitle)}</span>
+          <span class="history-title">${escHtml(getHistoryDisplayTitle(entry))}</span>
         </div>
         <div class="history-meta">
           <span title="Lecture date">${dateLabel}</span>
@@ -5226,7 +5435,7 @@ ${guideBlocksStr}${scriptContext}`;
       item.querySelector('.history-go-btn')?.addEventListener('click', () => goToLecture(entry.lectureUrl));
       item.querySelector('.history-load-btn').addEventListener('click', () => loadHistoryEntry(entry));
       item.querySelector('.history-pdf-btn').addEventListener('click', () => {
-        if (entry.guide?.guide?.length) openGuidePrintWindow(entry.guide, entry.lectureTitle);
+        if (entry.guide?.guide?.length) openGuidePrintWindow(entry.guide, getHistoryDisplayTitle(entry));
       });
       const delBtn = item.querySelector('.history-delete-btn');
       if (delBtn) delBtn.addEventListener('click', () => deleteHistoryEntry(entry.lectureUrl));
@@ -5264,7 +5473,7 @@ ${guideBlocksStr}${scriptContext}`;
       if (!proceed) return;
     }
 
-    guide = entry.guide;
+    guide = sanitizeGuide(entry.guide || { guide: [] });
     const restoredMsgs = Array.isArray(entry.qaMessages) ? entry.qaMessages : [];
     if (Array.isArray(entry.qaChatsData) && entry.qaChatsData.length > 0) {
       qaChats = entry.qaChatsData.map(c => ({
@@ -5734,7 +5943,7 @@ ${guideBlocksStr}${scriptContext}`;
       return;
     }
     const bodyHtml = buildGuideExportBodyHtml(guideObj);
-    const title = lectureTitle || guideObj.lecture_title || 'Lecture guide';
+    const title = lectureTitle || getGuideTitle(guideObj) || 'Lecture guide';
     const n = guideObj.guide.length;
     const dur = guideObj.total_duration_seconds;
     const subtitle = `${n} section${n === 1 ? '' : 's'} · ${fmtSec(dur || 0)} total`;
@@ -5789,7 +5998,7 @@ ${guideBlocksStr}${scriptContext}`;
       setStatus('warning', 'No guide to export');
       return;
     }
-    const title = transcript?.lectureTitle || guide.lecture_title || 'Lecture Guide';
+    const title = getGuideTitle(guide) || transcript?.lectureTitle || guide.lecture_title || 'Lecture Guide';
     const now = new Date();
     const isoDate = now.toISOString().split('T')[0];
     const courseName = transcript?.courseName || '';
@@ -5920,6 +6129,38 @@ ${guideBlocksStr}${scriptContext}`;
     if (!group) return null;
     const active = group.querySelector('.pill.pill-active');
     return active ? active.dataset.value : null;
+  }
+
+  function initFlashcardTypePills(groupId) {
+    const group = document.getElementById(groupId);
+    if (!group) return;
+    group.querySelectorAll('.pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const value = btn.dataset.value;
+        const all = [...group.querySelectorAll('.pill')];
+        if (value === 'auto') {
+          all.forEach(b => b.classList.toggle('pill-active', b.dataset.value === 'auto'));
+        } else {
+          const auto = group.querySelector('.pill[data-value="auto"]');
+          auto?.classList.remove('pill-active');
+          btn.classList.toggle('pill-active');
+          if (!group.querySelector('.pill.pill-active')) {
+            auto?.classList.add('pill-active');
+          }
+        }
+        all.forEach(b => b.setAttribute('aria-pressed', b.classList.contains('pill-active') ? 'true' : 'false'));
+      });
+    });
+  }
+
+  function getSelectedFlashcardTypes(groupId = 'flashcards-card-type-pills') {
+    const group = document.getElementById(groupId);
+    if (!group) return ['auto'];
+    const selected = [...group.querySelectorAll('.pill.pill-active')]
+      .map(btn => btn.dataset.value)
+      .filter(Boolean);
+    if (!selected.length || selected.includes('auto')) return ['auto'];
+    return selected;
   }
 
   function buildApiPayloadBase() {
@@ -6099,8 +6340,21 @@ ${guideBlocksStr}${scriptContext}`;
       _renderInlineFlashcardResults(body);
     } else {
       const countVal   = getActivePillValue('flashcards-count-pills') || 'auto';
-      const styleVal   = getActivePillValue('flashcards-style-pills') || 'mixed';
+      const typeVals   = getSelectedFlashcardTypes('flashcards-card-type-pills');
       const formulasOn = document.getElementById('flashcards-formulas-cb')?.checked ?? true;
+      const typeOptions = [
+        ['auto', 'Auto'],
+        ['recall', 'Recall'],
+        ['definition', 'Definition'],
+        ['concept', 'Concept'],
+        ['application', 'Application'],
+        ['comparison', 'Comparison'],
+        ['process', 'Process'],
+        ['cause_effect', 'Cause / effect'],
+        ['example', 'Example'],
+        ['misconception', 'Misconception'],
+        ['formula_rule', 'Formula / rule']
+      ];
       body.innerHTML = `
         <div class="inline-tool-row">
           <span class="inline-tool-label">Count</span>
@@ -6112,9 +6366,12 @@ ${guideBlocksStr}${scriptContext}`;
           </div>
         </div>
         <div class="inline-tool-row">
-          <span class="inline-tool-label">Style</span>
-          <div class="pill-group" id="it-fc-style-pills">
-            ${['recall','definition','mixed'].map(v => `<button class="pill${v===styleVal?' pill-active':''}" data-value="${v}" type="button">${v.charAt(0).toUpperCase()+v.slice(1)}</button>`).join('')}
+          <span class="inline-tool-label">Card types</span>
+          <div class="pill-group flashcard-type-pills" id="it-fc-card-type-pills" data-multi-select="true">
+            ${typeOptions.map(([value, label]) => {
+              const active = typeVals.includes(value) || (value === 'auto' && typeVals.includes('auto'));
+              return `<button class="pill${active ? ' pill-active' : ''}" data-value="${value}" type="button" aria-pressed="${active ? 'true' : 'false'}">${label}</button>`;
+            }).join('')}
           </div>
         </div>
         <div class="inline-tool-row">
@@ -6135,7 +6392,7 @@ ${guideBlocksStr}${scriptContext}`;
         <p class="error-msg" id="it-fc-error" style="display:none"></p>
       `;
       initPillGroup('it-fc-count-pills');
-      initPillGroup('it-fc-style-pills');
+      initFlashcardTypePills('it-fc-card-type-pills');
       body.querySelector('#it-fc-generate-btn').addEventListener('click', async () => {
         const btn  = body.querySelector('#it-fc-generate-btn');
         const errEl = body.querySelector('#it-fc-error');
@@ -6144,11 +6401,11 @@ ${guideBlocksStr}${scriptContext}`;
         try {
           const customRaw = parseInt(body.querySelector('#it-fc-custom-count')?.value || '', 10);
           const count  = (!isNaN(customRaw) && customRaw > 0) ? String(customRaw) : (getActivePillValue('it-fc-count-pills') || 'auto');
-          const style  = getActivePillValue('it-fc-style-pills') || 'mixed';
+          const cardTypes = getSelectedFlashcardTypes('it-fc-card-type-pills');
           const formulas = !!body.querySelector('#it-fc-formulas-cb')?.checked;
           const langVal = body.querySelector('#it-fc-lang-select')?.value || '__guide__';
           const language = langVal === '__guide__' ? guideLanguage : langVal;
-          const systemPrompt = buildFlashcardsPrompt(guide, { count, style, includeFormulas: formulas, language });
+          const systemPrompt = buildFlashcardsPrompt(guide, { count, cardTypes, includeFormulas: formulas, language });
           const payload = { ...buildApiPayloadBase(), type: 'FLASHCARDS_REQUEST', guideJson: guide, systemPrompt };
           const resp = await apiRequest(payload);
           if (!resp.success) throw new Error(resp.error);
@@ -6208,6 +6465,7 @@ ${guideBlocksStr}${scriptContext}`;
           <div class="flashcard-side-label">Back</div>
           <div class="flashcard-text">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(card.back)))}</div>
         </div>
+        ${renderFlashcardMetadata(card)}
         <div class="flashcard-actions"><span class="flashcard-ask-slot"></span></div>`;
       el.querySelectorAll('.flashcard-text').forEach(t => applyKatex(t));
       const askSlot = el.querySelector('.flashcard-ask-slot');
@@ -6850,18 +7108,19 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   function deriveFallbackFlashcardDeckTitle() {
-    const firstBlock = guide?.guide?.[0]?.title;
-    if (firstBlock) return String(firstBlock).trim();
-    return transcript?.lectureTitle || guide?.lecture_title || null;
+    return getGuideTitle(guide);
   }
 
   function applyFlashcardsResponse(data) {
     const cards = Array.isArray(data?.flashcards) ? data.flashcards : [];
-    flashcardData = cards
-      .filter(c => c && (c.front != null || c.back != null))
-      .map(c => ({ front: String(c.front ?? ''), back: String(c.back ?? '') }));
-    const rawTitle = typeof data?.deckTitle === 'string' ? data.deckTitle.trim() : '';
-    flashcardDeckTitle = rawTitle || (flashcardData.length ? deriveFallbackFlashcardDeckTitle() : null);
+    flashcardData = window.normalizeFlashcardsResponse
+      ? window.normalizeFlashcardsResponse(data)
+      : cards
+          .filter(c => c && (c.front != null || c.back != null))
+          .map(c => ({ front: String(c.front ?? ''), back: String(c.back ?? '') }));
+    // New guides provide the title once at guide creation. Older flashcard outputs
+    // may still contain deckTitle, but the current guide title is authoritative.
+    flashcardDeckTitle = flashcardData.length ? deriveFallbackFlashcardDeckTitle() : null;
     if (flashcardDeckTitle) flashcardDeckTitle = flashcardDeckTitle.slice(0, 120);
     flashcardIndex = 0;
   }
@@ -6882,6 +7141,24 @@ ${guideBlocksStr}${scriptContext}`;
     }
   }
 
+  function renderFlashcardMetadata(card) {
+    const rows = window.getFlashcardMetadataRows ? window.getFlashcardMetadataRows(card) : [];
+    if (!rows.length) return '';
+    return `<div class="flashcard-meta" aria-label="Flashcard source metadata">
+      ${rows.map(([label, value]) => label === 'Study note'
+        ? `<details class="flashcard-meta-note">
+            <summary><span class="flashcard-meta-label">${escHtml(label)}</span></summary>
+            <div class="flashcard-meta-note-body">${escHtml(value)}</div>
+          </details>`
+        : `
+        <span class="flashcard-meta-item">
+          <span class="flashcard-meta-label">${escHtml(label)}</span>
+          <span class="flashcard-meta-value">${escHtml(value)}</span>
+        </span>`
+      ).join('')}
+    </div>`;
+  }
+
   async function generateFlashcards() {
     if (!guide?.guide?.length || !hasUsableSettings()) return;
 
@@ -6890,7 +7167,7 @@ ${guideBlocksStr}${scriptContext}`;
     const count = (!isNaN(customCountRaw) && customCountRaw > 0)
       ? String(customCountRaw)
       : getActivePillValue('flashcards-count-pills') || 'auto';
-    const style  = getActivePillValue('flashcards-style-pills') || 'mixed';
+    const cardTypes = getSelectedFlashcardTypes('flashcards-card-type-pills');
     const formulas = !!document.getElementById('flashcards-formulas-cb')?.checked;
 
     const btn = document.getElementById('flashcards-generate-btn');
@@ -6900,7 +7177,7 @@ ${guideBlocksStr}${scriptContext}`;
 
     try {
       const language = getToolLanguage('flashcards-lang-select');
-      const systemPrompt = buildFlashcardsPrompt(guide, { count, style, includeFormulas: formulas, language });
+      const systemPrompt = buildFlashcardsPrompt(guide, { count, cardTypes, includeFormulas: formulas, language });
       const payload = {
         ...buildApiPayloadBase(),
         type: 'FLASHCARDS_REQUEST',
@@ -6961,6 +7238,7 @@ ${guideBlocksStr}${scriptContext}`;
         <div class="flashcard-side-label">Back</div>
         <div class="flashcard-text">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(card.back)))}</div>
       </div>
+      ${renderFlashcardMetadata(card)}
       <div class="flashcard-actions">
         <button class="flashcard-delete-btn" type="button" title="Delete this card">Delete card</button>
         <span class="flashcard-ask-slot"></span>
@@ -7045,7 +7323,10 @@ ${guideBlocksStr}${scriptContext}`;
   function exportFlashcardsAsTSV() {
     const cards = getEditedFlashcards();
     if (!cards.length) return;
-    const tsv = cards.map(c => `${c.front.replace(/\t/g, ' ')}\t${c.back.replace(/\t/g, ' ')}`).join('\n');
+    const tsv = cards.map(c => {
+      const back = window.buildFlashcardBackWithMetadata ? window.buildFlashcardBackWithMetadata(c) : c.back;
+      return `${String(c.front ?? '').replace(/\t/g, ' ')}\t${String(back ?? '').replace(/\t/g, ' ')}`;
+    }).join('\n');
     const blob = new Blob([tsv], { type: 'text/tab-separated-values; charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -7082,7 +7363,7 @@ ${guideBlocksStr}${scriptContext}`;
       .slice(0, 90) || 'Untitled';
   }
 
-  /** Subject::DeckTitle — AI-generated deckTitle groups cards under the course in Anki. */
+  /** Subject::GuideTitle - guide_title groups cards under the course in Anki. */
   async function buildAnkiDeckNameForCurrentLecture() {
     const subject = sanitizeAnkiDeckPart(
       transcript?.courseName || guide?.lecture_title || 'Lecture Copilot'
@@ -7105,28 +7386,43 @@ ${guideBlocksStr}${scriptContext}`;
       .toLowerCase()
       .replace(/\s+/g, '-')
       .slice(0, 40);
+    const guideTitleTag = getGuideTitle(guide)
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60);
     const deckScopeOptions = {
       deckName,
       checkChildren: false,
       checkAllModels: false
     };
-    return cards.map(c => ({
-      deckName,
-      modelName: 'Basic',
-      fields: {
-        Front: String(c.front ?? '').trim(),
-        Back: String(c.back ?? '').trim()
-      },
-      options: {
-        allowDuplicate: false,
-        // Anki 2.1.45+ — scope duplicate check to this deck only (not whole collection).
-        duplicateScope: 'deck',
-        duplicateScopeOptions: deckScopeOptions,
-        // Legacy AnkiConnect field — keep for older installs.
-        duplicateScopeDeckName: deckName
-      },
-      tags: ['lecture-copilot', subjectTag]
-    }));
+    return cards.map(c => {
+      const tags = window.buildFlashcardAnkiTags
+        ? window.buildFlashcardAnkiTags(c, ['lecture-copilot', subjectTag, guideTitleTag])
+        : ['lecture-copilot', subjectTag, guideTitleTag].filter(Boolean);
+      const back = window.buildFlashcardBackHtmlWithMetadata
+        ? window.buildFlashcardBackHtmlWithMetadata(c)
+        : (window.buildFlashcardBackWithMetadata ? window.buildFlashcardBackWithMetadata(c) : c.back);
+      return {
+        deckName,
+        modelName: 'Basic',
+        fields: {
+          Front: window.markdownishToHtml
+            ? window.markdownishToHtml(String(c.front ?? '').trim())
+            : String(c.front ?? '').trim(),
+          Back: String(back ?? '').trim()
+        },
+        options: {
+          allowDuplicate: false,
+          // Anki 2.1.45+ — scope duplicate check to this deck only (not whole collection).
+          duplicateScope: 'deck',
+          duplicateScopeOptions: deckScopeOptions,
+          // Legacy AnkiConnect field — keep for older installs.
+          duplicateScopeDeckName: deckName
+        },
+        tags
+      };
+    });
   }
 
   /** Add notes one-by-one so duplicate skips never abort the whole batch. */
@@ -7842,7 +8138,7 @@ ${guideBlocksStr}${scriptContext}`;
             <input type="checkbox" id="${cbId}" data-idx="${globalIdx}"${isPreselected ? ' checked' : ''}>
             <span class="toggle-thumb"></span>
             <div class="cross-exam-lecture-info">
-              <div class="cross-exam-lecture-title">${escHtml(entry.lectureTitle)}</div>
+              <div class="cross-exam-lecture-title">${escHtml(getHistoryDisplayTitle(entry))}</div>
               ${dateStr ? `<div class="cross-exam-lecture-meta">${numLabel}${escHtml(dateStr)}</div>` : ''}
             </div>
           `;
