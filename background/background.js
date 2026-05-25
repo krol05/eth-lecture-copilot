@@ -758,7 +758,6 @@ async function callAIStream(provider, model, apiKey, messages, systemPrompt, opt
 // is called (up to Chrome's 5-minute hard limit — plenty for any API call).
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('[BG] onMessage:', message?.type);
   globalThis.CopilotDebug?.log('background.onMessage', {
     type: message?.type,
     requestId: message?._copilotRequestId,

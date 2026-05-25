@@ -1061,7 +1061,6 @@
   }
 
   function forwardApiRequest(payload, requestId) {
-    console.log('[ETH Copilot] forwardApiRequest →', payload.type, requestId);
     window.CopilotDebug?.log('content.forwardApiRequest.send', {
       requestId,
       payloadType: payload?.type,
@@ -1079,7 +1078,6 @@
         });
         return;
       }
-      console.log('[ETH Copilot] Response:', response?.success);
       window.CopilotDebug?.log('content.forwardApiRequest.response', {
         requestId,
         payloadType: payload?.type,

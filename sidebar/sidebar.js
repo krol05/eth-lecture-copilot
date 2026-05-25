@@ -919,7 +919,7 @@
   }
 
   function applyToolOutputsSnapshot(snapshot) {
-    console.log('[ETH-DBG] applyToolOutputsSnapshot:', {
+    window.CopilotDebug?.log('[ETH-DBG] applyToolOutputsSnapshot:', {
       hasSnapshot: !!snapshot,
       flashcards: snapshot?.flashcards?.cards?.length || 0,
       quiz: snapshot?.quiz?.questions?.length || 0,
@@ -984,13 +984,13 @@
     const norm = currentLectureUrl ? normalizeLectureUrl(currentLectureUrl) : null;
 
     if (!toolOutputsHasData(snapshot)) {
-      console.log('[ETH-DBG] persistToolOutputs: empty snapshot — clearing caches', { norm });
+      window.CopilotDebug?.log('[ETH-DBG] persistToolOutputs: empty snapshot — clearing caches', { norm });
       chrome.storage?.local?.remove(['currentToolOutputs', 'currentGuideToolOutputs']);
       clearToolOutputsLocalFallback();
       return;
     }
 
-    console.log('[ETH-DBG] persistToolOutputs: saving', { norm, ...counts });
+    window.CopilotDebug?.log('[ETH-DBG] persistToolOutputs: saving', { norm, ...counts });
 
     // Always write to localStorage — this works even before `currentLectureUrl` is
     // available (e.g. EXTENSION_READY hasn't propagated yet) and survives hard reloads.
@@ -1004,13 +1004,13 @@
       storageSet({ currentToolOutputs: { lectureUrl: norm, ...snapshot } });
       patchHistoryToolOutputs(snapshot);
     } else {
-      console.warn('[ETH-DBG] persistToolOutputs: no currentLectureUrl — skipping lecture-keyed cache, but localStorage + session fallback still saved');
+      window.CopilotDebug?.warn('[ETH-DBG] persistToolOutputs: no currentLectureUrl — skipping lecture-keyed cache, but localStorage + session fallback still saved');
     }
   }
 
   function restoreToolOutputsForLecture(historyEntry, sessionFallbackSnapshot = null) {
     if (!currentLectureUrl) {
-      console.warn('[ETH-DBG] restoreToolOutputsForLecture: no currentLectureUrl — skipping');
+      window.CopilotDebug?.warn('[ETH-DBG] restoreToolOutputsForLecture: no currentLectureUrl — skipping');
       return;
     }
     const norm = normalizeLectureUrl(currentLectureUrl);
@@ -1033,7 +1033,7 @@
       } else if (localFallback?.lectureUrl === norm && toolOutputsHasData(localFallback)) {
         snapshot = localFallback; source = 'localStorage-fallback';
       }
-      console.log('[ETH-DBG] restoreToolOutputsForLecture:', {
+      window.CopilotDebug?.log('[ETH-DBG] restoreToolOutputsForLecture:', {
         source, norm,
         cachedLectureUrl: cached?.lectureUrl || null,
         cachedMatches: cached?.lectureUrl === norm,
@@ -1095,8 +1095,8 @@
   }
 
   function tryRestoreFromCache(lectureUrl) {
-    console.log('[ETH-DBG] tryRestoreFromCache called with:', lectureUrl);
-    if (!lectureUrl) { console.warn('[ETH-DBG] tryRestoreFromCache: no lectureUrl'); return; }
+    window.CopilotDebug?.log('[ETH-DBG] tryRestoreFromCache called with:', lectureUrl);
+    if (!lectureUrl) { window.CopilotDebug?.warn('[ETH-DBG] tryRestoreFromCache: no lectureUrl'); return; }
     const normNew = normalizeLectureUrl(lectureUrl);
     const normPrev = currentLectureUrl ? normalizeLectureUrl(currentLectureUrl) : '';
     // SPA navigation can fire EXTENSION_READY with a stale href; drop in-memory state
@@ -1159,7 +1159,7 @@
           restoreLectureSummaryFromStorage(saved);
         } else {
           if (sessionMatches && !guideUrlMatches && saved.currentGuide?.guide?.length) {
-            console.warn('[ETH-DBG] Refusing to restore currentGuide — its lecture URL does not match current page', { normGuideUrl, normNew });
+            window.CopilotDebug?.warn('[ETH-DBG] Refusing to restore currentGuide — its lecture URL does not match current page', { normGuideUrl, normNew });
           }
           const latest = pickLatestHistoryForUrl(hist, lectureUrl);
           if (latest?.guide?.guide?.length) {
@@ -1181,13 +1181,13 @@
         }
         if (restoredGuide || lectureSummaryReady()) updateLectureSummaryBtn();
 
-        console.log('[ETH-DBG] tryRestoreFromCache decided:', {
+        window.CopilotDebug?.log('[ETH-DBG] tryRestoreFromCache decided:', {
           sessionMatches, guideUrlMatches, restoredGuide,
           normSaved, normNew, normGuideUrl,
           willApplyCurrentGuide: sessionMatches && guideUrlMatches && !!saved.currentGuide?.guide?.length
         });
 
-        console.log('[ETH-DBG] tryRestoreFromCache outcome:', {
+        window.CopilotDebug?.log('[ETH-DBG] tryRestoreFromCache outcome:', {
           sessionMatches, restoredGuide,
           normSaved, normNew,
           hasCurrentGuide: !!saved.currentGuide?.guide?.length,
@@ -1198,7 +1198,7 @@
         if (restoredGuide) {
           restoreToolOutputsForLecture(historyEntryForTools, sessionToolFallback);
         } else {
-          console.log('[ETH-DBG] tryRestoreFromCache: no guide yet — tool restore for this lecture only');
+          window.CopilotDebug?.log('[ETH-DBG] tryRestoreFromCache: no guide yet — tool restore for this lecture only');
           restoreToolOutputsForLecture(historyEntryForTools, sessionToolFallback);
         }
 
@@ -1333,11 +1333,13 @@
     if (e.origin !== 'https://video.ethz.ch') return;
     const msg = e.data;
     if (!msg?.type) return;
-    window.CopilotDebug?.log('sidebar.onContentMessage', {
-      type: msg.type,
-      requestId: msg.requestId,
-      message: msg
-    });
+    if (msg.type !== 'TIMESTAMP_UPDATE') {
+      window.CopilotDebug?.log('sidebar.onContentMessage', {
+        type: msg.type,
+        requestId: msg.requestId,
+        message: msg
+      });
+    }
 
     switch (msg.type) {
 
@@ -1871,15 +1873,15 @@
   function captureFrame() {
     return new Promise((resolve) => {
       const id = makeRequestId();
-      console.log('[Copilot] captureFrame: sending CAPTURE_FRAME', id);
+      window.CopilotDebug?.log('[Copilot] captureFrame: sending CAPTURE_FRAME', id);
       const timer = setTimeout(() => {
-        console.warn('[Copilot] captureFrame: timed out waiting for FRAME_CAPTURED', id);
+        window.CopilotDebug?.warn('[Copilot] captureFrame: timed out waiting for FRAME_CAPTURED', id);
         delete pendingRequests[id];
         resolve(null);
       }, 8000);
       pendingRequests[id] = (result) => {
         clearTimeout(timer);
-        console.log('[Copilot] captureFrame: got result', id, result ? 'b64 length=' + result.length : 'null');
+        window.CopilotDebug?.log('[Copilot] captureFrame: got result', id, result ? 'b64 length=' + result.length : 'null');
         resolve(result);
       };
       postToContent({ type: 'CAPTURE_FRAME', requestId: id });
@@ -2413,7 +2415,7 @@
       useStream: supportsStream && !useFallback
     };
 
-    console.log('[Copilot] Sending GENERATE_GUIDE', {
+    window.CopilotDebug?.log('[Copilot] Sending GENERATE_GUIDE', {
       provider: payload.provider,
       model: payload.model,
       transcriptLen: payload.transcriptText?.length,
@@ -2429,7 +2431,7 @@
       _activeGuideAbortFn = guideReq.abort;
       updateGuideAbortBtn();
       const response = await guideReq;
-      console.log('[Copilot] GENERATE_GUIDE response received', { success: response.success });
+      window.CopilotDebug?.log('[Copilot] GENERATE_GUIDE response received', { success: response.success });
 
       if (!response.success) throw new Error(response.error);
 
@@ -4287,7 +4289,7 @@ ${guideBlocksStr}`;
       const assistantText = response.data;
       if (!qaChats[liveChatIdx]) {
         // Originating chat was closed mid-stream — nothing to do.
-        console.warn('[ETH-DBG] sendQaMessage: originating chat no longer exists', { liveChatIdx });
+        window.CopilotDebug?.warn('[ETH-DBG] sendQaMessage: originating chat no longer exists', { liveChatIdx });
         return;
       }
       qaChats[liveChatIdx].messages.push({ role: 'assistant', content: assistantText });
