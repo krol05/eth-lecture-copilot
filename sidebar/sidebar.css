@@ -1423,6 +1423,12 @@ body {
   flex-shrink: 0;
 }
 
+#guide-block > div:not(.block-head-row) {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -1548,7 +1554,7 @@ body {
 .concepts-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 13px;
   list-style: none;
   padding-left: 0;
   margin-left: 0;
@@ -1557,35 +1563,31 @@ body {
 .study-flow-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 .concept-card {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
   font-size: var(--ui-font-content-size);
   color: var(--text-primary);
   line-height: 1.6;
-  padding: 11px 12px 12px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-sm);
-  background:
-    linear-gradient(90deg, var(--accent-dim), transparent 42%),
-    var(--bg-1);
-  box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+  padding: 2px 0 2px 11px;
+  border: none;
+  border-left: 2px solid var(--accent);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   transition:
-    background 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    border-color 160ms cubic-bezier(0.23, 1, 0.32, 1);
+    border-color 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .concept-card:hover {
-  border-color: var(--border-strong);
-  background:
-    linear-gradient(90deg, var(--accent-dim), transparent 58%),
-    var(--bg-1);
+  border-color: var(--accent-hover);
+  transform: translateX(1px);
 }
 
 .concept-card .concept-text {
@@ -1608,13 +1610,17 @@ body {
   line-height: 1.58;
 }
 
+.concept-body-only {
+  color: var(--text-primary);
+}
+
 /* Compact concept label; no numbering so concept cards scan like study notes. */
 .concept-kind {
   align-self: flex-start;
   max-width: 100%;
   color: var(--accent);
   background: var(--accent-dim);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 6px;
   font-size: 9px;
@@ -1667,6 +1673,183 @@ body {
 
 .katex { font-size: 1.1em; }
 .katex-display { margin: 0; }
+
+.guide-text code,
+.concept-card code,
+.definition-item code,
+.notes-box code,
+.chat-bubble code,
+.flashcard-text code,
+.quiz-question-text code,
+.quiz-mc-text code,
+.quiz-answer-text code,
+.quiz-explanation-text code,
+.exam-question-text code,
+.exam-mc-text code,
+.exam-answer-body code {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 4px;
+  padding: 0 3px;
+  white-space: normal;
+}
+
+.chat-bubble pre.md-code-block,
+.flashcard-text pre.md-code-block,
+.quiz-question-text pre.md-code-block,
+.quiz-answer-text pre.md-code-block,
+.quiz-explanation-text pre.md-code-block,
+.exam-question-text pre.md-code-block,
+.exam-answer-body pre.md-code-block,
+.notes-box pre.md-code-block,
+.concept-card pre.md-code-block,
+.definition-item pre.md-code-block {
+  margin: 7px 0;
+  padding: 10px 11px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-0);
+  color: var(--text-primary);
+  white-space: pre;
+}
+
+.chat-bubble pre.md-code-block code,
+.flashcard-text pre.md-code-block code,
+.quiz-question-text pre.md-code-block code,
+.quiz-answer-text pre.md-code-block code,
+.quiz-explanation-text pre.md-code-block code,
+.exam-question-text pre.md-code-block code,
+.exam-answer-body pre.md-code-block code,
+.notes-box pre.md-code-block code,
+.concept-card pre.md-code-block code,
+.definition-item pre.md-code-block code {
+  display: block;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.chat-bubble .md-table-wrap,
+.flashcard-text .md-table-wrap,
+.quiz-question-text .md-table-wrap,
+.quiz-answer-text .md-table-wrap,
+.quiz-explanation-text .md-table-wrap,
+.exam-question-text .md-table-wrap,
+.exam-answer-body .md-table-wrap,
+.notes-box .md-table-wrap,
+.concept-card .md-table-wrap,
+.definition-item .md-table-wrap {
+  margin: 8px 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-0);
+}
+
+.chat-bubble table.md-table,
+.flashcard-text table.md-table,
+.quiz-question-text table.md-table,
+.quiz-answer-text table.md-table,
+.quiz-explanation-text table.md-table,
+.exam-question-text table.md-table,
+.exam-answer-body table.md-table,
+.notes-box table.md-table,
+.concept-card table.md-table,
+.definition-item table.md-table {
+  width: 100%;
+  min-width: 360px;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chat-bubble .md-table th,
+.flashcard-text .md-table th,
+.quiz-question-text .md-table th,
+.quiz-answer-text .md-table th,
+.quiz-explanation-text .md-table th,
+.exam-question-text .md-table th,
+.exam-answer-body .md-table th,
+.notes-box .md-table th,
+.concept-card .md-table th,
+.definition-item .md-table th {
+  color: var(--text-primary);
+  background: var(--bg-1);
+  font-weight: 700;
+  text-align: left;
+}
+
+.chat-bubble .md-table th,
+.chat-bubble .md-table td,
+.flashcard-text .md-table th,
+.flashcard-text .md-table td,
+.quiz-question-text .md-table th,
+.quiz-question-text .md-table td,
+.quiz-answer-text .md-table th,
+.quiz-answer-text .md-table td,
+.quiz-explanation-text .md-table th,
+.quiz-explanation-text .md-table td,
+.exam-question-text .md-table th,
+.exam-question-text .md-table td,
+.exam-answer-body .md-table th,
+.exam-answer-body .md-table td,
+.notes-box .md-table th,
+.notes-box .md-table td,
+.concept-card .md-table th,
+.concept-card .md-table td,
+.definition-item .md-table th,
+.definition-item .md-table td {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.chat-bubble .md-table th:last-child,
+.chat-bubble .md-table td:last-child,
+.flashcard-text .md-table th:last-child,
+.flashcard-text .md-table td:last-child,
+.quiz-question-text .md-table th:last-child,
+.quiz-question-text .md-table td:last-child,
+.quiz-answer-text .md-table th:last-child,
+.quiz-answer-text .md-table td:last-child,
+.quiz-explanation-text .md-table th:last-child,
+.quiz-explanation-text .md-table td:last-child,
+.exam-question-text .md-table th:last-child,
+.exam-question-text .md-table td:last-child,
+.exam-answer-body .md-table th:last-child,
+.exam-answer-body .md-table td:last-child,
+.notes-box .md-table th:last-child,
+.notes-box .md-table td:last-child,
+.concept-card .md-table th:last-child,
+.concept-card .md-table td:last-child,
+.definition-item .md-table th:last-child,
+.definition-item .md-table td:last-child {
+  border-right: none;
+}
+
+.chat-bubble .md-table tr:last-child td,
+.flashcard-text .md-table tr:last-child td,
+.quiz-question-text .md-table tr:last-child td,
+.quiz-answer-text .md-table tr:last-child td,
+.quiz-explanation-text .md-table tr:last-child td,
+.exam-question-text .md-table tr:last-child td,
+.exam-answer-body .md-table tr:last-child td,
+.notes-box .md-table tr:last-child td,
+.concept-card .md-table tr:last-child td,
+.definition-item .md-table tr:last-child td {
+  border-bottom: none;
+}
 
 .latex-modal-backdrop {
   position: absolute;
@@ -1757,19 +1940,28 @@ body {
 
 /* Definitions */
 .definition-item {
-  background: var(--definition-bg);
-  border-left: 3px solid var(--accent);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  border-left: 2px solid var(--accent);
+  border-radius: 0;
+  padding: 2px 0 2px 11px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
+  transition:
+    border-color 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.definition-item:hover {
+  border-left-color: var(--accent-hover);
+  transform: translateX(1px);
 }
 
 .definition-term {
   font-size: var(--ui-font-content-size);
   font-weight: 700;
-  color: var(--accent);
+  color: var(--text-primary);
   line-height: 1.3;
   display: flex;
   align-items: center;
@@ -1784,7 +1976,7 @@ body {
   letter-spacing: 0.6px;
   color: var(--accent);
   background: var(--accent-dim);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: 3px;
   padding: 1px 4px;
   flex-shrink: 0;
@@ -1794,7 +1986,7 @@ body {
 .definition-text {
   font-size: var(--ui-font-content-size);
   color: var(--text-secondary);
-  line-height: 1.55;
+  line-height: 1.58;
 }
 
 /* Notes */
@@ -2302,14 +2494,17 @@ body {
   border-radius: 2px;
 }
 .chat-bubble code {
-  background: rgba(100, 65, 20, 0.1);
-  padding: 1px 5px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  padding: 0 3px;
   border-radius: 4px;
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-primary);
+  white-space: normal;
 }
 [data-theme="dark"] .chat-bubble code {
-  background: rgba(0,0,0,0.25);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 /* Horizontal rule */
 .chat-bubble hr.md-hr {
@@ -3896,10 +4091,10 @@ body {
 }
 
 /* Definition items — a touch more vertical rhythm */
-.definition-item { padding: 9px 13px; margin-bottom: 2px; }
+.definition-item { margin-bottom: 2px; }
 
 /* Notes box — match rhythm */
-.notes-box { padding: 11px 13px; }
+.notes-box { padding: 0; }
 
 /* Formula card */
 .formula-card { padding: 13px 16px; }
@@ -5050,11 +5245,14 @@ body {
 .exam-answer-body li { margin-bottom: 3px; }
 .exam-answer-body strong { font-weight: 600; color: var(--text-primary); }
 .exam-answer-body code {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  background: var(--formula-bg);
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  padding: 0 3px;
+  border-radius: 4px;
+  white-space: normal;
 }
 
 /* Legacy fallback — old code used .exam-answer-text */

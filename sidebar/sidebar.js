@@ -1834,6 +1834,30 @@
     });
   }
 
+  function richTextHtml(text) {
+    return renderMarkdown(normalizeRichTextSource(text));
+  }
+
+  function richInlineHtml(text) {
+    return renderMarkdownInline(normalizeRichTextSource(text));
+  }
+
+  function setRichTextHtml(el, text) {
+    if (!el) return;
+    el.innerHTML = richTextHtml(text);
+    applyKatex(el);
+  }
+
+  function setRichInlineHtml(el, text) {
+    if (!el) return;
+    el.innerHTML = richInlineHtml(text);
+    applyKatex(el);
+  }
+
+  function normalizeRichTextSource(text) {
+    return normalizeLatexForKatex(unescapeMathDelimiters(text || ''));
+  }
+
   function showGuideTimeoutDialog({ onRetry, onKeepGoing }) {
     const existing = document.getElementById('guide-timeout-dialog');
     if (existing) existing.remove();
@@ -2686,7 +2710,7 @@ Your task: Read the provided lecture transcript and produce a JSON lecture guide
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown fences, no explanation, no preamble:
 
-{"lecture_title":"string","guide_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string"}]}
+{"lecture_title":"string","guide_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"key_concept_labels":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string"}]}
 
 BLOCK COUNT (${c.label} — target ${c.range} blocks):
 - ${c.rule}
@@ -2704,6 +2728,8 @@ GENERAL RULES:
 - Do NOT hallucinate. Only extract content actually in the transcript.
 - Do NOT produce shallow one-liners unless the detail level is set to Low.
 - The output token limit is only a ceiling for long lectures. Be complete, but do not pad, repeat, or spend extra tokens when the transcript does not need them.
+- Write each key_concepts item as a study card: start with one short, specific takeaway sentence (roughly 4–12 words) that says exactly what the card is about, then add the supporting explanation after it. Example: "Radical hardware designs can become commercially viable. Wafer-scale chips show that architectural ideas once considered impractical can succeed as products."
+- key_concept_labels is optional but recommended: provide one short label per key_concepts item (1-3 words, under 24 characters), like "Interface choice", "Mechanism", or "Tradeoff". The label is the small pill above the card title; it must not merely repeat the first sentence.
 - In textual fields (title, key_concepts, definitions.definition, notes), prefer LaTeX ($...$ inline, $$...$$ display) whenever mathematical notation appears.
 - Markdown is allowed in textual fields when it improves readability (e.g., #/## headings, short lists), but keep it lightweight and do NOT force markdown when plain text is clearer.
 - total_duration_seconds: use the last timestamp in the transcript.
@@ -2718,7 +2744,7 @@ Now process the following transcript:`;
   function buildStudyFlowGuidePrompt(detail, count, lang) {
     const base = buildGuidePrompt(detail, count, lang);
     const marker = '\n\nNow process the following transcript:';
-    const insert = `\n\nEXPERIMENTAL STUDY FLOW MODE:\n- Keep the normal fields exactly as specified above. They remain the canonical source of content.\n- Additionally, each guide block MAY include a compact "study_flow" array that controls display order without duplicating content.\n- study_flow items must reference existing content by zero-based index instead of repeating text:\n  {"type":"concept","index":0,"label":"Core idea"}\n  {"type":"formula","index":0}\n  {"type":"definition","index":0}\n  {"type":"note"}\n- Valid type values: "concept", "formula", "definition", "note".\n- For concept items, add a short label when helpful: examples include "Core idea", "Mechanism", "Tradeoff", "Condition", "Exam hint", "Pitfall", "Example". Keep labels under 24 characters.\n- Order study_flow for learning: introduce the idea, then place supporting definitions, formulas, warnings, or examples immediately after the concept they clarify.\n- Do NOT duplicate concept/formula/definition/note text inside study_flow. Only use type, index, and optional label.\n- If a block has no natural mixed order, still include study_flow with concepts first followed by formulas, definitions, and note.\n\nEXPERIMENTAL OUTPUT FORMAT EXTENSION:\n{"lecture_title":"string","guide_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string","study_flow":[{"type":"concept","index":0,"label":"Core idea"},{"type":"definition","index":0},{"type":"formula","index":0},{"type":"note"}]}]}`;
+    const insert = `\n\nEXPERIMENTAL STUDY FLOW MODE:\n- Keep the normal fields exactly as specified above. They remain the canonical source of content.\n- Additionally, each guide block MAY include a compact "study_flow" array that controls display order without duplicating content.\n- study_flow items must reference existing content by zero-based index instead of repeating text:\n  {"type":"concept","index":0,"label":"Core idea"}\n  {"type":"formula","index":0}\n  {"type":"definition","index":0}\n  {"type":"note"}\n- Valid type values: "concept", "formula", "definition", "note".\n- For concept items, add a short label when helpful: examples include "Overview", "Mechanism", "Tradeoff", "Scenario setup", "Miss count", "Steady state", "Pitfall". Keep labels under 24 characters.\n- Make every referenced key_concepts item work visually as a card under its label: first sentence = short specific card title, remaining sentences = supporting explanation. The first sentence must be more specific than the label and should not merely repeat it.\n- Order study_flow for learning: introduce the idea, then place supporting definitions, formulas, warnings, or examples immediately after the concept they clarify.\n- Do NOT duplicate concept/formula/definition/note text inside study_flow. Only use type, index, and optional label.\n- If a block has no natural mixed order, still include study_flow with concepts first followed by formulas, definitions, and note.\n\nEXPERIMENTAL OUTPUT FORMAT EXTENSION:\n{"lecture_title":"string","guide_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"key_concept_labels":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string","study_flow":[{"type":"concept","index":0,"label":"Core idea"},{"type":"definition","index":0},{"type":"formula","index":0},{"type":"note"}]}]}`;
 
     if (!base.includes(marker)) return `${base}${insert}`;
     return base.replace(marker, `${insert}${marker}`);
@@ -2790,6 +2816,9 @@ Now process the following transcript:`;
         end_time: toSeconds(b.end_time),
         title: b.title ?? 'Untitled Section',
         key_concepts: Array.isArray(b.key_concepts) ? b.key_concepts : [],
+        key_concept_labels: Array.isArray(b.key_concept_labels)
+          ? b.key_concept_labels.map(v => String(v || '').trim().slice(0, 24))
+          : [],
         formulas: Array.isArray(b.formulas) ? b.formulas : [],
         definitions: Array.isArray(b.definitions) ? b.definitions : [],
         notes: typeof b.notes === 'string' ? b.notes : ''
@@ -2972,41 +3001,71 @@ Now process the following transcript:`;
   function splitConceptText(concept) {
     const text = String(concept || '').trim();
     if (!text) return { lead: '', body: '' };
-    const sentenceMatch = text.match(/^(.{24,220}?[.!?])\s+(.+)$/s);
-    if (sentenceMatch) {
-      return { lead: sentenceMatch[1].trim(), body: sentenceMatch[2].trim() };
+
+    let inlineMath = false;
+    let displayMath = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      const next = text[i + 1] || '';
+      const prev = text[i - 1] || '';
+
+      if (ch === '$' && prev !== '\\') {
+        if (next === '$') {
+          displayMath = !displayMath;
+          i++;
+          continue;
+        }
+        if (!displayMath) inlineMath = !inlineMath;
+        continue;
+      }
+
+      if (inlineMath || displayMath) continue;
+      if (!/[.!?]/.test(ch)) continue;
+
+      const lead = text.slice(0, i + 1).trim();
+      const body = text.slice(i + 1).trim();
+      if (lead.length >= 12 && lead.length <= 180 && body.length >= 8) {
+        return { lead, body };
+      }
     }
-    const clauseMatch = text.match(/^(.{24,160}?[,;:])\s+(.+)$/s);
-    if (clauseMatch) {
-      return { lead: clauseMatch[1].replace(/[,;:]$/, '').trim(), body: clauseMatch[2].trim() };
-    }
+
     return { lead: text, body: '' };
+  }
+
+  if (typeof window !== 'undefined') {
+    window.__ethCopilotSplitConceptText = splitConceptText;
   }
 
   function renderConceptItem(concept, label = '', tag = 'li') {
     const cleanLabel = String(label || '').trim();
     const showLabel = cleanLabel && cleanLabel.toLowerCase() !== 'concept';
     const { lead, body } = splitConceptText(concept);
-    return `<${tag} class="concept-card">
-      ${showLabel ? `<span class="concept-kind">${escHtml(cleanLabel)}</span>` : ''}
+    const hasBody = !!body;
+    return `<${tag} class="concept-card${hasBody ? '' : ' concept-card-single'}">
+      ${showLabel ? `<span class="concept-kind">${guideInline(cleanLabel)}</span>` : ''}
       <span class="concept-text">
-        <span class="concept-lead">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(lead)))}</span>
-        ${body ? `<span class="concept-body">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(body)))}</span>` : ''}
+        ${hasBody
+          ? `<span class="concept-lead">${guideInline(lead)}</span><span class="concept-body">${guideInline(body)}</span>`
+          : `<span class="concept-body concept-body-only">${guideInline(lead)}</span>`}
       </span>
     </${tag}>`;
   }
 
+  function guideInline(text) {
+    return richInlineHtml(text);
+  }
+
   function renderFormulaCard(f) {
     return `<div class="formula-card">
-      <div class="formula-label">${escHtml(f.label)}</div>
+      <div class="formula-label">${escHtml(f.label || 'Formula')}</div>
       <div class="formula-render" data-latex="${escAttr(f.latex)}"></div>
     </div>`;
   }
 
   function renderDefinitionItem(d) {
     return `<div class="definition-item">
-      <div class="definition-term"><span class="definition-term-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(d.term)))}</span></div>
-      <div class="definition-text"><span class="definition-body-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(d.definition)))}</span></div>
+      <div class="definition-term"><span class="definition-term-text">${guideInline(d.term)}</span></div>
+      <div class="definition-text"><span class="definition-body-text">${guideInline(d.definition)}</span></div>
     </div>`;
   }
 
@@ -3020,7 +3079,7 @@ Now process the following transcript:`;
         </svg>
         <span class="notes-icon-label">Note</span>
       </div>
-      <div class="notes-text"><span class="notes-body-text">${escHtml(normalizeLatexForKatex(unescapeMathDelimiters(notes)))}</span></div>
+      <div class="notes-text"><span class="notes-body-text">${guideInline(notes)}</span></div>
     </div>`;
   }
 
@@ -3037,7 +3096,7 @@ Now process the following transcript:`;
     for (const item of block.study_flow) {
       if (item.type === 'concept' && block.key_concepts?.[item.index]) {
         used.concept.add(item.index);
-        parts.push(renderConceptItem(block.key_concepts[item.index], item.label || 'Concept', 'div'));
+        parts.push(renderConceptItem(block.key_concepts[item.index], item.label || block.key_concept_labels?.[item.index] || 'Concept', 'div'));
       } else if (item.type === 'formula' && block.formulas?.[item.index]) {
         used.formula.add(item.index);
         parts.push(renderFormulaCard(block.formulas[item.index]));
@@ -3051,7 +3110,7 @@ Now process the following transcript:`;
     }
 
     block.key_concepts?.forEach((concept, index) => {
-      if (!used.concept.has(index)) parts.push(renderConceptItem(concept, '', 'div'));
+      if (!used.concept.has(index)) parts.push(renderConceptItem(concept, block.key_concept_labels?.[index] || '', 'div'));
     });
     block.formulas?.forEach((formula, index) => {
       if (!used.formula.has(index)) parts.push(renderFormulaCard(formula));
@@ -3113,7 +3172,7 @@ Now process the following transcript:`;
       html += `<div>
         <div class="section-label">Key Concepts</div>
         <ul class="concepts-list">
-          ${block.key_concepts.map(c => renderConceptItem(c)).join('')}
+          ${block.key_concepts.map((c, i) => renderConceptItem(c, block.key_concept_labels?.[i] || '')).join('')}
         </ul>
       </div>`;
 
@@ -3759,9 +3818,7 @@ Now process the following transcript:`;
 
   function renderLectureSummaryMarkdown(container, text) {
     if (!container) return;
-    const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(text || ''));
-    container.innerHTML = renderMarkdown(finalNorm);
-    applyKatex(container);
+    setRichTextHtml(container, text);
     container.querySelectorAll('.qa-timestamp-link').forEach(btn => {
       btn.setAttribute('type', 'button');
     });
@@ -3981,12 +4038,10 @@ ${guideBlocksStr}`;
   function _finishGuideSummaryStreamBubble(bubble, text, streamState) {
     if (!bubble) return;
     if (streamState) QaStreamFlush.stopStreamFlush(streamState);
-    const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(text || ''));
     bubble.style.transition = 'opacity 0.12s ease';
     bubble.style.opacity = '0.2';
     setTimeout(() => {
-      bubble.innerHTML = renderMarkdown(finalNorm);
-      applyKatex(bubble);
+      setRichTextHtml(bubble, text);
       bubble.style.opacity = '1';
       setTimeout(() => { bubble.style.transition = ''; }, 180);
     }, 120);
@@ -4307,8 +4362,7 @@ ${guideBlocksStr}`;
         // Final render: crossfade from plain-text spans → full markdown + KaTeX.
         // Capture bubble in a local var because streamBubble is nulled right after.
         if (streamBubble) {
-          const bubble    = streamBubble;
-          const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(assistantText));
+          const bubble = streamBubble;
 
           // Step 1: fade out the raw plain-text version
           bubble.style.transition = 'opacity 0.12s ease';
@@ -4316,17 +4370,7 @@ ${guideBlocksStr}`;
 
           setTimeout(() => {
             // Step 2: swap in the formatted content while invisible
-            bubble.innerHTML = renderMarkdown(finalNorm);
-            if (typeof renderMathInElement === 'function') {
-              renderMathInElement(bubble, {
-                delimiters: [
-                  { left: '$$', right: '$$', display: true },
-                  { left: '$',  right: '$',  display: false }
-                ],
-                throwOnError: false,
-                trust: false
-              });
-            }
+            setRichTextHtml(bubble, assistantText);
             // Step 3: fade the formatted content back in
             bubble.style.opacity = '1';
             setTimeout(() => { bubble.style.transition = ''; }, 180);
@@ -4373,9 +4417,7 @@ ${guideBlocksStr}`;
           }
           // Finalize the partial bubble with markdown+katex
           if (streamBubble) {
-            const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(partialText));
-            streamBubble.innerHTML = renderMarkdown(finalNorm);
-            applyKatex(streamBubble);
+            setRichTextHtml(streamBubble, partialText);
           }
           // Add a "(stopped)" indicator
           const stoppedNote = document.createElement('span');
@@ -4851,6 +4893,9 @@ ${guideBlocksStr}${scriptContext}`;
     let mathOpen = false;  // true while collecting a cross-line $...$ block
     let mathBuf  = [];
     let mathDollarParity = 0;
+    let codeOpen = false;
+    let codeLang = '';
+    let codeBuf = [];
 
     // Count $ delimiters treating $$ as one unit
     const countDollars = (str) => {
@@ -4871,10 +4916,89 @@ ${guideBlocksStr}${scriptContext}`;
       out.push(`</${listType}>`);
       listType = null;
     };
+    const flushCode = () => {
+      const langClass = codeLang ? ` language-${escAttr(codeLang)}` : '';
+      out.push(`<pre class="md-code-block"><code class="md-code${langClass}">${escHtml(codeBuf.join('\n'))}</code></pre>`);
+      codeOpen = false;
+      codeLang = '';
+      codeBuf = [];
+    };
+    const splitTableRow = (row) => {
+      let s = String(row || '').trim();
+      if (s.startsWith('|')) s = s.slice(1);
+      if (s.endsWith('|')) s = s.slice(0, -1);
+      const cells = [];
+      let cur = '';
+      let escaped = false;
+      for (const ch of s) {
+        if (escaped) {
+          cur += ch;
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+          cur += ch;
+        } else if (ch === '|') {
+          cells.push(cur.trim());
+          cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      cells.push(cur.trim());
+      return cells;
+    };
+    const isTableDivider = (row) => {
+      const cells = splitTableRow(row);
+      return cells.length > 1 && cells.every(c => /^:?-{3,}:?$/.test(c.trim()));
+    };
+    const tableAlignment = (cell) => {
+      const c = String(cell || '').trim();
+      if (c.startsWith(':') && c.endsWith(':')) return 'center';
+      if (c.endsWith(':')) return 'right';
+      return '';
+    };
+    const renderTable = (start) => {
+      const headers = splitTableRow(lines[start]);
+      const divider = splitTableRow(lines[start + 1]);
+      const aligns = divider.map(tableAlignment);
+      let i = start + 2;
+      const rows = [];
+      while (i < lines.length) {
+        const row = lines[i].trim();
+        if (!row || !row.includes('|')) break;
+        rows.push(splitTableRow(lines[i]));
+        i++;
+      }
+      const alignAttr = (idx) => aligns[idx] ? ` style="text-align:${aligns[idx]}"` : '';
+      const headHtml = headers.map((cell, idx) => `<th${alignAttr(idx)}>${renderMarkdownInline(cell)}</th>`).join('');
+      const bodyHtml = rows
+        .map(row => `<tr>${headers.map((_, idx) => `<td${alignAttr(idx)}>${renderMarkdownInline(row[idx] || '')}</td>`).join('')}</tr>`)
+        .join('');
+      out.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`);
+      return i;
+    };
 
-    for (const rawLine of lines) {
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const rawLine = lines[lineIndex];
       const line    = rawLine.trimEnd();
       const trimmed = line.trim();
+
+      const fence = trimmed.match(/^```([A-Za-z0-9_-]+)?\s*$/);
+      if (codeOpen) {
+        if (fence) {
+          flushCode();
+        } else {
+          codeBuf.push(line);
+        }
+        continue;
+      }
+      if (fence) {
+        flushPara(); flushList();
+        codeOpen = true;
+        codeLang = fence[1] || '';
+        codeBuf = [];
+        continue;
+      }
 
       // ── Collecting a cross-line math block ───────────────────────────────
       if (mathOpen) {
@@ -4897,6 +5021,12 @@ ${guideBlocksStr}${scriptContext}`;
 
       // ── Empty line ────────────────────────────────────────────────────────
       if (!trimmed) { flushPara(); flushList(); continue; }
+
+      if (trimmed.includes('|') && lines[lineIndex + 1] && isTableDivider(lines[lineIndex + 1])) {
+        flushPara(); flushList();
+        lineIndex = renderTable(lineIndex) - 1;
+        continue;
+      }
 
       // ── Heading ───────────────────────────────────────────────────────────
       const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
@@ -4941,6 +5071,7 @@ ${guideBlocksStr}${scriptContext}`;
 
     // Flush any remaining state
     if (mathOpen) out.push(`<p class="math-block">${escHtml(mathBuf.join('\n'))}</p>`);
+    if (codeOpen) flushCode();
     flushPara();
     flushList();
     return out.join('');
@@ -6461,11 +6592,11 @@ ${guideBlocksStr}${scriptContext}`;
       el.innerHTML = `
         <div class="flashcard-side flashcard-front">
           <div class="flashcard-side-label">Front</div>
-          <div class="flashcard-text">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(card.front)))}</div>
+          <div class="flashcard-text">${richTextHtml(card.front)}</div>
         </div>
         <div class="flashcard-side flashcard-back">
           <div class="flashcard-side-label">Back</div>
-          <div class="flashcard-text">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(card.back)))}</div>
+          <div class="flashcard-text">${richTextHtml(card.back)}</div>
         </div>
         ${renderFlashcardMetadata(card)}
         <div class="flashcard-actions"><span class="flashcard-ask-slot"></span></div>`;
@@ -7014,9 +7145,7 @@ ${guideBlocksStr}${scriptContext}`;
           toolAskActiveStreams.delete(req._requestId);
         }
         if (streamBubble) {
-          const finalNorm = normalizeLatexForKatex(unescapeMathDelimiters(assistantText));
-          streamBubble.innerHTML = renderMarkdown(finalNorm);
-          applyKatex(streamBubble);
+          setRichTextHtml(streamBubble, assistantText);
         }
       }
       persistToolAskSessions();
@@ -7234,11 +7363,11 @@ ${guideBlocksStr}${scriptContext}`;
     item.innerHTML = `
       <div class="flashcard-side flashcard-front">
         <div class="flashcard-side-label">Front</div>
-        <div class="flashcard-text">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(card.front)))}</div>
+        <div class="flashcard-text">${richTextHtml(card.front)}</div>
       </div>
       <div class="flashcard-side flashcard-back">
         <div class="flashcard-side-label">Back</div>
-        <div class="flashcard-text">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(card.back)))}</div>
+        <div class="flashcard-text">${richTextHtml(card.back)}</div>
       </div>
       ${renderFlashcardMetadata(card)}
       <div class="flashcard-actions">
@@ -7583,8 +7712,7 @@ ${guideBlocksStr}${scriptContext}`;
 
     const qText = document.getElementById('quiz-question-text');
     if (qText) {
-      qText.innerHTML = renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(q.question)));
-      applyKatex(qText);
+      setRichTextHtml(qText, q.question);
     }
 
     const mcArea = document.getElementById('quiz-mc-options');
@@ -7610,13 +7738,12 @@ ${guideBlocksStr}${scriptContext}`;
         btn.dataset.optionIndex = i;
         btn.type = 'button';
         btn.innerHTML = `<span class="quiz-mc-letter">${_LETTERS[i] || i+1}</span><span class="quiz-mc-text"></span>`;
-        btn.querySelector('.quiz-mc-text').innerHTML = renderMarkdownInline(normalizeLatexForKatex(unescapeMathDelimiters(opt)));
+        setRichInlineHtml(btn.querySelector('.quiz-mc-text'), opt);
         btn.addEventListener('click', () => {
           mcArea.querySelectorAll('.quiz-mc-option').forEach(b => b.classList.remove('selected'));
           btn.classList.add('selected');
         });
         mcArea.appendChild(btn);
-        applyKatex(btn.querySelector('.quiz-mc-text'));
       });
     } else {
       mcArea.style.display = 'none';
@@ -7673,13 +7800,11 @@ ${guideBlocksStr}${scriptContext}`;
 
     const answer = q.answer || (q.options?.[q.correct] ? q.options[q.correct].replace(/^[A-D]\) /, '') : '');
     if (answerText) {
-      answerText.innerHTML = renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(answer)));
-      applyKatex(answerText);
+      setRichTextHtml(answerText, answer);
     }
     if (explanationText) {
-      explanationText.innerHTML = renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(q.explanation || '')));
+      setRichTextHtml(explanationText, q.explanation || '');
       explanationText.style.display = q.explanation ? '' : 'none';
-      if (q.explanation) applyKatex(explanationText);
     }
 
     // For MC, grade is already determined; hide grade buttons
@@ -7755,8 +7880,8 @@ ${guideBlocksStr}${scriptContext}`;
         item.className = 'quiz-missed-item';
         const answer = q.answer || (q.options?.[q.correct] ? q.options[q.correct].replace(/^[A-D]\) /, '') : '');
         item.innerHTML = `
-          <div class="quiz-missed-q">${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(q.question)))}</div>
-          <div class="quiz-missed-a"><strong>Answer:</strong> ${renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(answer)))}</div>
+          <div class="quiz-missed-q">${richTextHtml(q.question)}</div>
+          <div class="quiz-missed-a"><strong>Answer:</strong> ${richTextHtml(answer)}</div>
         `;
         applyKatex(item);
         missedList.appendChild(item);
@@ -7945,14 +8070,14 @@ ${guideBlocksStr}${scriptContext}`;
         const opts = q.options.map((o, oi) =>
           `<div class="exam-mc-option" data-idx="${oi}">
              <span class="exam-mc-letter">${LETTERS[oi] || (oi + 1)}</span>
-             <span class="exam-mc-text">${renderMarkdownInline(normalizeLatexForKatex(unescapeMathDelimiters(o)))}</span>
+             <span class="exam-mc-text">${richInlineHtml(o)}</span>
            </div>`
         ).join('');
         mcOptionsHtml = `<div class="exam-mc-options" data-correct="${q.correct ?? -1}">${opts}</div>`;
       }
 
       // Answer text rendered as markdown (supports bold, bullet lists, etc.) + LaTeX
-      const answerHtml = renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(q.sample_answer || '')));
+      const answerHtml = richTextHtml(q.sample_answer || '');
 
       item.innerHTML = `
         <div class="exam-question-head">
@@ -7977,8 +8102,7 @@ ${guideBlocksStr}${scriptContext}`;
 
       // Render question text as markdown then apply KaTeX
       const qTextEl = item.querySelector('.exam-question-text');
-      qTextEl.innerHTML = renderMarkdown(normalizeLatexForKatex(unescapeMathDelimiters(q.question)));
-      applyKatex(qTextEl);
+      setRichTextHtml(qTextEl, q.question);
 
       // Apply KaTeX to each MC option text span (markdown already rendered in innerHTML)
       item.querySelectorAll('.exam-mc-text').forEach(el => applyKatex(el));

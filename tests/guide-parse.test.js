@@ -81,4 +81,21 @@ describe('sanitizeGuide', () => {
       { type: 'note' }
     ]);
   });
+
+  test('preserves optional key concept labels for legacy guide display', () => {
+    const guide = sanitizeGuide({
+      lecture_title: 'Lecture',
+      guide: [{
+        title: 'Callbacks',
+        start_time: 0,
+        end_time: 10,
+        key_concepts: ['Callbacks return values. They pass results back to the caller.'],
+        key_concept_labels: ['Interface choice'],
+        formulas: [],
+        definitions: []
+      }]
+    });
+
+    expect(guide.guide[0].key_concept_labels).toEqual(['Interface choice']);
+  });
 });
