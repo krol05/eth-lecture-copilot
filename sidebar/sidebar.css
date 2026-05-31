@@ -1749,11 +1749,13 @@ body {
 .notes-box .md-table-wrap,
 .concept-card .md-table-wrap,
 .definition-item .md-table-wrap {
+  --md-table-line: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
   margin: 8px 0;
   overflow-x: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--md-table-line);
   border-radius: var(--radius-sm);
   background: var(--bg-0);
+  box-shadow: inset 0 0 0 1px var(--md-table-line);
 }
 
 .chat-bubble table.md-table,
@@ -1787,6 +1789,7 @@ body {
   background: var(--bg-1);
   font-weight: 700;
   text-align: left;
+  border-bottom-color: var(--md-table-line);
 }
 
 .chat-bubble .md-table th,
@@ -1810,8 +1813,8 @@ body {
 .definition-item .md-table th,
 .definition-item .md-table td {
   padding: 7px 9px;
-  border-bottom: 1px solid var(--border);
-  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--md-table-line);
+  border-right: 1px solid var(--md-table-line);
   vertical-align: top;
 }
 

@@ -32,4 +32,19 @@ describe('splitConceptText', () => {
       body: 'This setup determines the miss pattern.'
     });
   });
+
+  test('splits overly long one-sentence concepts into lead and body', () => {
+    const text = 'Nach dem Einfärben zählt man, wie häufig jede Farbe im Graphen vorkommt, was der Größe der jeweiligen Zusammenhangskomponente entspricht';
+    const out = splitConceptText(text);
+    expect(out.lead.split(/\s+/).length).toBeLessThanOrEqual(12);
+    expect(out.body).toContain('Graphen vorkommt');
+  });
+
+  test('does not split at common abbreviation dots', () => {
+    const text = 'Für große praktische Anwendungen (z.B. soziale Netzwerke) ist ein quadratischer Algorithmus zu teuer. Man braucht lineare oder nahezu lineare Verfahren.';
+    expect(splitConceptText(text)).toEqual({
+      lead: 'Für große praktische Anwendungen (z.B. soziale Netzwerke) ist ein quadratischer Algorithmus zu teuer.',
+      body: 'Man braucht lineare oder nahezu lineare Verfahren.'
+    });
+  });
 });

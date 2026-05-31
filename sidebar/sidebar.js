@@ -2710,7 +2710,7 @@ Your task: Read the provided lecture transcript and produce a JSON lecture guide
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown fences, no explanation, no preamble:
 
-{"lecture_title":"string","guide_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"key_concept_labels":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string"}]}
+{"lecture_title":"string","guide_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":[{"label":"string","lead":"string","body":"string"}],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string"}]}
 
 BLOCK COUNT (${c.label} — target ${c.range} blocks):
 - ${c.rule}
@@ -2728,9 +2728,13 @@ GENERAL RULES:
 - Do NOT hallucinate. Only extract content actually in the transcript.
 - Do NOT produce shallow one-liners unless the detail level is set to Low.
 - The output token limit is only a ceiling for long lectures. Be complete, but do not pad, repeat, or spend extra tokens when the transcript does not need them.
-- Write each key_concepts item as a study card: start with one short, specific takeaway sentence (roughly 4–12 words) that says exactly what the card is about, then add the supporting explanation after it. Example: "Radical hardware designs can become commercially viable. Wafer-scale chips show that architectural ideas once considered impractical can succeed as products."
-- key_concept_labels is optional but recommended: provide one short label per key_concepts item (1-3 words, under 24 characters), like "Interface choice", "Mechanism", or "Tradeoff". The label is the small pill above the card title; it must not merely repeat the first sentence.
-- In textual fields (title, key_concepts, definitions.definition, notes), prefer LaTeX ($...$ inline, $$...$$ display) whenever mathematical notation appears.
+- Prefer multiple compact key_concepts per block when the lecture gives multiple distinct facts, tradeoffs, steps, examples, limitations, or consequences. Do not collapse a rich topic into one long paragraph.
+- key_concepts must be structured objects, not strings. Each object has:
+  {"label":"1-3 word pill, under 24 characters","lead":"short bold header sentence, roughly 4-12 words","body":"supporting detail in 1-2 short sentences"}
+- The lead must be short and must not contain the whole explanation. Put all supporting information in body. Never leave body empty. Preserve all important information by splitting it into additional key_concepts, formulas, definitions, or notes rather than making one concept long.
+- Keep tightly connected condition/result pairs together, but split independent subpoints into separate key_concepts. A good block often has 3–6 short concepts rather than one long concept.
+- In textual fields (title, key_concepts, definitions.definition, notes), use LaTeX delimiters for every mathematical expression: $...$ inline, $$...$$ display. Do not write raw math like e^{\\lambda t}, y'' - y = e^{2t}, O(V+E), or P_1 without $...$ delimiters.
+- If a key concept contains math, the first sentence and supporting explanation must both preserve math delimiters. Examples: "$y = e^{\\lambda t}$", "$y'' - y = e^{2t}$", "$t^m$", "$\\sin(\\omega t)$", "$\\omega = 1$".
 - Markdown is allowed in textual fields when it improves readability (e.g., #/## headings, short lists), but keep it lightweight and do NOT force markdown when plain text is clearer.
 - total_duration_seconds: use the last timestamp in the transcript.
 
@@ -2744,7 +2748,7 @@ Now process the following transcript:`;
   function buildStudyFlowGuidePrompt(detail, count, lang) {
     const base = buildGuidePrompt(detail, count, lang);
     const marker = '\n\nNow process the following transcript:';
-    const insert = `\n\nEXPERIMENTAL STUDY FLOW MODE:\n- Keep the normal fields exactly as specified above. They remain the canonical source of content.\n- Additionally, each guide block MAY include a compact "study_flow" array that controls display order without duplicating content.\n- study_flow items must reference existing content by zero-based index instead of repeating text:\n  {"type":"concept","index":0,"label":"Core idea"}\n  {"type":"formula","index":0}\n  {"type":"definition","index":0}\n  {"type":"note"}\n- Valid type values: "concept", "formula", "definition", "note".\n- For concept items, add a short label when helpful: examples include "Overview", "Mechanism", "Tradeoff", "Scenario setup", "Miss count", "Steady state", "Pitfall". Keep labels under 24 characters.\n- Make every referenced key_concepts item work visually as a card under its label: first sentence = short specific card title, remaining sentences = supporting explanation. The first sentence must be more specific than the label and should not merely repeat it.\n- Order study_flow for learning: introduce the idea, then place supporting definitions, formulas, warnings, or examples immediately after the concept they clarify.\n- Do NOT duplicate concept/formula/definition/note text inside study_flow. Only use type, index, and optional label.\n- If a block has no natural mixed order, still include study_flow with concepts first followed by formulas, definitions, and note.\n\nEXPERIMENTAL OUTPUT FORMAT EXTENSION:\n{"lecture_title":"string","guide_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"key_concept_labels":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string","study_flow":[{"type":"concept","index":0,"label":"Core idea"},{"type":"definition","index":0},{"type":"formula","index":0},{"type":"note"}]}]}`;
+    const insert = `\n\nEXPERIMENTAL STUDY FLOW MODE:\n- Keep the normal fields exactly as specified above. They remain the canonical source of content.\n- Additionally, each guide block MAY include a compact "study_flow" array that controls display order without duplicating content.\n- study_flow items must reference existing content by zero-based index instead of repeating text:\n  {"type":"concept","index":0,"label":"Core idea"}\n  {"type":"formula","index":0}\n  {"type":"definition","index":0}\n  {"type":"note"}\n- Valid type values: "concept", "formula", "definition", "note".\n- For every concept item, add a short label. Each study_flow concept label should match the corresponding key_concept_labels entry unless there is a strong reason to be more specific. Examples include "Overview", "Mechanism", "Tradeoff", "Scenario setup", "Miss count", "Steady state", "Pitfall". Keep labels under 24 characters.\n- Make every referenced key_concepts item work visually under its label: 2-3 sentences total. Sentence 1 = short specific takeaway and must end with a period. Sentence 2 = supporting detail. Optional sentence 3 only when needed. Never output a one-sentence key_concepts item. Split independent subpoints into separate concepts so Study Flow reads like a precise summary, not prose paragraphs. Keep only tightly connected condition/result pairs together.\n- Order study_flow for learning: introduce the idea, then place supporting definitions, formulas, warnings, or examples immediately after the concept they clarify.\n- Do NOT duplicate concept/formula/definition/note text inside study_flow. Only use type, index, and optional label.\n- If a block has no natural mixed order, still include study_flow with concepts first followed by formulas, definitions, and note.\n\nEXPERIMENTAL OUTPUT FORMAT EXTENSION:\n{"lecture_title":"string","guide_title":"string","total_duration_seconds":number,"guide":[{"start_time":number,"end_time":number,"title":"string","key_concepts":["string"],"key_concept_labels":["string"],"formulas":[{"label":"string","latex":"string"}],"definitions":[{"term":"string","definition":"string"}],"notes":"string","study_flow":[{"type":"concept","index":0,"label":"Core idea"},{"type":"definition","index":0},{"type":"formula","index":0},{"type":"note"}]}]}`;
 
     if (!base.includes(marker)) return `${base}${insert}`;
     return base.replace(marker, `${insert}${marker}`);
@@ -2806,6 +2810,19 @@ Now process the following transcript:`;
       .filter(Boolean);
   }
 
+  function sanitizeKeyConcepts(concepts, labels = []) {
+    if (!Array.isArray(concepts)) return [];
+    return concepts.map((concept, index) => {
+      if (concept && typeof concept === 'object' && !Array.isArray(concept)) {
+        const label = String(concept.label || labels[index] || '').trim().slice(0, 24);
+        const lead = String(concept.lead || concept.title || '').trim();
+        const body = String(concept.body || concept.detail || concept.text || '').trim();
+        if (lead || body) return { label, lead: lead || body, body };
+      }
+      return String(concept || '').trim();
+    }).filter(c => typeof c === 'string' ? !!c : !!(c.lead || c.body));
+  }
+
   function sanitizeGuide(g) {
     if (!Array.isArray(g.guide)) return g;
 
@@ -2815,7 +2832,6 @@ Now process the following transcript:`;
         start_time: toSeconds(b.start_time),
         end_time: toSeconds(b.end_time),
         title: b.title ?? 'Untitled Section',
-        key_concepts: Array.isArray(b.key_concepts) ? b.key_concepts : [],
         key_concept_labels: Array.isArray(b.key_concept_labels)
           ? b.key_concept_labels.map(v => String(v || '').trim().slice(0, 24))
           : [],
@@ -2823,6 +2839,7 @@ Now process the following transcript:`;
         definitions: Array.isArray(b.definitions) ? b.definitions : [],
         notes: typeof b.notes === 'string' ? b.notes : ''
       };
+      block.key_concepts = sanitizeKeyConcepts(b.key_concepts, block.key_concept_labels);
       block.study_flow = sanitizeStudyFlow({ ...b, ...block });
       return block;
     });
@@ -3021,6 +3038,7 @@ Now process the following transcript:`;
 
       if (inlineMath || displayMath) continue;
       if (!/[.!?]/.test(ch)) continue;
+      if (isAbbreviationDot(text, i)) continue;
 
       const lead = text.slice(0, i + 1).trim();
       const body = text.slice(i + 1).trim();
@@ -3029,7 +3047,26 @@ Now process the following transcript:`;
       }
     }
 
+    const words = text.split(/\s+/).filter(Boolean);
+    if (words.length > 12) {
+      const leadWordCount = Math.min(12, Math.max(4, Math.ceil(words.length * 0.28)));
+      return {
+        lead: words.slice(0, leadWordCount).join(' '),
+        body: words.slice(leadWordCount).join(' ')
+      };
+    }
+
     return { lead: text, body: '' };
+  }
+
+  function isAbbreviationDot(text, dotIndex) {
+    if (text[dotIndex] !== '.') return false;
+    const before = text.slice(Math.max(0, dotIndex - 12), dotIndex + 1).toLowerCase();
+    const after = text.slice(dotIndex + 1, dotIndex + 4);
+    if (/\b(z|b|ca|bzw|bspw|vgl|d\.h|u\.a|u\.s|u\.ä|e\.g|i\.e|etc|vs|dr|prof)\.$/.test(before)) return true;
+    if (/\b[a-z]\.$/.test(before) && /^\s*[a-zäöü]/i.test(after)) return true;
+    if (/\d\.$/.test(before) && /^\s*\d/.test(after)) return true;
+    return false;
   }
 
   if (typeof window !== 'undefined') {
@@ -3037,16 +3074,20 @@ Now process the following transcript:`;
   }
 
   function renderConceptItem(concept, label = '', tag = 'li') {
-    const cleanLabel = String(label || '').trim();
+    const structured = concept && typeof concept === 'object' && !Array.isArray(concept);
+    const cleanLabel = String(label || (structured ? concept.label : '') || '').trim();
     const showLabel = cleanLabel && cleanLabel.toLowerCase() !== 'concept';
-    const { lead, body } = splitConceptText(concept);
-    const hasBody = !!body;
-    return `<${tag} class="concept-card${hasBody ? '' : ' concept-card-single'}">
+    const split = structured
+      ? { lead: String(concept.lead || '').trim(), body: String(concept.body || '').trim() }
+      : splitConceptText(concept);
+    const lead = split.lead || split.body;
+    const body = split.lead ? split.body : '';
+    return `<${tag} class="concept-card${body ? '' : ' concept-card-single'}">
       ${showLabel ? `<span class="concept-kind">${guideInline(cleanLabel)}</span>` : ''}
       <span class="concept-text">
-        ${hasBody
+        ${body
           ? `<span class="concept-lead">${guideInline(lead)}</span><span class="concept-body">${guideInline(body)}</span>`
-          : `<span class="concept-body concept-body-only">${guideInline(lead)}</span>`}
+          : `<span class="concept-lead">${guideInline(lead)}</span>`}
       </span>
     </${tag}>`;
   }
@@ -5098,7 +5139,7 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   function renderMarkdownInline(text) {
-    let s = escHtml(String(text || ''));
+    let s = escHtml(wrapUndelimitedInlineMath(String(text || '')));
 
     // Stash spans that must not be touched by bold/italic substitution.
     // Uses null-byte delimiters (\x00) which never appear in normal text.
@@ -5110,8 +5151,8 @@ ${guideBlocksStr}${scriptContext}`;
 
     // 2. Inline math  $$...$$ then $...$
     //    After escHtml, $ is unchanged; protect math so * inside doesn't become <em>.
-    s = s.replace(/\$\$([^$][\s\S]*?)\$\$/g, (m) => protect(m));
-    s = s.replace(/\$([^$\n]+)\$/g, (m) => protect(m));
+    s = s.replace(/\$\$([^$][\s\S]*?)\$\$/g, (m) => protect(m.replace(/&#039;/g, "'")));
+    s = s.replace(/\$([^$\n]+)\$/g, (m) => protect(m.replace(/&#039;/g, "'")));
 
     // 3. Bold / italic — now safe, math is stashed
     s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -5126,6 +5167,26 @@ ${guideBlocksStr}${scriptContext}`;
     // 5. Restore stash
     s = s.replace(/\x00S(\d+)\x00/g, (_, idx) => stash[Number(idx)] || '');
     return s;
+  }
+
+  function wrapUndelimitedInlineMath(text) {
+    const src = String(text || '');
+    if (!src || src.includes('$')) return src;
+    const pieces = [];
+    const token = String.raw`(?:\\[a-zA-Z]+(?:\s*\([^)]*\))?|[A-Za-z](?:_\{?[^}\s,.;:!?]+\}?|\^\{[^}]+\}|\^[A-Za-z0-9()]+|''|')+|e(?:\^\{[^}]+\}|\^[A-Za-z0-9()]+)|O\([^)]+\))`;
+    const equation = new RegExp(String.raw`(?:^|([^A-Za-z\\]))((?:[A-Za-z](?:''|')?|${token}|\d+(?:\.\d+)?)(?:\s*[-+=]\s*(?:${token}|[A-Za-z](?:''|')?|\d+(?:\.\d+)?))+)(?=$|[^A-Za-z])`, 'g');
+    const markedToken = new RegExp(String.raw`(?:^|([^A-Za-z\\]))(${token})(?=$|[^A-Za-z])`, 'g');
+
+    let out = src.replace(equation, (match, prefix = '', expr) => {
+      if (!/[=^_\\]|''|'|O\(/.test(expr)) return match;
+      pieces.push(expr);
+      return `${prefix}\x00M${pieces.length - 1}\x00`;
+    });
+    out = out.replace(markedToken, (match, prefix = '', expr) => {
+      pieces.push(expr);
+      return `${prefix}\x00M${pieces.length - 1}\x00`;
+    });
+    return out.replace(/\x00M(\d+)\x00/g, (_, idx) => `$${pieces[Number(idx)] || ''}$`);
   }
 
   // ─── History Persistence ──────────────────────────────────────────────────

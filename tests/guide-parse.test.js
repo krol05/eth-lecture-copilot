@@ -98,4 +98,28 @@ describe('sanitizeGuide', () => {
 
     expect(guide.guide[0].key_concept_labels).toEqual(['Interface choice']);
   });
+
+  test('preserves structured key concepts', () => {
+    const guide = sanitizeGuide({
+      lecture_title: 'Lecture',
+      guide: [{
+        title: 'Traversal',
+        start_time: 0,
+        end_time: 10,
+        key_concepts: [{
+          label: 'Queue',
+          lead: 'BFS uses a queue.',
+          body: 'The queue preserves level order.'
+        }],
+        formulas: [],
+        definitions: []
+      }]
+    });
+
+    expect(guide.guide[0].key_concepts).toEqual([{
+      label: 'Queue',
+      lead: 'BFS uses a queue.',
+      body: 'The queue preserves level order.'
+    }]);
+  });
 });
