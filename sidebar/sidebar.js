@@ -2620,6 +2620,11 @@
     if (p === 'mistral') return 32768;
     if (p === 'fireworks') return 16384;
     if (p === 'cohere') return 4096;
+    // DeepSeek V4: reasoning + content share max_tokens — use full API ceiling
+    if (p === 'deepseek') {
+      if (/v4|reasoner/.test(m)) return 384000;
+      return 8192;
+    }
     if (p.startsWith('local_')) return 81920;
     return 8192;
   }
@@ -2630,6 +2635,11 @@
   }
 
   function guideMaxTokens(detail, count, provider, model) {
+    const p = String(provider || '').toLowerCase();
+    const m = String(model || '').toLowerCase();
+    if (p === 'deepseek' && /v4|reasoner/.test(m)) {
+      return providerMaxOutputTokens(provider, model);
+    }
     const score = (LEVEL_SCORES[detail] || 4) + (LEVEL_SCORES[count] || 4);
     const cap = providerMaxOutputTokens(provider, model);
     if (score <= 3) return Math.round(cap * 0.25);

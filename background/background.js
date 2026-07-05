@@ -132,9 +132,9 @@ function providerMaxOutputTokens(provider, model) {
 
   if (p === 'mistral') return 32768;
 
-  // DeepSeek V4 supports up to 384000 output tokens
+  // DeepSeek V4 supports up to 384000 output tokens (reasoning + content share the budget)
   if (p === 'deepseek') {
-    if (/v4/.test(m)) return 32768; // conservative safe limit; API supports 384000 but guide use rarely needs that
+    if (/v4|reasoner/.test(m)) return 384000;
     return 8192;
   }
 
@@ -425,8 +425,9 @@ async function callAnthropic(model, apiKey, messages, systemPrompt, opts = {}) {
 
 async function callGoogle(model, apiKey, messages, systemPrompt, opts = {}) {
   opts.onProgress?.('request_sent', 'google');
-  // Use stable v1 endpoint (v1beta is deprecated for production)
-  const url = `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`;
+  // v1beta required: systemInstruction, thinkingConfig, and responseMimeType JSON mode
+  // are not accepted on the /v1 generateContent schema (400 Unknown name).
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const contents = messages.map(m => {
     // Google docs: image parts must come before text parts for best results
@@ -559,7 +560,8 @@ async function callOAICompatStream(base, model, apiKey, messages, systemPrompt, 
     model,
     messages: [{ role: 'system', content: systemPrompt }, ...oaiMessages],
     stream: true,
-    ...(opts.maxTokens ? { [maxTokensKey]: opts.maxTokens } : {})
+    ...(opts.maxTokens ? { [maxTokensKey]: opts.maxTokens } : {}),
+    ...(opts.jsonMode ? { response_format: { type: 'json_object' } } : {})
   };
   if (!isOSeries) body.temperature = opts.temperature ?? 0.1;
 
@@ -659,8 +661,7 @@ async function callAnthropicStream(model, apiKey, messages, systemPrompt, opts =
 
 async function callGoogleStream(model, apiKey, messages, systemPrompt, opts = {}) {
   opts.onProgress?.('request_sent', 'google');
-  // Google uses streamGenerateContent endpoint
-  const url = `https://generativelanguage.googleapis.com/v1/models/${model}:streamGenerateContent?key=${apiKey}&alt=sse`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?key=${apiKey}&alt=sse`;
 
   const contents = messages.map(m => {
     const imgs = m.images?.length ? m.images
@@ -855,7 +856,7 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
         temperature: guideTemp,
         maxTokens: maxGuideTokens,
         timeoutMs: null,
-        jsonMode: !useStream,   // streaming: skip json_mode since we parse at the end
+        jsonMode: true,
         onProgress: progress,
         thinking: guideThinking,
         ...(useStream ? { onChunk: (delta) => emitStreamChunk(sender, requestId, delta) } : {})
