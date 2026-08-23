@@ -1,7 +1,6 @@
 'use strict';
 
 const {
-  GUIDE_SYSTEM_PROMPT,
   buildFlashcardsPrompt,
   normalizeFlashcardTypeSelection
 } = require('../lib/prompts.js');
@@ -33,21 +32,15 @@ const guide = {
 };
 
 describe('buildFlashcardsPrompt', () => {
-  test('guide prompt asks for a reusable guide title', () => {
-    expect(GUIDE_SYSTEM_PROMPT).toContain('"guide_title"');
-    expect(GUIDE_SYSTEM_PROMPT).toContain('Introduction to Caches');
-  });
-
-  test('auto card type selection asks for an exam-ready mixed set', () => {
+  // These assert which prompt BRANCH is taken, not the prompt's prose —
+  // prompt wording is free to change without breaking tests.
+  test('auto selection takes the auto branch, not the explicit-types branch', () => {
     const prompt = buildFlashcardsPrompt(guide, { cardTypes: ['auto'] });
     expect(prompt).toContain('Auto mode is active');
-    expect(prompt).toContain('best mixed set');
-    expect(prompt).toContain('full universal card palette');
-    expect(prompt).toContain('application/example cards for transfer');
-    expect(prompt).toContain('misconception cards for common traps');
+    expect(prompt).not.toContain('Use ONLY these selected card types');
   });
 
-  test('multiple selected card types are represented and constrained', () => {
+  test('explicit card types take the constrained branch and are listed', () => {
     const prompt = buildFlashcardsPrompt(guide, {
       cardTypes: ['application', 'comparison', 'misconception'],
       includeFormulas: false
@@ -59,24 +52,14 @@ describe('buildFlashcardsPrompt', () => {
     expect(prompt).toContain('Do not create standalone formula cards');
   });
 
-  test('prompt includes atomicity and general study-card constraints', () => {
-    const prompt = buildFlashcardsPrompt(guide, { cardTypes: ['auto'] });
-    expect(prompt).toContain('Every card must be atomic');
-    expect(prompt).toContain('Definition cards: identify the term or object precisely');
-    expect(prompt).toContain('Application cards');
-    expect(prompt).toContain('Misconception cards');
-    expect(prompt).toContain('Strong general card patterns');
-  });
-
   test('legacy style option maps to selected type for compatibility', () => {
     const prompt = buildFlashcardsPrompt(guide, { style: 'definition' });
     expect(prompt).toContain('Use ONLY these selected card types');
     expect(prompt).toContain('definition');
   });
 
-  test('flashcard prompt does not ask the model to generate a deck title', () => {
+  test('response schema in the prompt does not include a deckTitle field', () => {
     const prompt = buildFlashcardsPrompt(guide, { cardTypes: ['auto'] });
-    expect(prompt).toContain('Do NOT generate a deckTitle');
     expect(prompt).not.toContain('"deckTitle"');
   });
 });

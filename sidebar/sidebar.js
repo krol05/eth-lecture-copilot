@@ -1818,9 +1818,6 @@
     }
   }
 
-  // runQaStreamKatex kept as no-op shim so any stale references don't crash
-  function runQaStreamKatex() {}
-
   /** Apply KaTeX to an element — shared helper used by streaming, flashcards, etc. */
   function applyKatex(el) {
     if (!el || typeof renderMathInElement !== 'function') return;
@@ -3025,63 +3022,7 @@ Now process the following transcript:`;
     return 0;
   }
 
-  function splitConceptText(concept) {
-    const text = String(concept || '').trim();
-    if (!text) return { lead: '', body: '' };
-
-    let inlineMath = false;
-    let displayMath = false;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      const next = text[i + 1] || '';
-      const prev = text[i - 1] || '';
-
-      if (ch === '$' && prev !== '\\') {
-        if (next === '$') {
-          displayMath = !displayMath;
-          i++;
-          continue;
-        }
-        if (!displayMath) inlineMath = !inlineMath;
-        continue;
-      }
-
-      if (inlineMath || displayMath) continue;
-      if (!/[.!?]/.test(ch)) continue;
-      if (isAbbreviationDot(text, i)) continue;
-
-      const lead = text.slice(0, i + 1).trim();
-      const body = text.slice(i + 1).trim();
-      if (lead.length >= 12 && lead.length <= 180 && body.length >= 8) {
-        return { lead, body };
-      }
-    }
-
-    const words = text.split(/\s+/).filter(Boolean);
-    if (words.length > 12) {
-      const leadWordCount = Math.min(12, Math.max(4, Math.ceil(words.length * 0.28)));
-      return {
-        lead: words.slice(0, leadWordCount).join(' '),
-        body: words.slice(leadWordCount).join(' ')
-      };
-    }
-
-    return { lead: text, body: '' };
-  }
-
-  function isAbbreviationDot(text, dotIndex) {
-    if (text[dotIndex] !== '.') return false;
-    const before = text.slice(Math.max(0, dotIndex - 12), dotIndex + 1).toLowerCase();
-    const after = text.slice(dotIndex + 1, dotIndex + 4);
-    if (/\b(z|b|ca|bzw|bspw|vgl|d\.h|u\.a|u\.s|u\.ä|e\.g|i\.e|etc|vs|dr|prof)\.$/.test(before)) return true;
-    if (/\b[a-z]\.$/.test(before) && /^\s*[a-zäöü]/i.test(after)) return true;
-    if (/\d\.$/.test(before) && /^\s*\d/.test(after)) return true;
-    return false;
-  }
-
-  if (typeof window !== 'undefined') {
-    window.__ethCopilotSplitConceptText = splitConceptText;
-  }
+  // splitConceptText / isAbbreviationDot live in lib/concept-split.js
 
   function renderConceptItem(concept, label = '', tag = 'li') {
     const structured = concept && typeof concept === 'object' && !Array.isArray(concept);
@@ -5148,56 +5089,7 @@ ${guideBlocksStr}${scriptContext}`;
     return renderMarkdownInline(line);
   }
 
-  function renderMarkdownInline(text) {
-    let s = escHtml(wrapUndelimitedInlineMath(String(text || '')));
-
-    // Stash spans that must not be touched by bold/italic substitution.
-    // Uses null-byte delimiters (\x00) which never appear in normal text.
-    const stash = [];
-    const protect = (raw) => { const i = stash.push(raw) - 1; return `\x00S${i}\x00`; };
-
-    // 1. Inline code  (highest priority)
-    s = s.replace(/`([^`]+)`/g, (_, inner) => protect(`<code>${inner}</code>`));
-
-    // 2. Inline math  $$...$$ then $...$
-    //    After escHtml, $ is unchanged; protect math so * inside doesn't become <em>.
-    s = s.replace(/\$\$([^$][\s\S]*?)\$\$/g, (m) => protect(m.replace(/&#039;/g, "'")));
-    s = s.replace(/\$([^$\n]+)\$/g, (m) => protect(m.replace(/&#039;/g, "'")));
-
-    // 3. Bold / italic — now safe, math is stashed
-    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-    // 4. Timestamps
-    s = s.replace(/\[(\d{2}):([0-5]\d):([0-5]\d)\]/g, (_, hh, mm, ss) => {
-      const seconds = Number(hh) * 3600 + Number(mm) * 60 + Number(ss);
-      return `<button type="button" class="qa-timestamp-link" data-seconds="${seconds}">[${hh}:${mm}:${ss}]</button>`;
-    });
-
-    // 5. Restore stash
-    s = s.replace(/\x00S(\d+)\x00/g, (_, idx) => stash[Number(idx)] || '');
-    return s;
-  }
-
-  function wrapUndelimitedInlineMath(text) {
-    const src = String(text || '');
-    if (!src || src.includes('$')) return src;
-    const pieces = [];
-    const token = String.raw`(?:\\[a-zA-Z]+(?:\s*\([^)]*\))?|[A-Za-z](?:_\{?[^}\s,.;:!?]+\}?|\^\{[^}]+\}|\^[A-Za-z0-9()]+|''|')+|e(?:\^\{[^}]+\}|\^[A-Za-z0-9()]+)|O\([^)]+\))`;
-    const equation = new RegExp(String.raw`(?:^|([^A-Za-z\\]))((?:[A-Za-z](?:''|')?|${token}|\d+(?:\.\d+)?)(?:\s*[-+=]\s*(?:${token}|[A-Za-z](?:''|')?|\d+(?:\.\d+)?))+)(?=$|[^A-Za-z])`, 'g');
-    const markedToken = new RegExp(String.raw`(?:^|([^A-Za-z\\]))(${token})(?=$|[^A-Za-z])`, 'g');
-
-    let out = src.replace(equation, (match, prefix = '', expr) => {
-      if (!/[=^_\\]|''|'|O\(/.test(expr)) return match;
-      pieces.push(expr);
-      return `${prefix}\x00M${pieces.length - 1}\x00`;
-    });
-    out = out.replace(markedToken, (match, prefix = '', expr) => {
-      pieces.push(expr);
-      return `${prefix}\x00M${pieces.length - 1}\x00`;
-    });
-    return out.replace(/\x00M(\d+)\x00/g, (_, idx) => `$${pieces[Number(idx)] || ''}$`);
-  }
+  // renderMarkdownInline / wrapUndelimitedInlineMath live in lib/render-inline.js
 
   // ─── History Persistence ──────────────────────────────────────────────────
 
@@ -5971,9 +5863,7 @@ ${guideBlocksStr}${scriptContext}`;
 
   // ─── Utilities ────────────────────────────────────────────────────────────
 
-  function escHtml(str) {
-    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
+  // escHtml lives in lib/render-inline.js
 
   function escAttr(str) {
     return String(str || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -7292,16 +7182,6 @@ ${guideBlocksStr}${scriptContext}`;
     }
   }
 
-  function openFlashcardsModal() {
-    if (!guide?.guide?.length) { setStatus('warning', 'Generate a guide first'); return; }
-    showFlashcardsPanel('settings');
-    openToolSection('tool-flashcards');
-  }
-
-  function closeFlashcardsModal() {
-    // Results persist — no-op; user can collapse the section manually
-  }
-
   function showFlashcardsPanel(panel) {
     const s = document.getElementById('flashcards-settings');
     const r = document.getElementById('flashcards-results');
@@ -7692,19 +7572,6 @@ ${guideBlocksStr}${scriptContext}`;
 
   // ─── Quiz feature ─────────────────────────────────────────────────────────
 
-  function openQuizModal() {
-    if (!guide?.guide?.length) { setStatus('warning', 'Generate a guide first'); return; }
-    showQuizPanel('settings');
-    openToolSection('tool-quiz');
-  }
-
-  function closeQuizModal() {
-    quizState = null;
-    quizData = [];
-    showQuizPanel('settings');
-    persistToolOutputs();
-  }
-
   function showQuizPanel(panel) {
     const qs = document.getElementById('quiz-settings');
     const qa = document.getElementById('quiz-active');
@@ -7964,17 +7831,6 @@ ${guideBlocksStr}${scriptContext}`;
 
   // ─── Exam questions feature (Part 3A) ─────────────────────────────────────
 
-  function openExamModal() {
-    if (!guide?.guide?.length) { setStatus('warning', 'Generate a guide first'); return; }
-    showExamPanel('settings');
-    populateExamBlockCheckboxes();
-    openToolSection('tool-exam');
-  }
-
-  function closeExamModal() {
-    // No-op — results persist in Tools tab
-  }
-
   function showExamPanel(panel) {
     const es = document.getElementById('exam-settings');
     const er = document.getElementById('exam-results');
@@ -8221,17 +8077,6 @@ ${guideBlocksStr}${scriptContext}`;
     // Load full history, render grouped, then auto-check only entries in courseEntries
     const targetUrls = new Set((courseEntries || []).map(e => normalizeLectureUrl(e.lectureUrl)));
     _populateCrossExamGrouped({ preselectUrls: targetUrls });
-  }
-
-  /** Open the cross-lecture section and populate lecture list from history */
-  function openCrossExamModal() {
-    showCrossExamPanel('settings');
-    _populateCrossExamGrouped({});
-    openToolSection('tool-cross-exam');
-  }
-
-  function closeCrossExamModal() {
-    // No-op — results persist in Tools tab
   }
 
   function showCrossExamPanel(panel) {
