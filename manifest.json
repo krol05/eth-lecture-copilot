@@ -80,6 +80,8 @@
         "lib/ui-settings.js",
         "lib/debug.js",
         "lib/fuzzy-retrieval.js",
+        "lib/concept-split.js",
+        "lib/render-inline.js",
         "lib/flashcards.js",
         "lib/prompts.js",
         "lib/providers-config.js",

@@ -1,30 +1,8 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-const vm = require('vm');
-
-function loadRenderMarkdownInline() {
-  const src = fs.readFileSync(path.join(__dirname, '../sidebar/sidebar.js'), 'utf8');
-  const start = src.indexOf('  function renderMarkdownInline');
-  const end = src.indexOf('  function persistChat', start);
-  const snippet = src.slice(start, end);
-  const context = {
-    escHtml: (str) => String(str || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;')
-  };
-  vm.createContext(context);
-  vm.runInContext(`${snippet}\nthis.renderMarkdownInline = renderMarkdownInline;`, context);
-  return context.renderMarkdownInline;
-}
+const { renderMarkdownInline, escHtml } = require('../lib/render-inline.js');
 
 describe('renderMarkdownInline', () => {
-  const renderMarkdownInline = loadRenderMarkdownInline();
-
   test('wraps obvious undelimited exponential math', () => {
     expect(renderMarkdownInline('Euler-Ansatz y = e^{\\lambda t}.'))
       .toContain('$y = e^{\\lambda t}$');
@@ -53,5 +31,16 @@ describe('renderMarkdownInline', () => {
   test('wraps compact raw powers', () => {
     expect(renderMarkdownInline('Der Ansatz muss mit t^m multipliziert werden.'))
       .toContain('$t^m$');
+  });
+});
+
+describe('escHtml', () => {
+  test('escapes HTML-sensitive characters', () => {
+    expect(escHtml('<b a="x">&</b>')).toBe('&lt;b a=&quot;x&quot;&gt;&amp;&lt;/b&gt;');
+  });
+
+  test('stringifies null and undefined to empty', () => {
+    expect(escHtml(null)).toBe('');
+    expect(escHtml(undefined)).toBe('');
   });
 });

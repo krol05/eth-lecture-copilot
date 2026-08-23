@@ -1,23 +1,8 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-const vm = require('vm');
-
-function loadSplitConceptText() {
-  const src = fs.readFileSync(path.join(__dirname, '../sidebar/sidebar.js'), 'utf8');
-  const start = src.indexOf('  function splitConceptText');
-  const end = src.indexOf('  function renderConceptItem', start);
-  const snippet = src.slice(start, end).replace('  if (typeof window !== \'undefined\') {\n    window.__ethCopilotSplitConceptText = splitConceptText;\n  }\n\n', '');
-  const context = {};
-  vm.createContext(context);
-  vm.runInContext(`${snippet}\nthis.splitConceptText = splitConceptText;`, context);
-  return context.splitConceptText;
-}
+const { splitConceptText } = require('../lib/concept-split.js');
 
 describe('splitConceptText', () => {
-  const splitConceptText = loadSplitConceptText();
-
   test('splits a short takeaway sentence from supporting detail', () => {
     expect(splitConceptText('Radical hardware designs can become commercial products. Wafer-scale chips show that ideas once considered impractical can succeed.')).toEqual({
       lead: 'Radical hardware designs can become commercial products.',
