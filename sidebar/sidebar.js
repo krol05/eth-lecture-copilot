@@ -1818,9 +1818,6 @@
     }
   }
 
-  // runQaStreamKatex kept as no-op shim so any stale references don't crash
-  function runQaStreamKatex() {}
-
   /** Apply KaTeX to an element — shared helper used by streaming, flashcards, etc. */
   function applyKatex(el) {
     if (!el || typeof renderMathInElement !== 'function') return;
@@ -7185,16 +7182,6 @@ ${guideBlocksStr}${scriptContext}`;
     }
   }
 
-  function openFlashcardsModal() {
-    if (!guide?.guide?.length) { setStatus('warning', 'Generate a guide first'); return; }
-    showFlashcardsPanel('settings');
-    openToolSection('tool-flashcards');
-  }
-
-  function closeFlashcardsModal() {
-    // Results persist — no-op; user can collapse the section manually
-  }
-
   function showFlashcardsPanel(panel) {
     const s = document.getElementById('flashcards-settings');
     const r = document.getElementById('flashcards-results');
@@ -7585,19 +7572,6 @@ ${guideBlocksStr}${scriptContext}`;
 
   // ─── Quiz feature ─────────────────────────────────────────────────────────
 
-  function openQuizModal() {
-    if (!guide?.guide?.length) { setStatus('warning', 'Generate a guide first'); return; }
-    showQuizPanel('settings');
-    openToolSection('tool-quiz');
-  }
-
-  function closeQuizModal() {
-    quizState = null;
-    quizData = [];
-    showQuizPanel('settings');
-    persistToolOutputs();
-  }
-
   function showQuizPanel(panel) {
     const qs = document.getElementById('quiz-settings');
     const qa = document.getElementById('quiz-active');
@@ -7857,17 +7831,6 @@ ${guideBlocksStr}${scriptContext}`;
 
   // ─── Exam questions feature (Part 3A) ─────────────────────────────────────
 
-  function openExamModal() {
-    if (!guide?.guide?.length) { setStatus('warning', 'Generate a guide first'); return; }
-    showExamPanel('settings');
-    populateExamBlockCheckboxes();
-    openToolSection('tool-exam');
-  }
-
-  function closeExamModal() {
-    // No-op — results persist in Tools tab
-  }
-
   function showExamPanel(panel) {
     const es = document.getElementById('exam-settings');
     const er = document.getElementById('exam-results');
@@ -8114,17 +8077,6 @@ ${guideBlocksStr}${scriptContext}`;
     // Load full history, render grouped, then auto-check only entries in courseEntries
     const targetUrls = new Set((courseEntries || []).map(e => normalizeLectureUrl(e.lectureUrl)));
     _populateCrossExamGrouped({ preselectUrls: targetUrls });
-  }
-
-  /** Open the cross-lecture section and populate lecture list from history */
-  function openCrossExamModal() {
-    showCrossExamPanel('settings');
-    _populateCrossExamGrouped({});
-    openToolSection('tool-cross-exam');
-  }
-
-  function closeCrossExamModal() {
-    // No-op — results persist in Tools tab
   }
 
   function showCrossExamPanel(panel) {
