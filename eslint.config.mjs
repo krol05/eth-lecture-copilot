@@ -105,6 +105,8 @@ export default [
         chrome: 'readonly',
         importScripts: 'readonly',
         CopilotDebug: 'readonly',
+        Catalog: 'readonly',
+        Adapters: 'readonly',
         parseGuideResponse: 'readonly',
         findMatchingBrace: 'readonly',
         fixEscapes: 'readonly',
