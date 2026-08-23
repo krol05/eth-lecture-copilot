@@ -8315,9 +8315,11 @@ ${guideBlocksStr}${scriptContext}`;
 
   function hasUsableSettings() {
     if (!settings?.provider) return false;
-    if (String(settings.provider).startsWith('local_')) {
-      return !!getLocalBase();
-    }
+    const p = String(settings.provider);
+    if (p.startsWith('local_')) return !!getLocalBase();
+    // Custom providers carry their base URL (and possibly no auth) in their
+    // own config — a missing key surfaces as a detailed 401 in the error panel.
+    if (p.startsWith('custom_')) return true;
     return !!settings?.apiKey;
   }
 

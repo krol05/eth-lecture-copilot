@@ -119,6 +119,76 @@
         </div>
       </section>
 
+      <!-- AI Providers (M3): user-editable endpoints, models, custom providers -->
+      <section class="section">
+        <h2>AI Providers</h2>
+        <div class="warn warn--yellow">
+          Here you can repair or extend any provider yourself — change its server
+          address, add new model names, or create a completely new provider —
+          without waiting for an extension update. Leave a field empty to keep
+          the built-in value.
+        </div>
+        <div class="prov-row">
+          <label for="prov-select">Provider</label>
+          <select id="prov-select"></select>
+        </div>
+        <div id="prov-form">
+          <div class="prov-row" id="prov-label-row" style="display:none">
+            <label for="prov-label">Name</label>
+            <input id="prov-label" type="text" placeholder="e.g. Uni Cluster">
+          </div>
+          <div class="prov-row" id="prov-adapter-row" style="display:none">
+            <label for="prov-adapter">API format</label>
+            <select id="prov-adapter">
+              <option value="oai">OpenAI-compatible (most APIs)</option>
+              <option value="anthropic">Anthropic format</option>
+              <option value="google">Google Gemini format</option>
+            </select>
+          </div>
+          <div class="prov-row">
+            <label for="prov-base">Base URL <span class="prompt-hint" id="prov-base-hint"></span></label>
+            <input id="prov-base" type="text" placeholder="https://api.example.com/v1">
+          </div>
+          <div class="prov-row">
+            <label for="prov-headers">Extra headers <span class="prompt-hint">— JSON object, sent on every request</span></label>
+            <textarea id="prov-headers" class="prompt-textarea" rows="2" placeholder='{"X-My-Header": "value"}'></textarea>
+          </div>
+          <div class="prov-row">
+            <label for="prov-models">Extra models <span class="prompt-hint">— one per line: model-id | Display name</span></label>
+            <textarea id="prov-models" class="prompt-textarea" rows="3" placeholder="gpt-5.7-preview | GPT-5.7 (preview)"></textarea>
+          </div>
+          <div class="prov-row">
+            <label for="prov-default-model">Default model</label>
+            <input id="prov-default-model" type="text" placeholder="leave empty for built-in default">
+          </div>
+          <label class="prov-check" id="prov-hidden-row"><input id="prov-hidden" type="checkbox"> Hide this provider from the list</label>
+          <label class="prov-check" id="prov-noauth-row" style="display:none"><input id="prov-noauth" type="checkbox"> No API key needed</label>
+          <details id="prov-spec-details">
+            <summary>Advanced: custom API adapter (JSON spec)</summary>
+            <p class="prompt-hint">
+              For APIs none of the built-in formats can talk to. Describe the
+              request/response shape as JSON: endpoint, auth, body template
+              (placeholders $MODEL, $MESSAGES, $SYSTEM, $STREAM, $TEMPERATURE,
+              $MAX_TOKENS), and where the answer text lives (textPath /
+              ssePath). When a valid spec is saved it replaces the built-in
+              format for this provider.
+            </p>
+            <textarea id="prov-spec" class="prompt-textarea" rows="10" spellcheck="false"></textarea>
+            <div class="actions">
+              <button id="prov-spec-validate" type="button">Validate spec</button>
+              <button id="prov-spec-clear" type="button">Remove spec</button>
+            </div>
+            <p id="prov-spec-status" class="status"></p>
+          </details>
+          <div class="actions">
+            <button id="prov-reset" type="button">Reset to built-in defaults</button>
+            <button id="prov-delete" type="button" style="display:none">Delete this provider</button>
+            <button id="prov-save" type="button" class="primary">Save provider</button>
+          </div>
+          <p id="prov-status" class="status"></p>
+        </div>
+      </section>
+
       <!-- Custom Prompts -->
       <section class="section section--last">
         <h2>Custom Prompts</h2>
@@ -165,6 +235,10 @@
   </main>
 
   <script src="../lib/ui-settings.js"></script>
+  <script src="../lib/providers/catalog.js"></script>
+  <script src="../lib/providers/overrides.js"></script>
+  <script src="../lib/providers/adapter-spec.js"></script>
   <script src="ui-settings.js"></script>
+  <script src="providers-settings.js"></script>
 </body>
 </html>

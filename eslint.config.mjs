@@ -54,9 +54,14 @@ const libGlobals = {
   formatError: 'readonly',
   // sidebar/error-panel.js
   ErrorPanel: 'readonly',
-  // lib/providers/catalog.js + adapters.js
+  // lib/providers/catalog.js + adapters.js + overrides.js + adapter-spec.js
   Catalog: 'readonly',
   Adapters: 'readonly',
+  resolveProvider: 'readonly',
+  listResolvedProviders: 'readonly',
+  normalizeOAIBase: 'readonly',
+  validateSpec: 'readonly',
+  adapterFromSpec: 'readonly',
   // sidebar/print-common.js
   runPrintPage: 'readonly',
   // vendored KaTeX / pdf.js
@@ -111,6 +116,9 @@ export default [
         CopilotDebug: 'readonly',
         Catalog: 'readonly',
         Adapters: 'readonly',
+        resolveProvider: 'readonly',
+        validateSpec: 'readonly',
+        adapterFromSpec: 'readonly',
         parseGuideResponse: 'readonly',
         findMatchingBrace: 'readonly',
         fixEscapes: 'readonly',
