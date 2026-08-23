@@ -48,9 +48,6 @@ const libGlobals = {
   buildExamQuestionsPrompt: 'readonly',
   buildCrossLecturePredictionPrompt: 'readonly',
   buildToolAskPrompt: 'readonly',
-  // lib/providers-config.js
-  PROVIDERS_CONFIG: 'readonly',
-  PROVIDER_MAP: 'readonly',
   // sidebar/scripts.js
   ScriptManager: 'readonly',
   // lib/error-format.js

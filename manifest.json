@@ -88,7 +88,6 @@
         "lib/error-format.js",
         "sidebar/error-panel.js",
         "sidebar/error-panel.css",
-        "lib/providers-config.js",
         "lib/katex/katex.min.js",
         "lib/katex/katex.min.css",
         "lib/katex/auto-render.min.js",
