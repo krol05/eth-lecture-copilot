@@ -223,7 +223,7 @@
     } catch (err) {
       // Surface OOM or CSP-block errors clearly rather than swallowing them
       embedPipeline = null;
-      throw new Error(`Embedding model failed to load: ${err?.message || err}. Try reloading the page.`);
+      throw new Error(`Embedding model failed to load: ${err?.message || err}. Try reloading the page.`, { cause: err });
     } finally {
       modelLoadPromise = null;
     }
