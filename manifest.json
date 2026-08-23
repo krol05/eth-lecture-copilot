@@ -72,6 +72,7 @@
         "sidebar/sidebar.css",
         "sidebar/sidebar.js",
         "sidebar/scripts.js",
+        "sidebar/print-common.js",
         "sidebar/print-guide.html",
         "sidebar/print-guide.css",
         "sidebar/print-guide.js",
