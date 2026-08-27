@@ -363,3 +363,44 @@ describe('guide generation', () => {
     expect(JSON.parse(sw.fetchCalls[1][1].body).max_tokens).toBe(12345);
   });
 });
+
+describe('study-tool generations (flashcards, quiz, exam)', () => {
+  const TOOL = {
+    type: 'FLASHCARDS_REQUEST', provider: 'deepseek', model: 'deepseek-v4-pro', apiKey: 'sk-x',
+    guideJson: { guide: [{ title: 'Block' }] }, systemPrompt: 'make cards', _copilotRequestId: 'req_t'
+  };
+
+  test('tool requests stream, so a slow reasoning model shows progress', async () => {
+    const sw = loadServiceWorker({
+      fetchImpl: () => Promise.resolve(sseResponse([
+        'data: {"choices":[{"delta":{"content":"{\\"cards\\":"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"[]}"}}]}\n\n',
+        'data: [DONE]\n\n'
+      ]))
+    });
+    const res = await sw.send(TOOL);
+    expect(res.success).toBe(true);
+    expect(res.data).toEqual({ cards: [] });
+    expect(JSON.parse(sw.fetchCalls[0][1].body).stream).toBe(true);
+  });
+
+  test('DeepSeek thinking is switched off explicitly, not left to the model', async () => {
+    const sw = loadServiceWorker({ fetchImpl: () => Promise.resolve(sseResponse(['data: {"choices":[{"delta":{"content":"{}"}}]}\n\n', 'data: [DONE]\n\n'])) });
+    await sw.send(TOOL);
+    expect(JSON.parse(sw.fetchCalls[0][1].body).thinking).toEqual({ type: 'disabled' });
+  });
+
+  test('a caller can still ask for a non-streamed tool response', async () => {
+    const sw = loadServiceWorker({ fetchImpl: () => Promise.resolve(jsonResponse({ choices: [{ message: { content: '{"cards":[]}' } }] })) });
+    const res = await sw.send({ ...TOOL, useStream: false });
+    expect(res.success).toBe(true);
+    expect(JSON.parse(sw.fetchCalls[0][1].body).stream).toBeUndefined();
+  });
+
+  test('unparseable tool output reports what came back', async () => {
+    const sw = loadServiceWorker({ fetchImpl: () => Promise.resolve(sseResponse(['data: {"choices":[{"delta":{"content":"sorry, no JSON here"}}]}\n\n', 'data: [DONE]\n\n'])) });
+    const res = await sw.send(TOOL);
+    expect(res.success).toBe(false);
+    expect(res.errorDetail.message).toContain('sorry, no JSON here');
+  });
+});

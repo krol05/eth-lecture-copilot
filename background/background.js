@@ -410,13 +410,20 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
     case 'EXAM_QUESTIONS_REQUEST':
     case 'CROSS_LECTURE_EXAM_REQUEST': {
       const temperature = type === 'FLASHCARDS_REQUEST' || type === 'QUIZ_REQUEST' ? 0.45 : 0.5;
+      progress('queued', 'Request received');
       const raw = await run({
         system: msg.systemPrompt,
         messages: [{ role: 'user', content: JSON.stringify(msg.guideJson ?? msg.guidesJson) }],
         jsonMode: true,
         temperature,
-        timeoutMs: type === 'CROSS_LECTURE_EXAM_REQUEST' ? 180000 : 120000
+        // Streamed like the guide: these can take minutes on a reasoning model,
+        // and a silent non-streaming wait is indistinguishable from a hang.
+        // The full text is still returned at the end, so callers are unchanged.
+        stream: msg.useStream !== false,
+        thinking: msg.toolThinking || 'none',
+        timeoutMs: type === 'CROSS_LECTURE_EXAM_REQUEST' ? 600000 : 300000
       });
+      progress('provider_finished', 'Response body received');
       return safeParseJson(raw, { type, requestId });
     }
 
