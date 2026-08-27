@@ -1457,6 +1457,16 @@
     return 'req_' + (++requestIdCounter);
   }
 
+  // Bug A fix: tell the background to abort the actual fetch — until now
+  // "Stop" only rejected the local promise while the request ran to completion.
+  function sendAbortToBackground(targetRequestId) {
+    postToContent({
+      type: 'API_REQUEST',
+      requestId: makeRequestId(),
+      payload: { type: 'ABORT_REQUEST', requestId: targetRequestId }
+    });
+  }
+
   function apiRequest(payload) {
     const id = makeRequestId();
     window.CopilotDebug?.log('sidebar.apiRequest.create', {
@@ -1495,6 +1505,7 @@
               delete pendingRequests[id];
               if (activeGuideRequestId === id) activeGuideRequestId = null;
               cleanup();
+              sendAbortToBackground(id); // don't leave the old fetch running
               reject(new Error('Retry requested by user.'));
             },
             onKeepGoing: () => {
@@ -1509,6 +1520,7 @@
           delete pendingRequests[id];
           if (activeGuideRequestId === id) activeGuideRequestId = null;
           cleanup();
+          sendAbortToBackground(id);
           reject(new Error('Request timed out. Please try again or switch model/provider.'));
         }, 120000);
       }
@@ -1523,6 +1535,11 @@
         });
         cleanup();
         if (isGuideRequest && activeGuideRequestId === id) activeGuideRequestId = null;
+        // Central error-panel wiring: every failed AI request pops the full
+        // structured error (user-initiated aborts excluded — not errors).
+        if (data && data.success === false && data.errorDetail && data.errorDetail.code !== 'aborted') {
+          try { ErrorPanel.report(data.errorDetail); } catch { /* panel is non-critical */ }
+        }
         originalResolve(data);
       };
       postToContent({ type: 'API_REQUEST', requestId: id, payload });
@@ -1531,6 +1548,7 @@
     promise._requestId = id;
     promise.abort = () => {
       window.CopilotDebug?.warn('sidebar.apiRequest.abort', { requestId: id, payloadType: payload?.type });
+      sendAbortToBackground(id);
       if (_rejectFn) {
         delete pendingRequests[id];
         if (activeGuideRequestId === id) activeGuideRequestId = null;
@@ -2407,17 +2425,14 @@
     const guideThinking = useFallback ? 'none' : (genThinkingSel?.value || 'none');
     const guideDetail = genDetailSel?.value || 'very_high';
     const guideCount = genCountSel?.value || 'very_high';
-    const maxTokens = selectedGuideMaxTokens(guideDetail, guideCount, settings.provider, settings.model);
+    const maxTokens = selectedGuideMaxTokens(guideCount);
 
     const guideLang = getSelectedLanguage();
     const guideMode = !useFallback && genModeSel?.value === 'study_flow' ? 'study_flow' : 'reliable';
     const systemPrompt = guideMode === 'study_flow'
       ? buildStudyFlowGuidePrompt(guideDetail, guideCount, guideLang)
       : buildGuidePrompt(guideDetail, guideCount, guideLang);
-    // All providers support SSE streaming:
-    //   - OAI-compat / local (LiteLLM, Ollama, etc.) → callOAICompatStream
-    //   - Anthropic → callAnthropicStream
-    //   - Google → callGoogleStream
+    // All providers support SSE streaming via the shared adapter layer.
     const supportsStream = !!settings.provider;
 
     streamBuffer = '';
@@ -2598,59 +2613,12 @@
     very_high: { label: 'Very High', range: '30–50+', rule: 'Every subtopic, worked example, proof step, or clear topic shift gets its own block. Do NOT merge distant parts of the transcript.' }
   };
 
-  const LEVEL_SCORES = { low: 1, medium: 2, high: 3, very_high: 4, custom: 4 };
-
-  function providerMaxOutputTokens(provider, model) {
-    const p = String(provider || '').toLowerCase();
-    const m = String(model || '').toLowerCase();
-
-    if (p === 'google' || /(^|\/)gemini-/.test(m)) {
-      if (/gemini-3/.test(m)) return 65536;
-      return 65536;
-    }
-    if (p === 'anthropic' || /(^|\/)claude-/.test(m)) return 64000;
-    if (/^o[0-9]/.test(m)) return 100000;
-    if (/gpt-5|gpt-4\.1/.test(m)) return 32768;
-    if (/gpt-4o|gpt-oss/.test(m)) return 16384;
-    if (p === 'openai') return 16384;
-    if (p === 'xai') return 32768;
-    if (p === 'mistral') return 32768;
-    if (p === 'fireworks') return 16384;
-    if (p === 'cohere') return 4096;
-    // DeepSeek V4: reasoning + content share max_tokens — use full API ceiling
-    if (p === 'deepseek') {
-      if (/v4|reasoner/.test(m)) return 384000;
-      return 8192;
-    }
-    if (p.startsWith('local_')) return 81920;
-    return 8192;
-  }
-
-  function clampTokens(n, provider, model) {
-    const cap = providerMaxOutputTokens(provider, model);
-    return Math.max(1, Math.min(n, cap));
-  }
-
-  function guideMaxTokens(detail, count, provider, model) {
-    const p = String(provider || '').toLowerCase();
-    const m = String(model || '').toLowerCase();
-    if (p === 'deepseek' && /v4|reasoner/.test(m)) {
-      return providerMaxOutputTokens(provider, model);
-    }
-    const score = (LEVEL_SCORES[detail] || 4) + (LEVEL_SCORES[count] || 4);
-    const cap = providerMaxOutputTokens(provider, model);
-    if (score <= 3) return Math.round(cap * 0.25);
-    if (score <= 5) return Math.round(cap * 0.5);
-    if (score <= 7) return Math.round(cap * 0.75);
-    return cap;
-  }
-
-  function selectedGuideMaxTokens(detail, count, provider, model) {
-    if (count === 'custom') {
-      const n = parseInt(genCustomTokenInput?.value, 10);
-      if (Number.isFinite(n) && n > 0) return clampTokens(n, provider, model);
-    }
-    return guideMaxTokens(detail, count, provider, model);
+  // No client-side max-token tables: providers enforce their own limits.
+  // Only an explicit "Custom" value from the user is ever sent.
+  function selectedGuideMaxTokens(count) {
+    if (count !== 'custom') return undefined;
+    const n = parseInt(genCustomTokenInput?.value, 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
   }
 
   function updateCustomTokenVisibility() {
@@ -2660,16 +2628,9 @@
 
   function updateTokenHint() {
     if (!genTokenHint) return;
-    const detail = genDetailSel?.value || 'very_high';
-    const count = genCountSel?.value || 'very_high';
-    const providerCap = providerMaxOutputTokens(settings?.provider, settings?.model);
-    const tokens = selectedGuideMaxTokens(detail, count, settings?.provider, settings?.model);
-    const fmt = n => (n / 1000).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-    if (count === 'custom') {
-      genTokenHint.textContent = `Manual cap: ${tokens.toLocaleString()} tokens · provider max ${providerCap.toLocaleString()}`;
-    } else {
-      genTokenHint.textContent = `Up to ~${fmt(tokens)} 000 output tokens (upper limit, not a target)`;
-    }
+    genTokenHint.textContent = genCountSel?.value === 'custom'
+      ? 'Manual output-token cap — sent to the provider as-is'
+      : 'Output length is left to the provider (no client-side cap)';
   }
 
   function getSelectedLanguage() {

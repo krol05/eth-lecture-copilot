@@ -1,5 +1,7 @@
 /**
- * popup.js — reads PROVIDERS_CONFIG from providers-config.js (loaded before this)
+ * popup.js — reads the provider catalog from lib/providers/catalog.js
+ * (loaded before this). Every provider offers its static model list plus a
+ * "Custom model…" free-text option — lists are conveniences, never gates.
  */
 
 const providerSelect  = document.getElementById('provider-select');
@@ -40,11 +42,11 @@ function init() {
   const localGroup = document.createElement('optgroup');
   localGroup.label = '⚡ Local';
 
-  PROVIDERS_CONFIG.forEach(p => {
+  Catalog.list().forEach(p => {
     const opt = document.createElement('option');
     opt.value = p.id;
     opt.textContent = p.label;
-    (p.type === 'local' ? localGroup : cloudGroup).appendChild(opt);
+    (p.kind === 'local' ? localGroup : cloudGroup).appendChild(opt);
   });
 
   providerSelect.appendChild(cloudGroup);
@@ -52,15 +54,15 @@ function init() {
 
   // Load saved settings
   chrome.storage.local.get(['provider', 'model', 'apiKey', 'localBases', 'onboardingSeen'], saved => {
-    const provider = saved.provider || PROVIDERS_CONFIG[0].id;
+    const provider = saved.provider || Catalog.list()[0].id;
     providerSelect.value = provider;
     const cfg = getConfig(provider);
-    const savedBase = saved.localBases?.[provider] || cfg?.defaultBase || '';
+    const savedBase = saved.localBases?.[provider] || (cfg?.kind === 'local' ? cfg.base : '') || '';
     if (savedBase) localBaseInput.value = savedBase;
     renderProviderUI(provider);
     populateModels(provider, saved.model);
     if (saved.apiKey) apiKeyInput.value = saved.apiKey;
-    const hasLocalBase = cfg?.type === 'local' && !!savedBase;
+    const hasLocalBase = cfg?.kind === 'local' && !!savedBase;
     updateStatus(!!saved.apiKey || hasLocalBase);
     onboardingNote.style.display = saved.onboardingSeen ? 'none' : 'flex';
   });
@@ -75,7 +77,7 @@ function init() {
     const cfg = getConfig(p);
     // Restore saved base URL for this provider, or default
     chrome.storage.local.get(['localBases'], saved => {
-      localBaseInput.value = saved.localBases?.[p] || cfg?.defaultBase || '';
+      localBaseInput.value = saved.localBases?.[p] || (cfg?.kind === 'local' ? cfg.base : '') || '';
       renderProviderUI(p);
       populateModels(p);
     });
@@ -125,7 +127,7 @@ function init() {
 
 function renderProviderUI(providerId) {
   const cfg = getConfig(providerId);
-  const isLocal = cfg?.type === 'local';
+  const isLocal = cfg?.kind === 'local';
 
   // Show/hide sections
   localBaseGroup.style.display = isLocal ? 'block' : 'none';
@@ -162,19 +164,10 @@ function populateModels(providerId, selectedModel) {
   const cfg = getConfig(providerId);
   if (!cfg) return;
 
-  if (cfg.customModel) {
-    // OpenRouter: free text input only
-    modelSelect.style.display       = 'none';
-    modelCustom.style.display       = 'block';
-    modelCustomInline.style.display = 'none';
-    modelCustom.value = selectedModel || cfg.models[0]?.id || '';
-    return;
-  }
-
   modelSelect.style.display = 'block';
   modelCustom.style.display = 'none';
 
-  if (cfg.type === 'local' && cfg.models.length === 0) {
+  if (cfg.kind === 'local' && cfg.models.length === 0) {
     // No models yet — show placeholder
     modelSelect.innerHTML = '<option value="">— click Detect Models —</option>';
     modelSelect.dataset.detected = 'false';
@@ -249,13 +242,11 @@ function showDetectError(msg) {
 function save() {
   const provider = providerSelect.value;
   const cfg = getConfig(provider);
-  const isLocal = cfg?.type === 'local';
+  const isLocal = cfg?.kind === 'local';
 
-  const model = cfg?.customModel
-    ? modelCustom.value.trim()
-    : modelSelect.value === '__custom__'
-      ? modelCustomInline.value.trim()
-      : modelSelect.value;
+  const model = modelSelect.value === '__custom__'
+    ? modelCustomInline.value.trim()
+    : modelSelect.value;
 
   const apiKey  = isLocal ? null : apiKeyInput.value.trim();
   const base    = isLocal ? localBaseInput.value.trim() : null;
@@ -283,7 +274,7 @@ function onSaved() {
   flash('success', 'Saved!');
   const provider = providerSelect.value;
   const cfg = getConfig(provider);
-  const isLocal = cfg?.type === 'local';
+  const isLocal = cfg?.kind === 'local';
   updateStatus(isLocal ? !!localBaseInput.value.trim() : !!apiKeyInput.value.trim());
   chrome.tabs.query({ url: 'https://video.ethz.ch/*' }, tabs =>
     tabs.forEach(t => chrome.tabs.sendMessage(t.id, { type: 'SETTINGS_UPDATED' }).catch(() => {}))
@@ -293,7 +284,7 @@ function onSaved() {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getConfig(id) {
-  return PROVIDERS_CONFIG.find(p => p.id === id);
+  return Catalog.get(id);
 }
 
 function flash(type, text) {
