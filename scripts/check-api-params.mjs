@@ -1,26 +1,32 @@
 #!/usr/bin/env node
 /**
  * scripts/check-api-params.mjs
- * Validates the request bodies our adapters build against the providers' own
- * published API specifications.
+ * Verifies that every request our adapters build is one the provider will
+ * actually accept — so users never hit "unrecognized parameter" because an API
+ * changed and nobody noticed.
  *
- * The point: users should never hit "unrecognized parameter" or a rejected
- * value because a provider changed their API and we didn't notice. Model
- * *names* drift weekly and are handled by update-catalog.mjs; this covers the
- * request *shape*, which breaks far more loudly.
+ * Coverage is deliberately two-tier, because only some providers publish a
+ * machine-readable schema:
  *
- * Sources (machine-readable, fetched live):
- *   OpenAI  — openapi.yaml from the official openai-openapi repository
- *   Google  — the Generative Language API discovery document
+ *  1. SPEC-CHECKED — validated against the provider's own published schema:
+ *       OpenAI     official openapi.yaml
+ *       Anthropic  OpenAPI spec, URL resolved from their SDK's .stats.yml
+ *       Google     Generative Language API discovery document
+ *       Cerebras   OpenAPI spec via .stats.yml (an independent check of our
+ *                  generic OpenAI-compatible adapter against someone else's
+ *                  implementation of that API)
+ *     Both parameter names and constrained values (enums) are checked.
  *
- * Providers without a published spec (Anthropic and the OpenAI-compatible
- * fleet) can't be checked this way; their parameters come from the research in
- * docs/providers/ and are guarded by the reasoning audit in update-catalog.mjs.
+ *  2. BASELINE-CHECKED — every other provider. They all implement OpenAI's
+ *     Chat Completions shape, so OpenAI's schema is the baseline, plus a
+ *     registry of documented per-provider extensions (below). Anything we send
+ *     that is in neither is a failure. This cannot prove a provider still
+ *     accepts a parameter, but it does guarantee we never send one that isn't
+ *     documented somewhere — which is the mistake we can actually make.
  *
- * Exit code 1 means we would send something the spec does not allow — that is
- * a real user-facing breakage waiting to happen.
+ * Exit code 1 means we would send something no source documents.
  *
- * Usage: node scripts/check-api-params.mjs
+ * Usage: node scripts/check-api-params.mjs [--verbose]
  */
 
 import { createRequire } from 'node:module';
@@ -33,8 +39,41 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { Adapters } = require(join(ROOT, 'lib/providers/adapters.js'));
 const { Catalog } = require(join(ROOT, 'lib/providers/catalog.js'));
 
-const OPENAI_SPEC = 'https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml';
-const GOOGLE_DISCOVERY = 'https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta';
+const VERBOSE = process.argv.includes('--verbose');
+
+/**
+ * Non-OpenAI parameters our adapters send, each with the provider that needs it
+ * and where it is documented. Adding a parameter without adding it here fails
+ * the check — that is the point.
+ */
+const DOCUMENTED_EXTENSIONS = {
+  thinking: 'DeepSeek / Zhipu / Moonshot reasoning switch — docs/providers/deepseek.md §4, reasoning-controls.md',
+  enable_thinking: 'Alibaba DashScope reasoning switch — docs/providers/reasoning-controls.md',
+  chat_template_kwargs: 'NVIDIA NIM / SambaNova reasoning switch — docs/providers/reasoning-controls.md',
+  reasoning: 'OpenRouter / Together unified reasoning parameter — docs/providers/openrouter.md §5'
+};
+
+const SPEC_SOURCES = {
+  openai: {
+    kind: 'openapi',
+    url: 'https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml',
+    schemaName: 'CreateChatCompletionRequest'
+  },
+  anthropic: {
+    kind: 'stainless',
+    statsUrl: 'https://raw.githubusercontent.com/anthropics/anthropic-sdk-typescript/main/.stats.yml',
+    path: '/v1/messages'
+  },
+  cerebras: {
+    kind: 'stainless',
+    statsUrl: 'https://raw.githubusercontent.com/cerebras/cerebras-cloud-sdk-node/main/.stats.yml',
+    path: '/chat/completions'
+  },
+  google: {
+    kind: 'discovery',
+    url: 'https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta'
+  }
+};
 
 const BASE_REQUEST = {
   apiKey: 'sk-test',
@@ -42,8 +81,19 @@ const BASE_REQUEST = {
   messages: [{ role: 'user', content: 'Explain the Fourier transform' }]
 };
 
+// The option combinations the extension actually sends
+const VARIANTS = [
+  { label: 'plain', thinking: 'none' },
+  { label: 'thinking high', thinking: 'high' },
+  { label: 'streaming + JSON mode', thinking: 'none', stream: true, jsonMode: true },
+  { label: 'structured output', thinking: 'none', jsonSchema: { type: 'object' } },
+  { label: 'token cap + temperature', thinking: 'none', maxTokens: 4000, temperature: 0.4 },
+  { label: 'with an image', thinking: 'none', messages: [{ role: 'user', content: 'what is this?', images: ['data:image/png;base64,AAAA'] }] }
+];
+
 const findings = [];
 const notes = [];
+const coverage = [];
 
 async function fetchText(url, what) {
   const resp = await fetch(url, { headers: { 'User-Agent': 'eth-lecture-copilot-ci' } });
@@ -51,21 +101,7 @@ async function fetchText(url, what) {
   return resp.text();
 }
 
-/** Collect property names from a schema, following allOf/$ref one level deep. */
-function schemaProperties(schema, components, seen = new Set()) {
-  if (!schema || typeof schema !== 'object') return new Set();
-  if (schema.$ref) {
-    const name = schema.$ref.split('/').pop();
-    if (seen.has(name)) return new Set();
-    seen.add(name);
-    return schemaProperties(components?.[name], components, seen);
-  }
-  const out = new Set(Object.keys(schema.properties || {}));
-  for (const sub of [...(schema.allOf || []), ...(schema.anyOf || []), ...(schema.oneOf || [])]) {
-    for (const k of schemaProperties(sub, components, seen)) out.add(k);
-  }
-  return out;
-}
+// ── Schema helpers ───────────────────────────────────────────────────────────
 
 function resolveRef(schema, components, seen = new Set()) {
   let cur = schema;
@@ -78,7 +114,16 @@ function resolveRef(schema, components, seen = new Set()) {
   return cur;
 }
 
-/** The schema of one property, following allOf/anyOf/oneOf and $ref. */
+function schemaProperties(schema, components, seen = new Set()) {
+  const resolved = resolveRef(schema, components, seen);
+  if (!resolved || typeof resolved !== 'object') return new Set();
+  const out = new Set(Object.keys(resolved.properties || {}));
+  for (const sub of [...(resolved.allOf || []), ...(resolved.anyOf || []), ...(resolved.oneOf || [])]) {
+    for (const k of schemaProperties(sub, components, seen)) out.add(k);
+  }
+  return out;
+}
+
 function propertySchema(schema, components, prop, seen = new Set()) {
   const resolved = resolveRef(schema, components, seen);
   if (!resolved || typeof resolved !== 'object') return null;
@@ -90,15 +135,10 @@ function propertySchema(schema, components, prop, seen = new Set()) {
   return null;
 }
 
-/**
- * The allowed values for a property, if the spec constrains them. The enum is
- * often behind a $ref and nested in anyOf (alongside a nullable branch), e.g.
- * reasoning_effort → ReasoningEffort → anyOf[{enum:[...]}, {type:'null'}].
- */
+/** Allowed values for a property; the enum is often behind a $ref inside anyOf. */
 function enumFor(schema, components, prop) {
   const propSchema = propertySchema(schema, components, prop);
   if (!propSchema) return null;
-
   const visit = (s, depth = 0) => {
     const r = resolveRef(s, components);
     if (!r || typeof r !== 'object' || depth > 4) return null;
@@ -112,113 +152,173 @@ function enumFor(schema, components, prop) {
   return visit(propSchema);
 }
 
-async function checkOpenAI() {
-  const spec = parseYaml(await fetchText(OPENAI_SPEC, 'OpenAI spec'));
+// ── Spec loading ─────────────────────────────────────────────────────────────
+
+async function loadOpenApiRequestSchema(source, providerId) {
+  let spec;
+  if (source.kind === 'stainless') {
+    const stats = await fetchText(source.statsUrl, `${providerId} .stats.yml`);
+    const match = stats.match(/openapi_spec_url:\s*(\S+)/);
+    if (!match) throw new Error('no openapi_spec_url in .stats.yml');
+    spec = parseYaml(await fetchText(match[1], `${providerId} spec`));
+  } else {
+    spec = parseYaml(await fetchText(source.url, `${providerId} spec`));
+  }
   const components = spec.components?.schemas || {};
-  const reqSchema = components.CreateChatCompletionRequest;
-  if (!reqSchema) {
-    notes.push('OpenAI: CreateChatCompletionRequest not found in the spec — schema may have been restructured.');
-    return;
-  }
-  const allowed = schemaProperties(reqSchema, components);
-  if (!allowed.size) {
-    notes.push('OpenAI: could not read any properties from the spec; skipping.');
-    return;
+
+  if (source.schemaName) {
+    const schema = components[source.schemaName];
+    if (!schema) throw new Error(`${source.schemaName} missing from spec`);
+    return { schema, components };
   }
 
-  const provider = Catalog.get('openai');
-  // Exercise the combinations the extension actually sends
-  const cases = [
-    { label: 'chat model, no thinking', model: 'gpt-4o', thinking: 'none', temperature: 0.4 },
-    { label: 'reasoning model, no thinking', model: 'gpt-5.6-terra', thinking: 'none' },
-    { label: 'reasoning model, thinking high', model: 'gpt-5.6-terra', thinking: 'high' },
-    { label: 'o-series', model: 'o4-mini', thinking: 'none' },
-    { label: 'streaming + JSON mode', model: 'gpt-4o', thinking: 'none', stream: true, jsonMode: true },
-    { label: 'structured output', model: 'gpt-4o', thinking: 'none', jsonSchema: { type: 'object' } },
-    { label: 'with token cap', model: 'gpt-4o', thinking: 'none', maxTokens: 4000 }
-  ];
-
-  for (const c of cases) {
-    const info = provider.models.find(m => m.id === c.model);
-    const { body } = Adapters.oai.buildRequest({
-      ...BASE_REQUEST, base: provider.base, providerId: 'openai',
-      quirks: provider.quirks, modelInfo: info, ...c
-    });
-    for (const key of Object.keys(body)) {
-      if (!allowed.has(key)) {
-        findings.push(`OpenAI (${c.label}): sends "${key}", which is not in CreateChatCompletionRequest`);
-      }
-    }
-    if (body.reasoning_effort) {
-      const values = enumFor(reqSchema, components, 'reasoning_effort');
-      if (values && !values.includes(body.reasoning_effort)) {
-        findings.push(`OpenAI (${c.label}): reasoning_effort "${body.reasoning_effort}" not in spec enum [${values.join(', ')}]`);
-      }
-    }
-  }
-  console.log(`OpenAI: checked ${cases.length} request shapes against ${allowed.size} documented parameters.`);
+  // Find the request body schema for the documented path
+  const pathKey = Object.keys(spec.paths || {}).find(p => p.endsWith(source.path));
+  const body = pathKey && spec.paths[pathKey]?.post?.requestBody?.content?.['application/json']?.schema;
+  if (!body) throw new Error(`no request body for ${source.path}`);
+  return { schema: body, components };
 }
 
-async function checkGoogle() {
-  const disc = JSON.parse(await fetchText(GOOGLE_DISCOVERY, 'Google discovery'));
+// ── Checks ───────────────────────────────────────────────────────────────────
+
+function buildBody(providerId, variant) {
+  const provider = Catalog.get(providerId);
+  const model = provider.defaultModel || provider.models[0]?.id || 'test-model';
+  const modelInfo = provider.models.find(m => m.id === model);
+  const { messages, label, ...opts } = variant;
+  void label;
+  return Adapters[provider.adapter].buildRequest({
+    ...BASE_REQUEST,
+    base: provider.base || 'http://localhost:11434/v1',
+    providerId,
+    model,
+    modelInfo,
+    quirks: provider.quirks,
+    ...(messages ? { messages } : {}),
+    ...opts
+  }).body;
+}
+
+function checkAgainstSchema(providerId, schema, components) {
+  const allowed = schemaProperties(schema, components);
+  if (!allowed.size) {
+    notes.push(`${providerId}: spec produced no properties; skipped.`);
+    return false;
+  }
+  for (const variant of VARIANTS) {
+    let body;
+    try { body = buildBody(providerId, variant); } catch (err) {
+      findings.push(`${providerId} (${variant.label}): adapter threw — ${err.message}`);
+      continue;
+    }
+    for (const key of Object.keys(body)) {
+      if (!allowed.has(key)) {
+        findings.push(`${providerId} (${variant.label}): sends "${key}", not documented in the provider's own spec`);
+      }
+    }
+    for (const [key, value] of Object.entries(body)) {
+      if (typeof value !== 'string') continue;
+      const values = enumFor(schema, components, key);
+      if (values && !values.includes(value)) {
+        findings.push(`${providerId} (${variant.label}): ${key}="${value}" not in [${values.join(', ')}]`);
+      }
+    }
+  }
+  coverage.push(`  ${providerId.padEnd(14)} spec-checked (${allowed.size} documented parameters)`);
+  return true;
+}
+
+function checkGoogleDiscovery(providerId, disc) {
   const schemas = disc.schemas || {};
   const req = schemas.GenerateContentRequest;
-  const genConfig = schemas.GenerationConfig;
-  if (!req || !genConfig) {
-    notes.push('Google: GenerateContentRequest/GenerationConfig missing from the discovery document.');
-    return;
+  const cfg = schemas.GenerationConfig;
+  if (!req || !cfg) {
+    notes.push('google: discovery document missing GenerateContentRequest/GenerationConfig.');
+    return false;
   }
-  const allowedTop = new Set(Object.keys(req.properties || {}));
-  const allowedCfg = new Set(Object.keys(genConfig.properties || {}));
-  const thinkingCfg = schemas.ThinkingConfig ? new Set(Object.keys(schemas.ThinkingConfig.properties || {})) : null;
+  const top = new Set(Object.keys(req.properties || {}));
+  const cfgProps = new Set(Object.keys(cfg.properties || {}));
+  const thinkingProps = schemas.ThinkingConfig ? new Set(Object.keys(schemas.ThinkingConfig.properties || {})) : null;
 
-  const provider = Catalog.get('google');
-  const cases = [
-    { label: 'gemini 3, no thinking', model: 'gemini-3.7-flash', thinking: 'none' },
-    { label: 'gemini 2.5, thinking medium', model: 'gemini-2.5-flash', thinking: 'medium' },
-    { label: 'streaming + JSON mode', model: 'gemini-2.5-flash', thinking: 'none', stream: true, jsonMode: true },
-    { label: 'structured output', model: 'gemini-2.5-flash', thinking: 'none', jsonSchema: { type: 'object' } },
-    { label: 'with token cap', model: 'gemini-2.5-flash', thinking: 'none', maxTokens: 4000 }
-  ];
-
-  for (const c of cases) {
-    const { body } = Adapters.google.buildRequest({
-      ...BASE_REQUEST, base: provider.base, providerId: 'google', ...c
-    });
+  for (const variant of VARIANTS) {
+    const body = buildBody(providerId, variant);
     for (const key of Object.keys(body)) {
-      if (!allowedTop.has(key)) {
-        findings.push(`Google (${c.label}): sends "${key}", not in GenerateContentRequest`);
-      }
+      if (!top.has(key)) findings.push(`google (${variant.label}): sends "${key}", not in GenerateContentRequest`);
     }
     for (const key of Object.keys(body.generationConfig || {})) {
-      if (!allowedCfg.has(key)) {
-        findings.push(`Google (${c.label}): generationConfig sends "${key}", not in GenerationConfig`);
-      }
+      if (!cfgProps.has(key)) findings.push(`google (${variant.label}): generationConfig sends "${key}", not in GenerationConfig`);
     }
-    if (thinkingCfg && body.generationConfig?.thinkingConfig) {
+    if (thinkingProps && body.generationConfig?.thinkingConfig) {
       for (const key of Object.keys(body.generationConfig.thinkingConfig)) {
-        if (!thinkingCfg.has(key)) {
-          findings.push(`Google (${c.label}): thinkingConfig sends "${key}", not in ThinkingConfig`);
-        }
+        if (!thinkingProps.has(key)) findings.push(`google (${variant.label}): thinkingConfig sends "${key}", not in ThinkingConfig`);
       }
     }
   }
-  console.log(`Google: checked ${cases.length} request shapes against the v1beta discovery document.`);
+  coverage.push(`  ${'google'.padEnd(14)} spec-checked (${top.size} request parameters, ${cfgProps.size} generation options)`);
+  return true;
+}
+
+/** Everyone without a spec: OpenAI baseline plus documented extensions. */
+function checkAgainstBaseline(providerIds, baseline) {
+  for (const providerId of providerIds) {
+    const provider = Catalog.get(providerId);
+    const unknown = new Set();
+    for (const variant of VARIANTS) {
+      let body;
+      try { body = buildBody(providerId, variant); } catch (err) {
+        findings.push(`${providerId} (${variant.label}): adapter threw — ${err.message}`);
+        continue;
+      }
+      for (const key of Object.keys(body)) {
+        if (baseline.has(key)) continue;
+        if (DOCUMENTED_EXTENSIONS[key]) continue;
+        unknown.add(`${key} (${variant.label})`);
+      }
+    }
+    for (const u of unknown) {
+      findings.push(`${providerId}: sends "${u}" — neither an OpenAI-compatible parameter nor a documented extension`);
+    }
+    if (VERBOSE) coverage.push(`  ${providerId.padEnd(14)} baseline-checked (${provider.adapter} adapter)`);
+  }
+  if (!VERBOSE) {
+    coverage.push(`  ${'(' + providerIds.length + ' others)'.padEnd(14)} baseline-checked against OpenAI compatibility + documented extensions`);
+  }
 }
 
 async function main() {
-  const checks = [
-    ['OpenAI', checkOpenAI],
-    ['Google', checkGoogle]
-  ];
-  for (const [name, fn] of checks) {
+  let baseline = null;
+  const specChecked = new Set();
+
+  for (const [providerId, source] of Object.entries(SPEC_SOURCES)) {
+    if (!Catalog.get(providerId)) continue;
     try {
-      await fn();
+      if (source.kind === 'discovery') {
+        const disc = JSON.parse(await fetchText(source.url, 'google discovery'));
+        if (checkGoogleDiscovery(providerId, disc)) specChecked.add(providerId);
+        continue;
+      }
+      const { schema, components } = await loadOpenApiRequestSchema(source, providerId);
+      if (providerId === 'openai') baseline = schemaProperties(schema, components);
+      if (checkAgainstSchema(providerId, schema, components)) specChecked.add(providerId);
     } catch (err) {
-      // A fetch failure must not fail the build — it says nothing about our code
-      notes.push(`${name}: could not be checked (${err.message}).`);
+      // A source being unreachable says nothing about our code — never fail on it
+      notes.push(`${providerId}: could not be spec-checked (${err.message}).`);
     }
   }
+
+  if (!baseline) {
+    notes.push('OpenAI spec unavailable, so the compatibility baseline could not be built; other providers were not checked this run.');
+  } else {
+    const rest = Catalog.list()
+      .filter(p => p.adapter === 'oai' && !specChecked.has(p.id))
+      .map(p => p.id);
+    checkAgainstBaseline(rest, baseline);
+  }
+
+  console.log('Coverage:');
+  console.log(coverage.join('\n'));
+  console.log('\nDocumented non-OpenAI parameters in use:');
+  for (const [k, why] of Object.entries(DOCUMENTED_EXTENSIONS)) console.log(`  ${k.padEnd(22)} ${why}`);
 
   if (notes.length) {
     console.log('\nNotes:');
@@ -226,14 +326,14 @@ async function main() {
   }
 
   if (findings.length) {
-    console.error('\n❌ Parameters that the provider does not document:\n');
+    console.error('\n❌ Requests that a provider may reject:\n');
     for (const f of findings) console.error(`  - ${f}`);
-    console.error('\nEither the provider changed their API, or an adapter is sending something it should not.');
-    console.error('Check the relevant docs/providers/*.md and lib/providers/adapters.js.');
+    console.error('\nEither the provider changed their API, or an adapter sends something undocumented.');
+    console.error('See docs/providers/ and lib/providers/adapters.js.');
     process.exit(1);
   }
 
-  console.log('\n✅ Every parameter we send is documented by the provider.');
+  console.log('\n✅ Every parameter we send is documented.');
 }
 
 main().catch(err => {
