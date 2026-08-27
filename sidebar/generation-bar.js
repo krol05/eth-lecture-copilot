@@ -9,13 +9,44 @@
  * Passing an empty list hides the bar.
  */
 (function (root) {
+  const COLLAPSED_KEY = 'eth-copilot-genbar-collapsed';
+
   let el = null;
+  let listEl = null;
+  let toggleEl = null;
   let onStop = () => {};
+  let collapsed = false;
+  let lastItems = [];
+
+  function readCollapsed() {
+    try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
+  }
+
+  function writeCollapsed(v) {
+    try { localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0'); } catch { /* private mode */ }
+  }
 
   function build() {
+    collapsed = readCollapsed();
+
     el = document.createElement('div');
     el.className = 'cop-gen-bar cop-gen-hidden';
+
+    toggleEl = document.createElement('button');
+    toggleEl.className = 'cop-gen-toggle';
+    toggleEl.type = 'button';
+    toggleEl.addEventListener('click', () => {
+      collapsed = !collapsed;
+      writeCollapsed(collapsed);
+      paint();
+    });
+
+    listEl = document.createElement('div');
+    listEl.className = 'cop-gen-list';
+
+    el.append(toggleEl, listEl);
     document.body.appendChild(el);
+
     el.addEventListener('click', (ev) => {
       const btn = ev.target.closest('[data-stop-id]');
       if (!btn) return;
@@ -49,21 +80,34 @@
     return line;
   }
 
-  function render(items, stopHandler) {
-    if (!el) build();
-    if (typeof stopHandler === 'function') onStop = stopHandler;
-
-    if (!items || !items.length) {
+  function paint() {
+    if (!lastItems.length) {
       el.classList.add('cop-gen-hidden');
-      el.replaceChildren();
+      listEl.replaceChildren();
       setBarHeight(0);
       return;
     }
-    el.replaceChildren(...items.map(row));
+
+    const n = lastItems.length;
+    el.classList.toggle('cop-gen-collapsed', collapsed);
+    toggleEl.textContent = collapsed
+      ? `${n} running…`
+      : (n > 1 ? `${n} running` : 'Running');
+    toggleEl.title = collapsed ? 'Show running generations' : 'Collapse to a small badge';
+    toggleEl.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+
+    listEl.replaceChildren(...lastItems.map(row));
     el.classList.remove('cop-gen-hidden');
     // The error panel is anchored to the same corner — publish our height so
     // it can sit above us instead of on top of us.
     setBarHeight(el.offsetHeight);
+  }
+
+  function render(items, stopHandler) {
+    if (!el) build();
+    if (typeof stopHandler === 'function') onStop = stopHandler;
+    lastItems = Array.isArray(items) ? items : [];
+    paint();
   }
 
   function setBarHeight(px) {
