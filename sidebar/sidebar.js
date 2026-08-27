@@ -594,7 +594,13 @@
     });
 
     // Export MD button
-    document.getElementById('export-md-btn')?.addEventListener('click', exportGuideAsMarkdown);
+    document.getElementById('export-md-btn')?.addEventListener('click', () => {
+      try {
+        exportGuideAsMarkdown();
+      } catch (err) {
+        reportSidebarError(err, { operation: 'Export guide as Markdown' });
+      }
+    });
 
     // Feature buttons — open inline split panel within Guide tab (no tab switch)
     flashcardsBtn?.addEventListener('click', () =>
@@ -1107,10 +1113,18 @@
     currentLectureUrl = lectureUrl;
     initScriptsForCourse(lectureUrl);
 
-    // Load custom prompt extras (non-blocking, best-effort)
-    chrome.storage?.local?.get(['customPromptExtras'], (r) => {
+    // Load custom prompt extras and per-tool thinking (non-blocking, best-effort)
+    chrome.storage?.local?.get(['customPromptExtras', TOOL_THINKING_KEY, SUMMARY_OPTS_KEY], (r) => {
       if (r.customPromptExtras && typeof r.customPromptExtras === 'object') {
         customPromptExtras = { ...customPromptExtras, ...r.customPromptExtras };
+      }
+      if (r[TOOL_THINKING_KEY] && typeof r[TOOL_THINKING_KEY] === 'object') {
+        toolThinking = { ...toolThinking, ...r[TOOL_THINKING_KEY] };
+        syncToolThinkingSelects();
+      }
+      if (r[SUMMARY_OPTS_KEY] && typeof r[SUMMARY_OPTS_KEY] === 'object') {
+        summaryOptions = { ...summaryOptions, ...r[SUMMARY_OPTS_KEY] };
+        refreshInlineLectureSummaryIfOpen();
       }
     });
 
@@ -1453,6 +1467,77 @@
     postToContent({ type: 'NAVIGATE_TO_LECTURE', url: lectureUrl });
   }
 
+  /**
+   * Report a failure that happened inside the sidebar (not an API call) with
+   * the same detail as a provider error. Local failures used to vanish
+   * silently, leaving the user staring at a button that appeared to do nothing.
+   */
+  function reportSidebarError(err, { operation = 'Sidebar' } = {}) {
+    const detail = {
+      status: null,
+      provider: settings?.provider || null,
+      model: settings?.model || null,
+      code: 'sidebar_error',
+      message: `${operation} failed: ${err?.message || String(err)}`,
+      raw: err?.stack || null,
+      timestamp: Date.now()
+    };
+    window.CopilotDebug?.error('sidebar.localError', detail);
+    try { ErrorPanel.report(detail); } catch { /* panel is non-critical */ }
+    setStatus('error', detail.message);
+  }
+
+  // ── Central registry of in-flight generations ─────────────────────────────
+  // Every provider request registers here, so anything the user starts can be
+  // stopped from the generation bar — including generators with no Stop button
+  // of their own.
+  const activeGenerations = new Map(); // requestId → { label, abort }
+
+  const GENERATION_LABELS = {
+    GENERATE_GUIDE: 'Study guide',
+    FLASHCARDS_REQUEST: 'Flashcards',
+    QUIZ_REQUEST: 'Practice quiz',
+    EXAM_QUESTIONS_REQUEST: 'Exam questions',
+    CROSS_LECTURE_EXAM_REQUEST: 'Cross-lecture exam',
+    CHAT: 'Answer'
+  };
+
+  function generationLabel(payload) {
+    return payload?._label || GENERATION_LABELS[payload?.type] || 'Request';
+  }
+
+  function refreshGenerationBar() {
+    const items = [...activeGenerations.entries()].map(([id, g]) => ({ id, label: g.label }));
+    try {
+      GenerationBar.render(items, stopGeneration);
+    } catch { /* bar is non-critical */ }
+  }
+
+  function trackGeneration(id, label, abort) {
+    activeGenerations.set(id, { label, abort });
+    refreshGenerationBar();
+  }
+
+  function untrackGeneration(id) {
+    if (activeGenerations.delete(id)) refreshGenerationBar();
+  }
+
+  function stopGeneration(id) {
+    const g = activeGenerations.get(id);
+    if (!g) return;
+    window.CopilotDebug?.warn('sidebar.generation.stop', { requestId: id, label: g.label });
+    try { g.abort(); } catch { /* already settled */ }
+    untrackGeneration(id);
+  }
+
+  // Generations that produce a whole study artifact rather than a chat reply.
+  const LONG_RUNNING_REQUEST_TYPES = new Set([
+    'FLASHCARDS_REQUEST',
+    'QUIZ_REQUEST',
+    'EXAM_QUESTIONS_REQUEST',
+    'CROSS_LECTURE_EXAM_REQUEST'
+  ]);
+
   function makeRequestId() {
     return 'req_' + (++requestIdCounter);
   }
@@ -1481,6 +1566,9 @@
     const promise = new Promise((resolve, reject) => {
       _rejectFn = reject;
       const isGuideRequest = payload?.type === 'GENERATE_GUIDE';
+      // Study-tool generations are as heavy as a guide on reasoning models —
+      // they need the same patience, not the 2-minute chat deadline.
+      const isLongRequest = LONG_RUNNING_REQUEST_TYPES.has(payload?.type);
       let settled = false;
       let timeoutTimer = null;
       let guideWarnTimer = null;
@@ -1491,6 +1579,7 @@
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (guideWarnTimer) clearTimeout(guideWarnTimer);
         if (closeTimeoutDialog) closeTimeoutDialog();
+        untrackGeneration(id);
       };
 
       if (isGuideRequest) {
@@ -1522,7 +1611,7 @@
           cleanup();
           sendAbortToBackground(id);
           reject(new Error('Request timed out. Please try again or switch model/provider.'));
-        }, 120000);
+        }, isLongRequest ? 330000 : 120000);
       }
 
       pendingRequests[id] = resolve;
@@ -1549,6 +1638,7 @@
     promise.abort = () => {
       window.CopilotDebug?.warn('sidebar.apiRequest.abort', { requestId: id, payloadType: payload?.type });
       sendAbortToBackground(id);
+      untrackGeneration(id);
       if (_rejectFn) {
         delete pendingRequests[id];
         if (activeGuideRequestId === id) activeGuideRequestId = null;
@@ -1557,6 +1647,8 @@
         fn(new Error('Request aborted.'));
       }
     };
+    // Registered last so the bar's Stop button has a working abort to call.
+    trackGeneration(id, generationLabel(payload), promise.abort);
     return promise;
   }
 
@@ -2534,7 +2626,7 @@
     toast.innerHTML = `
       <div class="regen-confirm-text">
         <strong>Regenerate guide?</strong>
-        This clears the current guide and Q&amp;A for this lecture.
+        This clears the current guide, Q&amp;A and lecture summary for this lecture.
       </div>
       <div class="regen-confirm-actions">
         <button type="button" class="regen-confirm-cancel">Cancel</button>
@@ -2554,6 +2646,9 @@
     guide = null;
     currentBlockIndex = -1;
     resetQaChats();
+    // The summary belongs to the old guide — drop it from storage, from the
+    // Q&A panels, and from every chat's context flag.
+    clearLectureSummaryState();
     guideContent.style.display = 'none';
     guideEmpty.style.display = '';
     generateError.style.display = 'none';
@@ -3654,13 +3749,36 @@ Now process the following transcript:`;
     return lectureSummaryGenerating;
   }
 
-  function clearLectureSummaryState() {
+  /**
+   * Forget the lecture summary everywhere it can be remembered: the text, the
+   * Q&A panels, and every chat's "in context" flag. The summary describes one
+   * specific guide, so anything that invalidates the guide must call this —
+   * otherwise a new guide silently keeps feeding the old summary to the model.
+   */
+  function clearLectureSummaryState({ persist = true } = {}) {
     lectureSummaryText = null;
     lectureSummarySource = null;
     lectureSummaryGenerating = false;
     _lectureSummaryQaChatIdx = null;
+    _lectureSummaryGuideBody = null;
+
+    // Reset "add to context" on every chat — the flag outlives the panel.
+    let touched = false;
+    for (const chat of qaChats) {
+      if (chat?.summaryInContext) { chat.summaryInContext = false; touched = true; }
+    }
+    if (touched && persist) persistChat();
+
     removeAllQaSummaryPanels();
-    chrome.storage?.local?.remove(['currentLectureSummary']);
+    if (persist) chrome.storage?.local?.remove(['currentLectureSummary']);
+    syncSummaryUi();
+  }
+
+  /** Throw away the current summary and immediately build a fresh one. */
+  function regenerateLectureSummary(source, guideBodyEl) {
+    if (isLectureSummaryGenerating()) return;
+    clearLectureSummaryState();
+    runLectureSummaryGeneration({ source, chatIdx: activeQaChatIdx, guideBodyEl });
   }
 
   function persistLectureSummary() {
@@ -3882,6 +4000,61 @@ Now process the following transcript:`;
     return transcript?.text || '(no transcript)';
   }
 
+  // ── Lecture summary options ───────────────────────────────────────────────
+  // Same storage pattern as the per-tool thinking setting.
+  const SUMMARY_STYLES = {
+    exam: {
+      label: 'Exam preparation',
+      hint: 'Definitions, theorems, likely exam questions',
+      rules: [
+        'Prioritize exam-relevant content: definitions, theorems, key arguments, formulas, algorithms, and typical proof patterns',
+        'Add a dedicated section on likely exam questions and what examiners often test',
+        'Add practical tips, common mistakes, and memory hooks where the lecture supports them'
+      ]
+    },
+    overview: {
+      label: 'Overview',
+      hint: 'The big picture and how ideas connect',
+      rules: [
+        'Lead with the overall narrative: what problem the lecture addresses and how the parts fit together',
+        'Emphasize connections between topics and the intuition behind them over formal detail',
+        'Keep formal statements short — enough to recognise them, not to reproduce every proof'
+      ]
+    },
+    cheatsheet: {
+      label: 'Cheat sheet',
+      hint: 'Dense reference — formulas, definitions, facts',
+      rules: [
+        'Write as a dense reference sheet: short labelled entries, no prose paragraphs',
+        'Favour formulas, definitions, conditions and results over explanation',
+        'Group by topic with compact headers so a specific fact can be found quickly'
+      ]
+    },
+    feynman: {
+      label: 'Explain simply',
+      hint: 'Plain language, worked intuition',
+      rules: [
+        'Explain every major idea in plain language first, as if teaching someone seeing it for the first time',
+        'Use concrete examples and analogies that the lecture itself supports',
+        'Introduce notation only after the idea behind it is clear'
+      ]
+    }
+  };
+
+  const SUMMARY_LENGTHS = {
+    short:    { label: 'Short',    rule: 'Keep it tight — the essentials only, roughly one screen of reading.' },
+    standard: { label: 'Standard', rule: 'Balanced coverage — complete without unnecessary verbosity.' },
+    thorough: { label: 'Thorough', rule: 'Full coverage — every topic in the guide gets its own treatment, with detail.' }
+  };
+
+  const SUMMARY_OPTS_KEY = 'lectureSummaryOptions';
+  let summaryOptions = { style: 'exam', length: 'standard', language: '__guide__', focus: '' };
+
+  function setSummaryOption(key, value) {
+    summaryOptions = { ...summaryOptions, [key]: value };
+    storageSet({ [SUMMARY_OPTS_KEY]: summaryOptions });
+  }
+
   function buildLectureSummaryPrompt() {
     const title = transcript?.lectureTitle || guide?.lecture_title || 'Lecture';
     const guideBlocksStr = guide?.guide?.length
@@ -3890,13 +4063,32 @@ Now process the following transcript:`;
     const fullTranscript = buildFullTranscriptText();
     const qaExtraPrefix = customPromptExtras.qa ? customPromptExtras.qa.trim() + '\n\n' : '';
 
-    return `${qaExtraPrefix}You are an expert ETH Zürich exam preparation tutor. Produce ONE comprehensive lecture summary for exam study based ONLY on the materials below.
+    const style = SUMMARY_STYLES[summaryOptions.style] || SUMMARY_STYLES.exam;
+    const length = SUMMARY_LENGTHS[summaryOptions.length] || SUMMARY_LENGTHS.standard;
+    const styleRules = style.rules.map(r => `- ${r}`).join('\n');
+
+    const lang = summaryOptions.language === '__guide__'
+      ? (guideLanguage || '')
+      : summaryOptions.language;
+    const languageLine = lang
+      ? `\nLANGUAGE: Write the entire summary in ${lang}. Keep LaTeX and technical notation unchanged.`
+      : '\nLANGUAGE: Write in the dominant language of the transcript.';
+
+    const focus = String(summaryOptions.focus || '').trim();
+    const focusLine = focus
+      ? `\nEXTRA FOCUS FROM THE STUDENT (honour it, but never at the cost of coverage): ${focus}`
+      : '';
+
+    return `${qaExtraPrefix}You are an expert ETH Zürich tutor. Produce ONE lecture summary based ONLY on the materials below.
+
+STYLE: ${style.label} — ${style.hint}
+${styleRules}
+
+LENGTH: ${length.label} — ${length.rule}
+${languageLine}${focusLine}
 
 MUST:
 - Cover every major topic from the FULL GUIDE and FULL TRANSCRIPT — nothing important omitted
-- Prioritize exam-relevant content: definitions, theorems, key arguments, formulas, algorithms, and typical proof patterns
-- Add a dedicated section on likely exam questions and what examiners often test
-- Add practical tips, common mistakes, and memory hooks where the lecture supports them
 - Use clear markdown (## sections, bullets). Use LaTeX ($...$ inline, $$...$$ display) for math
 - Reference timestamps [HH:MM:SS] when anchoring content to the video
 
@@ -3904,8 +4096,6 @@ MUST NOT:
 - Invent facts, topics, or exam hints not supported by the guide or transcript
 - Filler, motivational padding, or meta-commentary about being an AI
 - Repeat the same point in multiple sections
-
-Tone: dense and useful — complete coverage without unnecessary verbosity.
 
 --- FULL TRANSCRIPT (${title}) ---
 ${fullTranscript}
@@ -4053,6 +4243,7 @@ ${guideBlocksStr}`;
 
       req = apiRequest({
         type: 'CHAT',
+        _label: 'Lecture summary',
         messages: [{ role: 'user', content: apiUserMessage }],
         systemPrompt,
         provider: settings.provider,
@@ -4092,9 +4283,19 @@ ${guideBlocksStr}`;
       if (assistantText) {
         setLectureSummaryComplete(assistantText, source);
         saveToHistory();
+      } else {
+        // The provider answered with nothing usable. Say so — silently doing
+        // nothing here looked exactly like the button was never pressed.
+        throw new Error('The model returned an empty summary. Try again, or switch model.');
       }
 
-      if (source === 'qa' && assistantText && qaChats[sendChatIdx]) {
+      if (source === 'qa' && !qaChats[sendChatIdx]) {
+        // The chat this was started from is gone (switched/deleted). The
+        // summary is saved, so show it rather than dropping it on the floor.
+        setStatus('ready', 'Lecture summary ready — open it from the guide panel.');
+        refreshInlineLectureSummaryIfOpen();
+        syncSummaryUi();
+      } else if (source === 'qa' && assistantText && qaChats[sendChatIdx]) {
         if (streamState) {
           QaStreamFlush.stopStreamFlush(streamState);
           qaActiveStreams.delete(req._requestId);
@@ -6087,8 +6288,14 @@ ${guideBlocksStr}${scriptContext}`;
       lines.push('');
       if (block.key_concepts?.length) {
         lines.push('### Key Concepts');
-        for (const c of block.key_concepts) {
-          lines.push(`- ${applyWikiLinks(c.replace(/\n/g, ' '), wikiTerms)}`);
+        // key_concepts are {label, lead, body} objects in current guides and
+        // plain strings in older saved ones — conceptToParts handles both.
+        for (const rawConcept of block.key_concepts) {
+          const parts = conceptToParts(rawConcept);
+          const text = [parts.lead, parts.body].filter(Boolean).join(' ');
+          if (!text) continue;
+          const prefix = parts.label ? `**${parts.label}** — ` : '';
+          lines.push(`- ${prefix}${applyWikiLinks(text.replace(/\n/g, ' '), wikiTerms)}`);
         }
         lines.push('');
       }
@@ -6103,7 +6310,7 @@ ${guideBlocksStr}${scriptContext}`;
       if (block.definitions?.length) {
         lines.push('### Definitions');
         for (const d of block.definitions) {
-          lines.push(`**[[${d.term}]]** — ${d.definition}`);
+          lines.push(`**[[${String(d.term ?? '')}]]** — ${String(d.definition ?? '')}`);
         }
         lines.push('');
       }
@@ -6118,15 +6325,27 @@ ${guideBlocksStr}${scriptContext}`;
     const filename = `${safeName}-guide.md`;
 
     // ── Download file ─────────────────────────────────────────────────────
-    const blob = new Blob([md], { type: 'text/markdown; charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-
-    setStatus('ready', 'Markdown exported');
+    // The anchor must be in the document: a detached click is ignored inside
+    // the sidebar iframe, which is why exporting silently did nothing.
+    try {
+      const blob = new Blob([md], { type: 'text/markdown; charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        a.remove();
+        URL.revokeObjectURL(url);
+      }, 5000);
+      setStatus('ready', 'Markdown exported');
+    } catch (err) {
+      reportSidebarError(err, { operation: 'Export guide as Markdown' });
+      return;
+    }
   }
 
   /**
@@ -6335,6 +6554,59 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   // Returns <select> HTML for a language picker pre-selected to the current guideLanguage.
+  // ── Per-tool thinking control ─────────────────────────────────────────────
+  // Every generation can pick its own reasoning depth, the same way guide
+  // generation can. The chosen level is remembered per tool.
+  const TOOL_THINKING_LEVELS = [
+    ['none', 'None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']
+  ];
+  const TOOL_THINKING_KEY = 'toolThinking';
+  let toolThinking = {};   // toolKey → level, loaded from storage at init
+
+  function getToolThinking(toolKey) {
+    return toolThinking[toolKey] || 'none';
+  }
+
+  function setToolThinking(toolKey, level) {
+    toolThinking[toolKey] = level;
+    storageSet({ [TOOL_THINKING_KEY]: toolThinking });
+  }
+
+  /** Markup for a tool's thinking select. `id` must be unique on the page. */
+  function _toolThinkingSelectHtml(id, toolKey) {
+    const current = getToolThinking(toolKey);
+    return `<select id="${id}" class="gen-setting-select" data-tool-thinking="${toolKey}">${
+      TOOL_THINKING_LEVELS
+        .map(([v, l]) => `<option value="${v}"${v === current ? ' selected' : ''}>${l}</option>`)
+        .join('')
+    }</select>`;
+  }
+
+  /** A full labelled row, so each tool panel adds thinking with one call. */
+  function _toolThinkingRowHtml(id, toolKey) {
+    return `<div class="inline-tool-row">
+      <span class="inline-tool-label" title="How much the model reasons before answering. More costs more and takes longer.">Thinking</span>
+      ${_toolThinkingSelectHtml(id, toolKey)}
+    </div>`;
+  }
+
+  // One delegated listener covers every tool panel, inline or in the Tools tab.
+  document.addEventListener('change', (ev) => {
+    const sel = ev.target?.closest?.('[data-tool-thinking]');
+    if (!sel) return;
+    setToolThinking(sel.getAttribute('data-tool-thinking'), sel.value);
+    syncToolThinkingSelects(sel);   // keep the other copy of this tool in step
+  });
+
+  /** Show the stored level in every tool select (the Tools-tab ones are static). */
+  function syncToolThinkingSelects(except = null) {
+    for (const sel of document.querySelectorAll('[data-tool-thinking]')) {
+      if (sel === except) continue;
+      const level = getToolThinking(sel.getAttribute('data-tool-thinking'));
+      if (sel.value !== level) sel.value = level;
+    }
+  }
+
   function _inlineLangSelectHtml(id) {
     const langs = [
       ['__guide__','Same as guide'],['English','English'],['German','Deutsch'],
@@ -6350,6 +6622,47 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   /** Build the Lecture Summary inline panel body (synced with Q&A) */
+  /** Style / length / language / focus controls for the lecture summary. */
+  function _summaryOptionsHtml() {
+    const styleOpts = Object.entries(SUMMARY_STYLES)
+      .map(([v, d]) => `<option value="${v}"${v === summaryOptions.style ? ' selected' : ''}>${d.label}</option>`).join('');
+    const lengthOpts = Object.entries(SUMMARY_LENGTHS)
+      .map(([v, d]) => `<option value="${v}"${v === summaryOptions.length ? ' selected' : ''}>${d.label}</option>`).join('');
+    const hint = (SUMMARY_STYLES[summaryOptions.style] || SUMMARY_STYLES.exam).hint;
+    return `
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Style</span>
+        <select class="gen-setting-select" data-summary-opt="style">${styleOpts}</select>
+      </div>
+      <p class="inline-tool-hint summary-style-hint">${escHtml(hint)}</p>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Length</span>
+        <select class="gen-setting-select" data-summary-opt="length">${lengthOpts}</select>
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Language</span>
+        ${_inlineLangSelectHtml('it-summary-lang-select').replace('id="it-summary-lang-select"', 'data-summary-opt="language"')}
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label" title="Anything you want emphasised, e.g. a topic you find hard">Focus</span>
+        <input type="text" class="gen-setting-input" data-summary-opt="focus"
+               placeholder="optional — e.g. focus on the proofs"
+               value="${escHtml(summaryOptions.focus || '')}">
+      </div>`;
+  }
+
+  // One delegated listener for every copy of the summary options.
+  document.addEventListener('change', (ev) => {
+    const el = ev.target?.closest?.('[data-summary-opt]');
+    if (!el) return;
+    setSummaryOption(el.getAttribute('data-summary-opt'), el.value);
+    if (el.getAttribute('data-summary-opt') === 'style') refreshInlineLectureSummaryIfOpen();
+  });
+  document.addEventListener('input', (ev) => {
+    const el = ev.target?.closest?.('input[data-summary-opt="focus"]');
+    if (el) setSummaryOption('focus', el.value);
+  });
+
   function _buildInlineLectureSummary(body) {
     if (isLectureSummaryGenerating()) {
       if (lectureSummarySource === 'qa') {
@@ -6370,15 +6683,24 @@ ${guideBlocksStr}${scriptContext}`;
         ${srcHint}
         <div class="inline-tool-actions lecture-summary-actions">
           <button type="button" class="history-load-btn lecture-summary-export-pdf-btn">Export PDF</button>
+          <button type="button" class="history-load-btn lecture-summary-regen-btn" title="Discard this summary and build a new one with the current options">Regenerate</button>
         </div>
+        <details class="summary-options-details">
+          <summary>Summary options</summary>
+          ${_summaryOptionsHtml()}
+        </details>
         <div class="lecture-summary-view"></div>`;
       renderLectureSummaryMarkdown(body.querySelector('.lecture-summary-view'), lectureSummaryText);
       body.querySelector('.lecture-summary-export-pdf-btn')?.addEventListener('click', openSummaryPrintWindow);
+      body.querySelector('.lecture-summary-regen-btn')?.addEventListener('click', () => {
+        regenerateLectureSummary('guide', body);
+      });
       return;
     }
     const canGen = hasUsableSettings() && transcript?.text && guide?.guide?.length;
     body.innerHTML = `
-      <p class="inline-tool-hint">One-shot exam-focused summary from the full guide and transcript. Synced with the Q&amp;A tab.</p>
+      <p class="inline-tool-hint">One summary built from the full guide and transcript. Synced with the Q&amp;A tab.</p>
+      ${_summaryOptionsHtml()}
       <button type="button" class="btn-primary inline-summary-generate-btn" ${canGen ? '' : 'disabled'}>
         Generate lecture summary
       </button>`;
@@ -6440,6 +6762,7 @@ ${guideBlocksStr}${scriptContext}`;
           <span class="inline-tool-label">Language</span>
           ${_inlineLangSelectHtml('it-fc-lang-select')}
         </div>
+        ${_toolThinkingRowHtml('it-fc-thinking-select', 'flashcards')}
         <button id="it-fc-generate-btn" class="primary-btn" type="button">
           <span class="btn-text">Generate Flashcards</span>
           <span class="btn-spinner" style="display:none"></span>
@@ -6461,7 +6784,7 @@ ${guideBlocksStr}${scriptContext}`;
           const langVal = body.querySelector('#it-fc-lang-select')?.value || '__guide__';
           const language = langVal === '__guide__' ? guideLanguage : langVal;
           const systemPrompt = buildFlashcardsPrompt(guide, { count, cardTypes, includeFormulas: formulas, language });
-          const payload = { ...buildApiPayloadBase(), type: 'FLASHCARDS_REQUEST', guideJson: guide, systemPrompt };
+          const payload = { ...buildApiPayloadBase(), type: 'FLASHCARDS_REQUEST', guideJson: guide, systemPrompt, toolThinking: getToolThinking('flashcards') };
           const resp = await apiRequest(payload);
           if (!resp.success) throw new Error(resp.error);
           applyFlashcardsResponse(resp.data);
@@ -6576,6 +6899,7 @@ ${guideBlocksStr}${scriptContext}`;
         <span class="inline-tool-label">Language</span>
         ${_inlineLangSelectHtml('it-quiz-lang-select')}
       </div>
+      ${_toolThinkingRowHtml('it-quiz-thinking-select', 'quiz')}
       <button id="it-quiz-start-btn" class="primary-btn" type="button">
         <span class="btn-text">Start Quiz</span><span class="btn-spinner" style="display:none"></span>
       </button>
@@ -6595,7 +6919,7 @@ ${guideBlocksStr}${scriptContext}`;
         const langVal = body.querySelector('#it-quiz-lang-select')?.value || '__guide__';
         const language = langVal === '__guide__' ? guideLanguage : langVal;
         const systemPrompt = buildQuizPrompt(guide, { count, type, language });
-        const payload = { ...buildApiPayloadBase(), type: 'QUIZ_REQUEST', guideJson: guide, systemPrompt };
+        const payload = { ...buildApiPayloadBase(), type: 'QUIZ_REQUEST', guideJson: guide, systemPrompt, toolThinking: getToolThinking('quiz') };
         const resp  = await apiRequest(payload);
         if (!resp.success) throw new Error(resp.error);
         const questions = resp.data?.questions || [];
@@ -6685,6 +7009,7 @@ ${guideBlocksStr}${scriptContext}`;
         <span class="inline-tool-label">Language</span>
         ${_inlineLangSelectHtml('it-exam-lang-select')}
       </div>
+      ${_toolThinkingRowHtml('it-exam-thinking-select', 'exam')}
       <button id="it-exam-gen-btn" class="primary-btn" type="button">
         <span class="btn-text">Generate Questions</span><span class="btn-spinner" style="display:none"></span>
       </button>
@@ -6747,7 +7072,7 @@ ${guideBlocksStr}${scriptContext}`;
         }
 
         const systemPrompt = buildExamQuestionsPrompt(guide, blocks, { count, format, difficulty, answerLength: answerLen, questionsPerBlock: perBlock, language });
-        const payload = { ...buildApiPayloadBase(), type: 'EXAM_QUESTIONS_REQUEST', guideJson: guide, systemPrompt };
+        const payload = { ...buildApiPayloadBase(), type: 'EXAM_QUESTIONS_REQUEST', guideJson: guide, systemPrompt, toolThinking: getToolThinking('exam') };
         const resp = await apiRequest(payload);
         if (!resp.success) throw new Error(resp.error);
         const questions = resp.data?.questions || [];
@@ -7224,6 +7549,7 @@ ${guideBlocksStr}${scriptContext}`;
       const payload = {
         ...buildApiPayloadBase(),
         type: 'FLASHCARDS_REQUEST',
+        toolThinking: getToolThinking('flashcards'),
         guideJson: guide,
         systemPrompt
       };
@@ -7567,6 +7893,7 @@ ${guideBlocksStr}${scriptContext}`;
       const payload = {
         ...buildApiPayloadBase(),
         type: 'QUIZ_REQUEST',
+        toolThinking: getToolThinking('quiz'),
         guideJson: guide,
         systemPrompt
       };
@@ -7879,6 +8206,7 @@ ${guideBlocksStr}${scriptContext}`;
       const payload = {
         ...buildApiPayloadBase(),
         type: 'EXAM_QUESTIONS_REQUEST',
+        toolThinking: getToolThinking('exam'),
         guideJson: guide,
         systemPrompt
       };
@@ -8232,6 +8560,7 @@ ${guideBlocksStr}${scriptContext}`;
       const payload = {
         ...buildApiPayloadBase(),
         type: 'CROSS_LECTURE_EXAM_REQUEST',
+        toolThinking: getToolThinking('exam'),
         guidesJson: lectures,
         systemPrompt
       };

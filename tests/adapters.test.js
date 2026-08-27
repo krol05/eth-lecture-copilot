@@ -62,7 +62,9 @@ describe('anthropic adapter', () => {
       model: 'claude-sonnet-5',
       max_tokens: 32000,
       system: 'You are a tutor.',
-      messages: [{ role: 'user', content: 'Explain the Fourier transform' }]
+      messages: [{ role: 'user', content: 'Explain the Fourier transform' }],
+      // stated explicitly: Opus 5 and friends think by default when omitted
+      thinking: { type: 'disabled' }
     });
   });
 
@@ -268,8 +270,10 @@ describe('oai adapter', () => {
     const { body } = O.buildRequest(req({ model: 'deepseek-v4-flash', quirks, thinking: 'high' }));
     expect(body.thinking).toEqual({ type: 'enabled' });
     expect(body.reasoning_effort).toBe('max');
-    const off = O.buildRequest(req({ model: 'deepseek-v4-flash', quirks, thinking: 'none' }));
-    expect(off.body.thinking).toBeUndefined();
+    // "none" is sent explicitly: omitting the param lets V4 decide to think,
+    // which on a non-streaming request is indistinguishable from a hang
+    const off = O.buildRequest(req({ providerId: 'deepseek', model: 'deepseek-v4-flash', quirks, thinking: 'none' }));
+    expect(off.body.thinking).toEqual({ type: 'disabled' });
     expect(off.body.reasoning_effort).toBeUndefined();
   });
 
@@ -316,5 +320,64 @@ describe('oai adapter', () => {
     expect(O.parseModelsResponse({ data: [{ id: 'a' }, { id: 'b' }] }).map(m => m.id)).toEqual(['a', 'b']);
     expect(O.parseModelsResponse({ models: [{ name: 'ollama-model' }] })).toEqual([{ id: 'ollama-model', label: 'ollama-model' }]);
     expect(O.buildModelsRequest({ base: 'https://api.perplexity.ai', apiKey: 'k', quirks: Catalog.get('perplexity').quirks })).toBeNull();
+  });
+});
+
+// ─── Thinking is never left to the model's default ───────────────────────────
+// Several current models reason by default when the parameter is absent, which
+// on a long generation is indistinguishable from a hang. "none" must be stated.
+
+describe('thinking off is always explicit', () => {
+  const A = Adapters.anthropic;
+  const O = Adapters.oai;
+  const G = Adapters.google;
+
+  test('Claude models are told to disable thinking', () => {
+    for (const model of ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5']) {
+      const { body } = A.buildRequest(req({ base: 'https://api.anthropic.com', model, thinking: 'none' }));
+      expect(body.thinking).toEqual({ type: 'disabled' });
+    }
+  });
+
+  test('Fable/Mythos omit it instead — they reject disabled with a 400', () => {
+    for (const model of ['claude-fable-5', 'claude-mythos-5']) {
+      const { body } = A.buildRequest(req({ base: 'https://api.anthropic.com', model, thinking: 'none' }));
+      expect(body.thinking).toBeUndefined();
+    }
+  });
+
+  test('OpenAI reasoning models get an explicit effort', () => {
+    const quirks = Catalog.get('openai').quirks;
+    const gpt5 = O.buildRequest(req({ providerId: 'openai', model: 'gpt-5.6-terra', quirks, thinking: 'none' }));
+    expect(gpt5.body.reasoning_effort).toBe('none');
+    // o-series predates none/minimal — "low" is the safe floor
+    const o = O.buildRequest(req({ providerId: 'openai', model: 'o4-mini', quirks, thinking: 'none' }));
+    expect(o.body.reasoning_effort).toBe('low');
+  });
+
+  test('non-reasoning models are left alone', () => {
+    const quirks = Catalog.get('openai').quirks;
+    const { body } = O.buildRequest(req({ providerId: 'openai', model: 'gpt-4o', quirks, thinking: 'none' }));
+    expect(body.reasoning_effort).toBeUndefined();
+    expect(body.thinking).toBeUndefined();
+  });
+
+  test('DeepSeek disables thinking explicitly', () => {
+    const quirks = Catalog.get('deepseek').quirks;
+    const { body } = O.buildRequest(req({ providerId: 'deepseek', model: 'deepseek-v4-pro', quirks, thinking: 'none' }));
+    expect(body.thinking).toEqual({ type: 'disabled' });
+  });
+
+  test('Google always states a thinking config', () => {
+    for (const model of ['gemini-3.7-flash', 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash']) {
+      const { body } = G.buildRequest(req({ base: 'https://generativelanguage.googleapis.com', model, thinking: 'none' }));
+      expect(body.generationConfig.thinkingConfig).toBeDefined();
+    }
+  });
+
+  test('a provider can declare its own verified off-switch', () => {
+    const quirks = { thinkingOffBody: { enable_thinking: false } };
+    const { body } = O.buildRequest(req({ model: 'qwen3.5-plus', quirks, thinking: 'none' }));
+    expect(body.enable_thinking).toBe(false);
   });
 });

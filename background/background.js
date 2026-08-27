@@ -20,6 +20,7 @@ importScripts(
   chrome.runtime.getURL('lib/guide-parse.js'),
   chrome.runtime.getURL('lib/providers/catalog-data.js'),
   chrome.runtime.getURL('lib/providers/catalog.js'),
+  chrome.runtime.getURL('lib/providers/reasoning.js'),
   chrome.runtime.getURL('lib/providers/adapters.js'),
   chrome.runtime.getURL('lib/providers/overrides.js'),
   chrome.runtime.getURL('lib/providers/adapter-spec.js')
@@ -159,7 +160,11 @@ async function runModelRequest(cfg) {
     base, model, apiKey: p.kind === 'local' ? null : apiKey,
     system, messages, stream, jsonMode, thinking, temperature, maxTokens,
     quirks: p.quirks,
-    extraHeaders: p.headers
+    extraHeaders: p.headers,
+    // Together these select the right way to switch reasoning off: the
+    // provider decides which parameter, the model which values it accepts.
+    providerId: provider,
+    modelInfo: (p.models || []).find(entry => entry.id === model)
   });
   globalThis.CopilotDebug?.log('background.request', { requestId, provider, model, url: request.url, stream, body: request.body });
 
@@ -410,13 +415,20 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
     case 'EXAM_QUESTIONS_REQUEST':
     case 'CROSS_LECTURE_EXAM_REQUEST': {
       const temperature = type === 'FLASHCARDS_REQUEST' || type === 'QUIZ_REQUEST' ? 0.45 : 0.5;
+      progress('queued', 'Request received');
       const raw = await run({
         system: msg.systemPrompt,
         messages: [{ role: 'user', content: JSON.stringify(msg.guideJson ?? msg.guidesJson) }],
         jsonMode: true,
         temperature,
-        timeoutMs: type === 'CROSS_LECTURE_EXAM_REQUEST' ? 180000 : 120000
+        // Streamed like the guide: these can take minutes on a reasoning model,
+        // and a silent non-streaming wait is indistinguishable from a hang.
+        // The full text is still returned at the end, so callers are unchanged.
+        stream: msg.useStream !== false,
+        thinking: msg.toolThinking || 'none',
+        timeoutMs: type === 'CROSS_LECTURE_EXAM_REQUEST' ? 600000 : 300000
       });
+      progress('provider_finished', 'Response body received');
       return safeParseJson(raw, { type, requestId });
     }
 

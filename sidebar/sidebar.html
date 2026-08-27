@@ -658,6 +658,15 @@
               <option value="Russian">Русский</option>
             </select>
           </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label" for="flashcards-thinking-select" title="How much the model reasons before answering. More costs more and takes longer.">Thinking</label>
+            <select id="flashcards-thinking-select" class="gen-setting-select" data-tool-thinking="flashcards">
+              <option value="none">None</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
           <p class="feature-modal-hint">You can remove individual cards after generation.</p>
           <button id="flashcards-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
             <span class="btn-text">Generate Flashcards</span>
@@ -740,6 +749,15 @@
               <option value="Japanese">日本語</option>
               <option value="Korean">한국어</option>
               <option value="Russian">Русский</option>
+            </select>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label" for="quiz-thinking-select" title="How much the model reasons before answering. More costs more and takes longer.">Thinking</label>
+            <select id="quiz-thinking-select" class="gen-setting-select" data-tool-thinking="quiz">
+              <option value="none">None</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
             </select>
           </div>
           <button id="quiz-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
@@ -886,6 +904,15 @@
               <option value="Japanese">日本語</option>
               <option value="Korean">한국어</option>
               <option value="Russian">Русский</option>
+            </select>
+          </div>
+          <div class="gen-setting-row">
+            <label class="gen-setting-label" for="exam-thinking-select" title="How much the model reasons before answering. More costs more and takes longer.">Thinking</label>
+            <select id="exam-thinking-select" class="gen-setting-select" data-tool-thinking="exam">
+              <option value="none">None</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
             </select>
           </div>
           <button id="exam-generate-btn" class="primary-btn" style="margin-top:12px" type="button">
@@ -1141,6 +1168,7 @@
   <script src="../lib/prompts.js"></script>
   <script src="../lib/error-format.js"></script>
   <script src="error-panel.js"></script>
+  <script src="generation-bar.js"></script>
   <script src="scripts.js"></script>
   <script src="sidebar.js"></script>
 </body>

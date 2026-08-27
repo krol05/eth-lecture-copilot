@@ -1,0 +1,87 @@
+name: Check API parameters
+
+# Makes sure the requests we build are still valid according to the providers'
+# own published API specifications. Model names drift weekly (handled by the
+# catalog update); this catches the louder failure — a provider renaming,
+# removing or restricting a parameter we depend on, which breaks every request
+# for every user of that provider.
+#
+# Runs on every change to the adapters, and weekly so provider-side changes
+# surface even when nobody is touching the code.
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "lib/providers/**"
+      - "scripts/check-api-params.mjs"
+      - ".github/workflows/check-api-params.yml"
+  pull_request:
+    paths:
+      - "lib/providers/**"
+      - "scripts/check-api-params.mjs"
+  schedule:
+    - cron: "0 7 * * 1" # Mondays, just after the model catalog job
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate request parameters against provider specs
+        id: check
+        run: node scripts/check-api-params.mjs 2>&1 | tee api-param-report.txt
+
+      # A scheduled failure means the provider changed something while nobody
+      # was looking — that deserves an issue, not just a red tick nobody sees.
+      - name: Open an issue when a scheduled run fails
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let report = 'No report captured.';
+            try { report = fs.readFileSync('api-param-report.txt', 'utf8'); } catch {}
+            const title = 'API parameter check failed — a provider may have changed their API';
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'api-drift'
+            });
+            const body = [
+              'The weekly parameter check failed. We are sending something the',
+              'provider no longer documents, which means requests to that',
+              'provider are probably failing for users.',
+              '',
+              '```',
+              report.slice(0, 55000),
+              '```',
+              '',
+              `[Workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+            ].join('\n');
+            if (existing.data.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number, body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['api-drift']
+              });
+            }

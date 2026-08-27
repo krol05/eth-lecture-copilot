@@ -123,3 +123,25 @@ describe('formatError robustness', () => {
     expect(f.sections.find(s => s.label === 'Provider response').content).toContain('nested');
   });
 });
+
+describe('vision errors point at a model that can actually read images', () => {
+  const T2 = 1756000000000;
+
+  test('DeepSeek names its one vision model', () => {
+    const f = formatError({
+      status: 400, provider: 'deepseek', model: 'deepseek-v4-pro', code: null,
+      message: 'This model does not support image', raw: { error: { message: 'This model does not support image' } }, timestamp: T2
+    });
+    expect(f.title).toContain("Model can't read images");
+    expect(f.hint).toContain('deepseek-v4-flash-vision-exp');
+    expect(f.summary).toBe('This model does not support image');
+  });
+
+  test('unknown providers still get usable advice', () => {
+    const f = formatError({
+      status: 400, provider: 'someprovider', model: 'text-only-1', code: null,
+      message: 'model does not support vision', raw: null, timestamp: T2
+    });
+    expect(f.hint).toContain('vision-capable model');
+  });
+});

@@ -33,3 +33,45 @@ describe('splitConceptText', () => {
     });
   });
 });
+
+// Guides hold key_concepts in two shapes: structured objects (current) and
+// plain strings (saved before the schema changed). Assuming strings is what
+// broke Markdown export with "c.replace is not a function".
+describe('conceptToParts / conceptToText handle both guide shapes', () => {
+  const { conceptToParts, conceptToText } = require('../lib/concept-split.js');
+
+  test('structured concept keeps its label, lead and body', () => {
+    expect(conceptToParts({ label: 'MOTIVATION', lead: 'Big systems use distributed memory.', body: 'Models over 70B do not fit on one machine.' }))
+      .toEqual({ label: 'MOTIVATION', lead: 'Big systems use distributed memory.', body: 'Models over 70B do not fit on one machine.' });
+  });
+
+  test('older alternate field names are accepted', () => {
+    expect(conceptToParts({ title: 'A lead', text: 'Some body' }))
+      .toEqual({ label: '', lead: 'A lead', body: 'Some body' });
+  });
+
+  test('a body-only object still yields a lead', () => {
+    expect(conceptToParts({ label: 'X', body: 'Only body here.' }))
+      .toEqual({ label: 'X', lead: 'Only body here.', body: '' });
+  });
+
+  test('plain strings are split like before', () => {
+    const parts = conceptToParts('BFS explores level by level. It uses a queue.');
+    expect(parts.label).toBe('');
+    expect(parts.lead).toBeTruthy();
+    expect(`${parts.lead} ${parts.body}`).toContain('BFS explores level by level');
+  });
+
+  test('empty and malformed entries never throw', () => {
+    for (const bad of [null, undefined, '', {}, [], 42]) {
+      expect(() => conceptToParts(bad)).not.toThrow();
+      expect(() => conceptToText(bad)).not.toThrow();
+    }
+    expect(conceptToParts(null)).toEqual({ label: '', lead: '', body: '' });
+  });
+
+  test('conceptToText flattens either shape to one line', () => {
+    expect(conceptToText({ lead: 'Lead here.', body: 'Body here.' })).toBe('Lead here. Body here.');
+    expect(conceptToText('Just a string')).toBe('Just a string');
+  });
+});

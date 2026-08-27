@@ -22,6 +22,8 @@ const libGlobals = {
   // lib/concept-split.js
   splitConceptText: 'readonly',
   isAbbreviationDot: 'readonly',
+  conceptToParts: 'readonly',
+  conceptToText: 'readonly',
   // lib/render-inline.js
   escHtml: 'readonly',
   renderMarkdownInline: 'readonly',
@@ -54,6 +56,8 @@ const libGlobals = {
   formatError: 'readonly',
   // sidebar/error-panel.js
   ErrorPanel: 'readonly',
+  // sidebar/generation-bar.js
+  GenerationBar: 'readonly',
   // lib/providers/catalog.js + adapters.js + overrides.js + adapter-spec.js
   Catalog: 'readonly',
   Adapters: 'readonly',

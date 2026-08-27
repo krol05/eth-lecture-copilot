@@ -87,6 +87,7 @@
         "lib/prompts.js",
         "lib/error-format.js",
         "sidebar/error-panel.js",
+        "sidebar/generation-bar.js",
         "sidebar/error-panel.css",
         "lib/katex/katex.min.js",
         "lib/katex/katex.min.css",
