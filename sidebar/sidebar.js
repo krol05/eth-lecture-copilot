@@ -594,7 +594,13 @@
     });
 
     // Export MD button
-    document.getElementById('export-md-btn')?.addEventListener('click', exportGuideAsMarkdown);
+    document.getElementById('export-md-btn')?.addEventListener('click', () => {
+      try {
+        exportGuideAsMarkdown();
+      } catch (err) {
+        reportSidebarError(err, { operation: 'Export guide as Markdown' });
+      }
+    });
 
     // Feature buttons — open inline split panel within Guide tab (no tab switch)
     flashcardsBtn?.addEventListener('click', () =>
@@ -1453,6 +1459,77 @@
     postToContent({ type: 'NAVIGATE_TO_LECTURE', url: lectureUrl });
   }
 
+  /**
+   * Report a failure that happened inside the sidebar (not an API call) with
+   * the same detail as a provider error. Local failures used to vanish
+   * silently, leaving the user staring at a button that appeared to do nothing.
+   */
+  function reportSidebarError(err, { operation = 'Sidebar' } = {}) {
+    const detail = {
+      status: null,
+      provider: settings?.provider || null,
+      model: settings?.model || null,
+      code: 'sidebar_error',
+      message: `${operation} failed: ${err?.message || String(err)}`,
+      raw: err?.stack || null,
+      timestamp: Date.now()
+    };
+    window.CopilotDebug?.error('sidebar.localError', detail);
+    try { ErrorPanel.report(detail); } catch { /* panel is non-critical */ }
+    setStatus('error', detail.message);
+  }
+
+  // ── Central registry of in-flight generations ─────────────────────────────
+  // Every provider request registers here, so anything the user starts can be
+  // stopped from the generation bar — including generators with no Stop button
+  // of their own.
+  const activeGenerations = new Map(); // requestId → { label, abort }
+
+  const GENERATION_LABELS = {
+    GENERATE_GUIDE: 'Study guide',
+    FLASHCARDS_REQUEST: 'Flashcards',
+    QUIZ_REQUEST: 'Practice quiz',
+    EXAM_QUESTIONS_REQUEST: 'Exam questions',
+    CROSS_LECTURE_EXAM_REQUEST: 'Cross-lecture exam',
+    CHAT: 'Answer'
+  };
+
+  function generationLabel(payload) {
+    return payload?._label || GENERATION_LABELS[payload?.type] || 'Request';
+  }
+
+  function refreshGenerationBar() {
+    const items = [...activeGenerations.entries()].map(([id, g]) => ({ id, label: g.label }));
+    try {
+      GenerationBar.render(items, stopGeneration);
+    } catch { /* bar is non-critical */ }
+  }
+
+  function trackGeneration(id, label, abort) {
+    activeGenerations.set(id, { label, abort });
+    refreshGenerationBar();
+  }
+
+  function untrackGeneration(id) {
+    if (activeGenerations.delete(id)) refreshGenerationBar();
+  }
+
+  function stopGeneration(id) {
+    const g = activeGenerations.get(id);
+    if (!g) return;
+    window.CopilotDebug?.warn('sidebar.generation.stop', { requestId: id, label: g.label });
+    try { g.abort(); } catch { /* already settled */ }
+    untrackGeneration(id);
+  }
+
+  // Generations that produce a whole study artifact rather than a chat reply.
+  const LONG_RUNNING_REQUEST_TYPES = new Set([
+    'FLASHCARDS_REQUEST',
+    'QUIZ_REQUEST',
+    'EXAM_QUESTIONS_REQUEST',
+    'CROSS_LECTURE_EXAM_REQUEST'
+  ]);
+
   function makeRequestId() {
     return 'req_' + (++requestIdCounter);
   }
@@ -1481,6 +1558,9 @@
     const promise = new Promise((resolve, reject) => {
       _rejectFn = reject;
       const isGuideRequest = payload?.type === 'GENERATE_GUIDE';
+      // Study-tool generations are as heavy as a guide on reasoning models —
+      // they need the same patience, not the 2-minute chat deadline.
+      const isLongRequest = LONG_RUNNING_REQUEST_TYPES.has(payload?.type);
       let settled = false;
       let timeoutTimer = null;
       let guideWarnTimer = null;
@@ -1491,6 +1571,7 @@
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (guideWarnTimer) clearTimeout(guideWarnTimer);
         if (closeTimeoutDialog) closeTimeoutDialog();
+        untrackGeneration(id);
       };
 
       if (isGuideRequest) {
@@ -1522,7 +1603,7 @@
           cleanup();
           sendAbortToBackground(id);
           reject(new Error('Request timed out. Please try again or switch model/provider.'));
-        }, 120000);
+        }, isLongRequest ? 330000 : 120000);
       }
 
       pendingRequests[id] = resolve;
@@ -1549,6 +1630,7 @@
     promise.abort = () => {
       window.CopilotDebug?.warn('sidebar.apiRequest.abort', { requestId: id, payloadType: payload?.type });
       sendAbortToBackground(id);
+      untrackGeneration(id);
       if (_rejectFn) {
         delete pendingRequests[id];
         if (activeGuideRequestId === id) activeGuideRequestId = null;
@@ -1557,6 +1639,8 @@
         fn(new Error('Request aborted.'));
       }
     };
+    // Registered last so the bar's Stop button has a working abort to call.
+    trackGeneration(id, generationLabel(payload), promise.abort);
     return promise;
   }
 
@@ -4053,6 +4137,7 @@ ${guideBlocksStr}`;
 
       req = apiRequest({
         type: 'CHAT',
+        _label: 'Lecture summary',
         messages: [{ role: 'user', content: apiUserMessage }],
         systemPrompt,
         provider: settings.provider,
@@ -4092,9 +4177,19 @@ ${guideBlocksStr}`;
       if (assistantText) {
         setLectureSummaryComplete(assistantText, source);
         saveToHistory();
+      } else {
+        // The provider answered with nothing usable. Say so — silently doing
+        // nothing here looked exactly like the button was never pressed.
+        throw new Error('The model returned an empty summary. Try again, or switch model.');
       }
 
-      if (source === 'qa' && assistantText && qaChats[sendChatIdx]) {
+      if (source === 'qa' && !qaChats[sendChatIdx]) {
+        // The chat this was started from is gone (switched/deleted). The
+        // summary is saved, so show it rather than dropping it on the floor.
+        setStatus('ready', 'Lecture summary ready — open it from the guide panel.');
+        refreshInlineLectureSummaryIfOpen();
+        syncSummaryUi();
+      } else if (source === 'qa' && assistantText && qaChats[sendChatIdx]) {
         if (streamState) {
           QaStreamFlush.stopStreamFlush(streamState);
           qaActiveStreams.delete(req._requestId);
@@ -6118,15 +6213,27 @@ ${guideBlocksStr}${scriptContext}`;
     const filename = `${safeName}-guide.md`;
 
     // ── Download file ─────────────────────────────────────────────────────
-    const blob = new Blob([md], { type: 'text/markdown; charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-
-    setStatus('ready', 'Markdown exported');
+    // The anchor must be in the document: a detached click is ignored inside
+    // the sidebar iframe, which is why exporting silently did nothing.
+    try {
+      const blob = new Blob([md], { type: 'text/markdown; charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        a.remove();
+        URL.revokeObjectURL(url);
+      }, 5000);
+      setStatus('ready', 'Markdown exported');
+    } catch (err) {
+      reportSidebarError(err, { operation: 'Export guide as Markdown' });
+      return;
+    }
   }
 
   /**
