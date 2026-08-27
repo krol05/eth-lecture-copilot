@@ -18,6 +18,7 @@
 importScripts(
   chrome.runtime.getURL('lib/debug.js'),
   chrome.runtime.getURL('lib/guide-parse.js'),
+  chrome.runtime.getURL('lib/providers/catalog-data.js'),
   chrome.runtime.getURL('lib/providers/catalog.js'),
   chrome.runtime.getURL('lib/providers/adapters.js'),
   chrome.runtime.getURL('lib/providers/overrides.js'),
@@ -231,6 +232,64 @@ async function runModelRequest(cfg) {
   }
 }
 
+// ─── Live model catalog cache (M4) ───────────────────────────────────────────
+// modelCache[providerId] = { models: [{id, label}], fetchedAt } — stores
+// EVERYTHING the provider's /models endpoint returns, unfiltered, so legacy
+// models the API still serves always show up. UIs merge it additively.
+
+const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function storageGetAsync(keys) {
+  return new Promise(resolve => {
+    try { chrome.storage.local.get(keys, r => resolve(r || {})); } catch { resolve({}); }
+  });
+}
+
+async function listModels({ provider, apiKey, localBase, force = false }) {
+  const store = await loadProviderStore();
+  const p = resolveProviderConfig(provider, store);
+  if (!p) throw apiError({ provider, code: 'unknown_provider', message: `Unknown provider: ${provider}` });
+  const { modelCache = {} } = await storageGetAsync(['modelCache']);
+  const cached = modelCache[provider];
+  if (!force && cached && Date.now() - cached.fetchedAt < MODEL_CACHE_TTL_MS) {
+    return cached.models;
+  }
+
+  const adapter = adapterFor(provider, p, store);
+  const base = p.kind === 'local' ? String(localBase || p.base).replace(/\/+$/, '') : p.base;
+  const request = adapter.buildModelsRequest({ base, apiKey: p.kind === 'local' ? null : apiKey, quirks: p.quirks });
+  if (!request) {
+    throw apiError({ provider, code: 'no_models_endpoint', message: `${p.label || provider} has no model-list API — pick from the built-in list or type a model ID.` });
+  }
+  const resp = await fetch(request.url, { headers: request.headers, signal: AbortSignal.timeout(10000) });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    let raw = null;
+    try { raw = JSON.parse(text); } catch { /* non-JSON body */ }
+    throw apiError({ status: resp.status, provider, code: null, message: `Model list failed: HTTP ${resp.status}`, raw: raw ?? (text || null) });
+  }
+  const models = adapter.parseModelsResponse(await resp.json());
+  if (models.length) {
+    modelCache[provider] = { models, fetchedAt: Date.now() };
+    chrome.storage.local.set({ modelCache });
+  }
+  return models;
+}
+
+// Daily silent refresh of the configured provider's model list
+chrome.alarms?.create('refresh-model-cache', { periodInMinutes: 24 * 60 });
+chrome.alarms?.onAlarm.addListener(async alarm => {
+  if (alarm.name !== 'refresh-model-cache') return;
+  const saved = await storageGetAsync(['provider', 'apiKey', 'localBases']);
+  if (!saved.provider) return;
+  listModels({
+    provider: saved.provider,
+    apiKey: saved.apiKey,
+    localBase: saved.localBases?.[saved.provider],
+    force: true
+  }).catch(() => {}); // silent — the static catalog is always the fallback
+});
+
 // ─── JSON salvage for tool responses (guide uses parseGuideResponse) ─────────
 
 function safeParseJson(raw, debugMeta = {}) {
@@ -299,6 +358,10 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
   });
 
   switch (type) {
+
+    case 'LIST_MODELS': {
+      return listModels({ provider, apiKey, localBase, force: !!msg.force });
+    }
 
     case 'DISCOVER_LOCAL_MODELS': {
       // All OAI-compat runtimes expose GET {base}/models

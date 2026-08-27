@@ -21,6 +21,7 @@ const localBaseGroup  = document.getElementById('local-base-group');
 const localBaseInput  = document.getElementById('local-base-input');
 const localNote       = document.getElementById('local-note');
 const detectBtn       = document.getElementById('detect-btn');
+const refreshBtn      = document.getElementById('refresh-models-btn');
 const detectError     = document.getElementById('detect-error');
 const saveBtn         = document.getElementById('save-btn');
 const statusMsg       = document.getElementById('status-msg');
@@ -30,6 +31,8 @@ const uiSettingsBtn   = document.getElementById('ui-settings-btn');
 
 // User customizations (M3): overrides + custom providers, loaded once at init.
 let providerStore = {};
+// Live model lists (M4): modelCache[providerId] = { models, fetchedAt }
+let modelCache = {};
 
 function init() {
   // Set version in footer
@@ -41,9 +44,10 @@ function init() {
 
   // Load saved settings + provider customizations, then build the UI
   chrome.storage.local.get(
-    ['provider', 'model', 'apiKey', 'localBases', 'onboardingSeen', 'providerOverrides', 'customProviders'],
+    ['provider', 'model', 'apiKey', 'localBases', 'onboardingSeen', 'providerOverrides', 'customProviders', 'modelCache'],
     saved => {
     providerStore = { providerOverrides: saved.providerOverrides, customProviders: saved.customProviders };
+    modelCache = saved.modelCache || {};
 
     // Provider dropdown — cloud / custom / local optgroups
     const cloudGroup = document.createElement('optgroup');
@@ -73,6 +77,8 @@ function init() {
     renderProviderUI(provider);
     populateModels(provider, saved.model);
     if (saved.apiKey) apiKeyInput.value = saved.apiKey;
+    // Silent freshness check on open — background serves from cache under 24h
+    if (saved.apiKey) refreshModels(false);
     const hasLocalBase = cfg?.kind === 'local' && !!savedBase;
     updateStatus(!!saved.apiKey || hasLocalBase);
     onboardingNote.style.display = saved.onboardingSeen ? 'none' : 'flex';
@@ -110,6 +116,7 @@ function init() {
   });
 
   detectBtn.addEventListener('click', detectModels);
+  refreshBtn.addEventListener('click', () => refreshModels(true));
 
   toggleKeyBtn.addEventListener('click', () => {
     const show = apiKeyInput.type === 'password';
@@ -156,6 +163,9 @@ function renderProviderUI(providerId) {
     localNote.style.display = cfg.note ? 'block' : 'none';
   }
 
+  // Live model refresh — cloud providers with a /models endpoint
+  refreshBtn.style.display = (!isLocal && !cfg?.quirks?.noModelsEndpoint) ? 'inline-flex' : 'none';
+
   // Cloud provider meta
   if (!isLocal) {
     apiKeyLink.href = cfg?.keyLink || '#';
@@ -170,6 +180,16 @@ function renderProviderUI(providerId) {
 }
 
 // ─── Model population ─────────────────────────────────────────────────────────
+
+/** Overrides > live cache > built-in list, merged additively (never subtract). */
+function mergedModels(providerId, cfg) {
+  const merged = [...cfg.models];
+  const seen = new Set(merged.map(m => m.id));
+  for (const m of (modelCache[providerId]?.models || [])) {
+    if (!seen.has(m.id)) { seen.add(m.id); merged.push(m); }
+  }
+  return merged;
+}
 
 function populateModels(providerId, selectedModel) {
   const cfg = getConfig(providerId);
@@ -186,15 +206,17 @@ function populateModels(providerId, selectedModel) {
     return;
   }
 
+  const models = mergedModels(providerId, cfg);
+
   // If saved model isn't in the list, select the custom option
-  const modelInList = cfg.models.some(m => m.id === selectedModel);
+  const modelInList = models.some(m => m.id === selectedModel);
   const isCustom = !!(selectedModel && !modelInList);
 
-  modelSelect.innerHTML = cfg.models
+  modelSelect.innerHTML = models
     .map(m => `<option value="${m.id}"${m.id === selectedModel ? ' selected' : ''}>${m.label || m.id}</option>`)
     .join('') + '<option value="__custom__"' + (isCustom ? ' selected' : '') + '>Custom model…</option>';
 
-  if (!selectedModel && cfg.models[0]) modelSelect.value = cfg.models[0].id;
+  if (!selectedModel && models[0]) modelSelect.value = models[0].id;
   modelSelect.dataset.detected = 'false';
 
   modelCustomInline.style.display = isCustom ? 'block' : 'none';
@@ -240,6 +262,36 @@ async function detectModels() {
     detectBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
     </svg> Detect`;
+  }
+}
+
+// ─── Live model refresh for cloud providers (M4) ─────────────────────────────
+
+async function refreshModels(force) {
+  const provider = providerSelect.value;
+  const cfg = getConfig(provider);
+  if (!cfg || cfg.kind === 'local' || cfg.quirks?.noModelsEndpoint) return;
+  const apiKey = apiKeyInput.value.trim();
+  if (!apiKey && !cfg.noAuth) {
+    if (force) showDetectError('Enter your API key first — the model list comes from the provider.');
+    return;
+  }
+
+  if (force) { refreshBtn.disabled = true; }
+  try {
+    const response = await new Promise(resolve => {
+      chrome.runtime.sendMessage({ type: 'LIST_MODELS', provider, apiKey, force: !!force }, resolve);
+    });
+    if (!response?.success) throw new Error(response?.error || 'Model list failed');
+    modelCache[provider] = { models: response.data, fetchedAt: Date.now() };
+    const selected = modelSelect.value === '__custom__' ? modelCustomInline.value.trim() : modelSelect.value;
+    populateModels(provider, selected);
+    if (force) flash('success', `${response.data.length} models loaded`);
+  } catch (err) {
+    // Silent on auto-refresh; explicit on button click
+    if (force) showDetectError(err.message);
+  } finally {
+    if (force) refreshBtn.disabled = false;
   }
 }
 
