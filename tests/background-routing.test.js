@@ -404,3 +404,29 @@ describe('study-tool generations (flashcards, quiz, exam)', () => {
     expect(res.errorDetail.message).toContain('sorry, no JSON here');
   });
 });
+
+describe('per-tool thinking level', () => {
+  test('the level chosen for a tool reaches the provider', async () => {
+    const sw = loadServiceWorker({
+      fetchImpl: () => Promise.resolve(sseResponse(['data: {"choices":[{"delta":{"content":"{}"}}]}\n\n', 'data: [DONE]\n\n']))
+    });
+    await sw.send({
+      type: 'QUIZ_REQUEST', provider: 'deepseek', model: 'deepseek-v4-pro', apiKey: 'sk-x',
+      guideJson: {}, systemPrompt: 'quiz', toolThinking: 'high', _copilotRequestId: 'req_q'
+    });
+    const body = JSON.parse(sw.fetchCalls[0][1].body);
+    expect(body.thinking).toEqual({ type: 'enabled' });
+    expect(body.reasoning_effort).toBe('max');   // deepseek maps high → max
+  });
+
+  test('tools default to no thinking when none is chosen', async () => {
+    const sw = loadServiceWorker({
+      fetchImpl: () => Promise.resolve(sseResponse(['data: {"choices":[{"delta":{"content":"{}"}}]}\n\n', 'data: [DONE]\n\n']))
+    });
+    await sw.send({
+      type: 'EXAM_QUESTIONS_REQUEST', provider: 'deepseek', model: 'deepseek-v4-pro', apiKey: 'sk-x',
+      guideJson: {}, systemPrompt: 'exam', _copilotRequestId: 'req_e'
+    });
+    expect(JSON.parse(sw.fetchCalls[0][1].body).thinking).toEqual({ type: 'disabled' });
+  });
+});
