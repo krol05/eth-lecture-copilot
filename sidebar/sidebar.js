@@ -1113,10 +1113,14 @@
     currentLectureUrl = lectureUrl;
     initScriptsForCourse(lectureUrl);
 
-    // Load custom prompt extras (non-blocking, best-effort)
-    chrome.storage?.local?.get(['customPromptExtras'], (r) => {
+    // Load custom prompt extras and per-tool thinking (non-blocking, best-effort)
+    chrome.storage?.local?.get(['customPromptExtras', TOOL_THINKING_KEY], (r) => {
       if (r.customPromptExtras && typeof r.customPromptExtras === 'object') {
         customPromptExtras = { ...customPromptExtras, ...r.customPromptExtras };
+      }
+      if (r[TOOL_THINKING_KEY] && typeof r[TOOL_THINKING_KEY] === 'object') {
+        toolThinking = { ...toolThinking, ...r[TOOL_THINKING_KEY] };
+        syncToolThinkingSelects();
       }
     });
 
@@ -6182,8 +6186,14 @@ ${guideBlocksStr}${scriptContext}`;
       lines.push('');
       if (block.key_concepts?.length) {
         lines.push('### Key Concepts');
-        for (const c of block.key_concepts) {
-          lines.push(`- ${applyWikiLinks(c.replace(/\n/g, ' '), wikiTerms)}`);
+        // key_concepts are {label, lead, body} objects in current guides and
+        // plain strings in older saved ones — conceptToParts handles both.
+        for (const rawConcept of block.key_concepts) {
+          const parts = conceptToParts(rawConcept);
+          const text = [parts.lead, parts.body].filter(Boolean).join(' ');
+          if (!text) continue;
+          const prefix = parts.label ? `**${parts.label}** — ` : '';
+          lines.push(`- ${prefix}${applyWikiLinks(text.replace(/\n/g, ' '), wikiTerms)}`);
         }
         lines.push('');
       }
@@ -6198,7 +6208,7 @@ ${guideBlocksStr}${scriptContext}`;
       if (block.definitions?.length) {
         lines.push('### Definitions');
         for (const d of block.definitions) {
-          lines.push(`**[[${d.term}]]** — ${d.definition}`);
+          lines.push(`**[[${String(d.term ?? '')}]]** — ${String(d.definition ?? '')}`);
         }
         lines.push('');
       }
@@ -6442,6 +6452,59 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   // Returns <select> HTML for a language picker pre-selected to the current guideLanguage.
+  // ── Per-tool thinking control ─────────────────────────────────────────────
+  // Every generation can pick its own reasoning depth, the same way guide
+  // generation can. The chosen level is remembered per tool.
+  const TOOL_THINKING_LEVELS = [
+    ['none', 'None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']
+  ];
+  const TOOL_THINKING_KEY = 'toolThinking';
+  let toolThinking = {};   // toolKey → level, loaded from storage at init
+
+  function getToolThinking(toolKey) {
+    return toolThinking[toolKey] || 'none';
+  }
+
+  function setToolThinking(toolKey, level) {
+    toolThinking[toolKey] = level;
+    storageSet({ [TOOL_THINKING_KEY]: toolThinking });
+  }
+
+  /** Markup for a tool's thinking select. `id` must be unique on the page. */
+  function _toolThinkingSelectHtml(id, toolKey) {
+    const current = getToolThinking(toolKey);
+    return `<select id="${id}" class="gen-setting-select" data-tool-thinking="${toolKey}">${
+      TOOL_THINKING_LEVELS
+        .map(([v, l]) => `<option value="${v}"${v === current ? ' selected' : ''}>${l}</option>`)
+        .join('')
+    }</select>`;
+  }
+
+  /** A full labelled row, so each tool panel adds thinking with one call. */
+  function _toolThinkingRowHtml(id, toolKey) {
+    return `<div class="inline-tool-row">
+      <span class="inline-tool-label" title="How much the model reasons before answering. More costs more and takes longer.">Thinking</span>
+      ${_toolThinkingSelectHtml(id, toolKey)}
+    </div>`;
+  }
+
+  // One delegated listener covers every tool panel, inline or in the Tools tab.
+  document.addEventListener('change', (ev) => {
+    const sel = ev.target?.closest?.('[data-tool-thinking]');
+    if (!sel) return;
+    setToolThinking(sel.getAttribute('data-tool-thinking'), sel.value);
+    syncToolThinkingSelects(sel);   // keep the other copy of this tool in step
+  });
+
+  /** Show the stored level in every tool select (the Tools-tab ones are static). */
+  function syncToolThinkingSelects(except = null) {
+    for (const sel of document.querySelectorAll('[data-tool-thinking]')) {
+      if (sel === except) continue;
+      const level = getToolThinking(sel.getAttribute('data-tool-thinking'));
+      if (sel.value !== level) sel.value = level;
+    }
+  }
+
   function _inlineLangSelectHtml(id) {
     const langs = [
       ['__guide__','Same as guide'],['English','English'],['German','Deutsch'],
@@ -6547,6 +6610,7 @@ ${guideBlocksStr}${scriptContext}`;
           <span class="inline-tool-label">Language</span>
           ${_inlineLangSelectHtml('it-fc-lang-select')}
         </div>
+        ${_toolThinkingRowHtml('it-fc-thinking-select', 'flashcards')}
         <button id="it-fc-generate-btn" class="primary-btn" type="button">
           <span class="btn-text">Generate Flashcards</span>
           <span class="btn-spinner" style="display:none"></span>
@@ -6568,7 +6632,7 @@ ${guideBlocksStr}${scriptContext}`;
           const langVal = body.querySelector('#it-fc-lang-select')?.value || '__guide__';
           const language = langVal === '__guide__' ? guideLanguage : langVal;
           const systemPrompt = buildFlashcardsPrompt(guide, { count, cardTypes, includeFormulas: formulas, language });
-          const payload = { ...buildApiPayloadBase(), type: 'FLASHCARDS_REQUEST', guideJson: guide, systemPrompt };
+          const payload = { ...buildApiPayloadBase(), type: 'FLASHCARDS_REQUEST', guideJson: guide, systemPrompt, toolThinking: getToolThinking('flashcards') };
           const resp = await apiRequest(payload);
           if (!resp.success) throw new Error(resp.error);
           applyFlashcardsResponse(resp.data);
@@ -6683,6 +6747,7 @@ ${guideBlocksStr}${scriptContext}`;
         <span class="inline-tool-label">Language</span>
         ${_inlineLangSelectHtml('it-quiz-lang-select')}
       </div>
+      ${_toolThinkingRowHtml('it-quiz-thinking-select', 'quiz')}
       <button id="it-quiz-start-btn" class="primary-btn" type="button">
         <span class="btn-text">Start Quiz</span><span class="btn-spinner" style="display:none"></span>
       </button>
@@ -6702,7 +6767,7 @@ ${guideBlocksStr}${scriptContext}`;
         const langVal = body.querySelector('#it-quiz-lang-select')?.value || '__guide__';
         const language = langVal === '__guide__' ? guideLanguage : langVal;
         const systemPrompt = buildQuizPrompt(guide, { count, type, language });
-        const payload = { ...buildApiPayloadBase(), type: 'QUIZ_REQUEST', guideJson: guide, systemPrompt };
+        const payload = { ...buildApiPayloadBase(), type: 'QUIZ_REQUEST', guideJson: guide, systemPrompt, toolThinking: getToolThinking('quiz') };
         const resp  = await apiRequest(payload);
         if (!resp.success) throw new Error(resp.error);
         const questions = resp.data?.questions || [];
@@ -6792,6 +6857,7 @@ ${guideBlocksStr}${scriptContext}`;
         <span class="inline-tool-label">Language</span>
         ${_inlineLangSelectHtml('it-exam-lang-select')}
       </div>
+      ${_toolThinkingRowHtml('it-exam-thinking-select', 'exam')}
       <button id="it-exam-gen-btn" class="primary-btn" type="button">
         <span class="btn-text">Generate Questions</span><span class="btn-spinner" style="display:none"></span>
       </button>
@@ -6854,7 +6920,7 @@ ${guideBlocksStr}${scriptContext}`;
         }
 
         const systemPrompt = buildExamQuestionsPrompt(guide, blocks, { count, format, difficulty, answerLength: answerLen, questionsPerBlock: perBlock, language });
-        const payload = { ...buildApiPayloadBase(), type: 'EXAM_QUESTIONS_REQUEST', guideJson: guide, systemPrompt };
+        const payload = { ...buildApiPayloadBase(), type: 'EXAM_QUESTIONS_REQUEST', guideJson: guide, systemPrompt, toolThinking: getToolThinking('exam') };
         const resp = await apiRequest(payload);
         if (!resp.success) throw new Error(resp.error);
         const questions = resp.data?.questions || [];
@@ -7331,6 +7397,7 @@ ${guideBlocksStr}${scriptContext}`;
       const payload = {
         ...buildApiPayloadBase(),
         type: 'FLASHCARDS_REQUEST',
+        toolThinking: getToolThinking('flashcards'),
         guideJson: guide,
         systemPrompt
       };
@@ -7674,6 +7741,7 @@ ${guideBlocksStr}${scriptContext}`;
       const payload = {
         ...buildApiPayloadBase(),
         type: 'QUIZ_REQUEST',
+        toolThinking: getToolThinking('quiz'),
         guideJson: guide,
         systemPrompt
       };
@@ -7986,6 +8054,7 @@ ${guideBlocksStr}${scriptContext}`;
       const payload = {
         ...buildApiPayloadBase(),
         type: 'EXAM_QUESTIONS_REQUEST',
+        toolThinking: getToolThinking('exam'),
         guideJson: guide,
         systemPrompt
       };
@@ -8339,6 +8408,7 @@ ${guideBlocksStr}${scriptContext}`;
       const payload = {
         ...buildApiPayloadBase(),
         type: 'CROSS_LECTURE_EXAM_REQUEST',
+        toolThinking: getToolThinking('exam'),
         guidesJson: lectures,
         systemPrompt
       };

@@ -22,6 +22,8 @@ const libGlobals = {
   // lib/concept-split.js
   splitConceptText: 'readonly',
   isAbbreviationDot: 'readonly',
+  conceptToParts: 'readonly',
+  conceptToText: 'readonly',
   // lib/render-inline.js
   escHtml: 'readonly',
   renderMarkdownInline: 'readonly',
