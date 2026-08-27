@@ -28,6 +28,9 @@ const statusDot       = document.getElementById('status-dot');
 const statusLabel     = document.getElementById('status-label');
 const uiSettingsBtn   = document.getElementById('ui-settings-btn');
 
+// User customizations (M3): overrides + custom providers, loaded once at init.
+let providerStore = {};
+
 function init() {
   // Set version in footer
   try {
@@ -36,24 +39,32 @@ function init() {
     if (vEl && v) vEl.textContent = `Lecture Copilot v${v}`;
   } catch (_) {}
 
-  // Build provider dropdown — split into two optgroups
-  const cloudGroup = document.createElement('optgroup');
-  cloudGroup.label = 'Cloud';
-  const localGroup = document.createElement('optgroup');
-  localGroup.label = '⚡ Local';
+  // Load saved settings + provider customizations, then build the UI
+  chrome.storage.local.get(
+    ['provider', 'model', 'apiKey', 'localBases', 'onboardingSeen', 'providerOverrides', 'customProviders'],
+    saved => {
+    providerStore = { providerOverrides: saved.providerOverrides, customProviders: saved.customProviders };
 
-  Catalog.list().forEach(p => {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.label;
-    (p.kind === 'local' ? localGroup : cloudGroup).appendChild(opt);
-  });
+    // Provider dropdown — cloud / custom / local optgroups
+    const cloudGroup = document.createElement('optgroup');
+    cloudGroup.label = 'Cloud';
+    const customGroup = document.createElement('optgroup');
+    customGroup.label = '✳ Custom';
+    const localGroup = document.createElement('optgroup');
+    localGroup.label = '⚡ Local';
 
-  providerSelect.appendChild(cloudGroup);
-  providerSelect.appendChild(localGroup);
+    listResolvedProviders(providerStore).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.label;
+      const group = p.kind === 'local' ? localGroup : p.kind === 'custom' ? customGroup : cloudGroup;
+      group.appendChild(opt);
+    });
 
-  // Load saved settings
-  chrome.storage.local.get(['provider', 'model', 'apiKey', 'localBases', 'onboardingSeen'], saved => {
+    providerSelect.appendChild(cloudGroup);
+    if (customGroup.children.length) providerSelect.appendChild(customGroup);
+    providerSelect.appendChild(localGroup);
+
     const provider = saved.provider || Catalog.list()[0].id;
     providerSelect.value = provider;
     const cfg = getConfig(provider);
@@ -251,7 +262,8 @@ function save() {
   const apiKey  = isLocal ? null : apiKeyInput.value.trim();
   const base    = isLocal ? localBaseInput.value.trim() : null;
 
-  if (!isLocal && !apiKey) { flash('error', 'Please enter an API key.'); return; }
+  // Custom providers marked noAuth may save without a key
+  if (!isLocal && !apiKey && !cfg?.noAuth) { flash('error', 'Please enter an API key.'); return; }
   if (isLocal && !base)    { flash('error', 'Please enter a server URL.'); return; }
   if (!model)              { flash('error', 'Please select or detect a model.'); return; }
 
@@ -284,7 +296,7 @@ function onSaved() {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getConfig(id) {
-  return Catalog.get(id);
+  return resolveProvider(id, providerStore);
 }
 
 function flash(type, text) {

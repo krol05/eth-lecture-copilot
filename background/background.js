@@ -19,7 +19,9 @@ importScripts(
   chrome.runtime.getURL('lib/debug.js'),
   chrome.runtime.getURL('lib/guide-parse.js'),
   chrome.runtime.getURL('lib/providers/catalog.js'),
-  chrome.runtime.getURL('lib/providers/adapters.js')
+  chrome.runtime.getURL('lib/providers/adapters.js'),
+  chrome.runtime.getURL('lib/providers/overrides.js'),
+  chrome.runtime.getURL('lib/providers/adapter-spec.js')
 );
 
 // ─── Structured errors ───────────────────────────────────────────────────────
@@ -104,14 +106,33 @@ async function readSSEStream(resp, onEvent) {
 
 // ─── The one request pipeline (stream and non-stream, all providers) ─────────
 
-function resolveProvider(providerId) {
-  const p = Catalog.get(providerId);
+/** Load the user's provider customizations (M3). */
+function loadProviderStore() {
+  return new Promise(resolve => {
+    try {
+      chrome.storage.local.get(['providerOverrides', 'customProviders', 'adapterSpecs'], r => resolve(r || {}));
+    } catch { resolve({}); }
+  });
+}
+
+function resolveProviderConfig(providerId, store) {
+  const p = resolveProvider(providerId, store); // catalog ⊕ override ⊕ custom
   if (p) return p;
   // Forward-compatible: any unknown local_* id is a keyless OAI-compat server
   if (String(providerId || '').startsWith('local_')) {
     return { id: providerId, adapter: 'oai', kind: 'local', noAuth: true, base: '' };
   }
   return null;
+}
+
+function adapterFor(providerId, p, store) {
+  const spec = store.adapterSpecs?.[providerId];
+  if (spec) {
+    const { ok } = validateSpec(spec);
+    if (ok) return adapterFromSpec(spec);
+    globalThis.CopilotDebug?.warn('background.adapterSpec.invalid', { providerId });
+  }
+  return Adapters[p.adapter];
 }
 
 async function runModelRequest(cfg) {
@@ -122,17 +143,22 @@ async function runModelRequest(cfg) {
     requestId = null, sender = null, onProgress = () => {}
   } = cfg;
 
-  const p = resolveProvider(provider);
+  const store = await loadProviderStore();
+  const p = resolveProviderConfig(provider, store);
   if (!p) throw apiError({ provider, model, code: 'unknown_provider', message: `Unknown provider: ${provider}` });
 
   const base = p.kind === 'local' ? String(localBase || p.base).replace(/\/+$/, '') : p.base;
   if (!base) throw apiError({ provider, model, code: 'missing_base', message: 'Missing base URL for local provider' });
 
-  const adapter = Adapters[p.adapter];
+  const adapter = adapterFor(provider, p, store);
+  // Custom endpoints may be authenticated anywhere (incl. localhost). Catalog
+  // locals stay keyless: the stored apiKey belongs to whatever cloud provider
+  // was configured before and must not leak to a local server.
   const request = adapter.buildRequest({
-    base, model, apiKey: p.noAuth ? null : apiKey,
+    base, model, apiKey: p.kind === 'local' ? null : apiKey,
     system, messages, stream, jsonMode, thinking, temperature, maxTokens,
-    quirks: p.quirks
+    quirks: p.quirks,
+    extraHeaders: p.headers
   });
   globalThis.CopilotDebug?.log('background.request', { requestId, provider, model, url: request.url, stream, body: request.body });
 

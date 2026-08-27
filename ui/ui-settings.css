@@ -370,3 +370,42 @@ button.primary:hover {
   margin-top: 8px;
   min-height: 18px;
 }
+
+/* ── AI Providers section (M3) ─────────────────────────────────────────── */
+
+.prov-row { margin-bottom: 12px; }
+.prov-row label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+.prov-row input[type="text"],
+.prov-row select {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 10px;
+}
+.prov-check {
+  display: block;
+  font-size: 12.5px;
+  margin: 8px 0;
+  color: var(--text);
+  cursor: pointer;
+}
+.prov-check input { margin-right: 6px; }
+#prov-spec-details { margin: 12px 0; }
+#prov-spec-details > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+#prov-spec { font-family: var(--font-mono, monospace); }
+#prov-spec-status, #prov-status { white-space: pre-line; }
