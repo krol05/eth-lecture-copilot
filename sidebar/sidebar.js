@@ -1114,13 +1114,17 @@
     initScriptsForCourse(lectureUrl);
 
     // Load custom prompt extras and per-tool thinking (non-blocking, best-effort)
-    chrome.storage?.local?.get(['customPromptExtras', TOOL_THINKING_KEY], (r) => {
+    chrome.storage?.local?.get(['customPromptExtras', TOOL_THINKING_KEY, SUMMARY_OPTS_KEY], (r) => {
       if (r.customPromptExtras && typeof r.customPromptExtras === 'object') {
         customPromptExtras = { ...customPromptExtras, ...r.customPromptExtras };
       }
       if (r[TOOL_THINKING_KEY] && typeof r[TOOL_THINKING_KEY] === 'object') {
         toolThinking = { ...toolThinking, ...r[TOOL_THINKING_KEY] };
         syncToolThinkingSelects();
+      }
+      if (r[SUMMARY_OPTS_KEY] && typeof r[SUMMARY_OPTS_KEY] === 'object') {
+        summaryOptions = { ...summaryOptions, ...r[SUMMARY_OPTS_KEY] };
+        refreshInlineLectureSummaryIfOpen();
       }
     });
 
@@ -2622,7 +2626,7 @@
     toast.innerHTML = `
       <div class="regen-confirm-text">
         <strong>Regenerate guide?</strong>
-        This clears the current guide and Q&amp;A for this lecture.
+        This clears the current guide, Q&amp;A and lecture summary for this lecture.
       </div>
       <div class="regen-confirm-actions">
         <button type="button" class="regen-confirm-cancel">Cancel</button>
@@ -2642,6 +2646,9 @@
     guide = null;
     currentBlockIndex = -1;
     resetQaChats();
+    // The summary belongs to the old guide — drop it from storage, from the
+    // Q&A panels, and from every chat's context flag.
+    clearLectureSummaryState();
     guideContent.style.display = 'none';
     guideEmpty.style.display = '';
     generateError.style.display = 'none';
@@ -3742,13 +3749,36 @@ Now process the following transcript:`;
     return lectureSummaryGenerating;
   }
 
-  function clearLectureSummaryState() {
+  /**
+   * Forget the lecture summary everywhere it can be remembered: the text, the
+   * Q&A panels, and every chat's "in context" flag. The summary describes one
+   * specific guide, so anything that invalidates the guide must call this —
+   * otherwise a new guide silently keeps feeding the old summary to the model.
+   */
+  function clearLectureSummaryState({ persist = true } = {}) {
     lectureSummaryText = null;
     lectureSummarySource = null;
     lectureSummaryGenerating = false;
     _lectureSummaryQaChatIdx = null;
+    _lectureSummaryGuideBody = null;
+
+    // Reset "add to context" on every chat — the flag outlives the panel.
+    let touched = false;
+    for (const chat of qaChats) {
+      if (chat?.summaryInContext) { chat.summaryInContext = false; touched = true; }
+    }
+    if (touched && persist) persistChat();
+
     removeAllQaSummaryPanels();
-    chrome.storage?.local?.remove(['currentLectureSummary']);
+    if (persist) chrome.storage?.local?.remove(['currentLectureSummary']);
+    syncSummaryUi();
+  }
+
+  /** Throw away the current summary and immediately build a fresh one. */
+  function regenerateLectureSummary(source, guideBodyEl) {
+    if (isLectureSummaryGenerating()) return;
+    clearLectureSummaryState();
+    runLectureSummaryGeneration({ source, chatIdx: activeQaChatIdx, guideBodyEl });
   }
 
   function persistLectureSummary() {
@@ -3970,6 +4000,61 @@ Now process the following transcript:`;
     return transcript?.text || '(no transcript)';
   }
 
+  // ── Lecture summary options ───────────────────────────────────────────────
+  // Same storage pattern as the per-tool thinking setting.
+  const SUMMARY_STYLES = {
+    exam: {
+      label: 'Exam preparation',
+      hint: 'Definitions, theorems, likely exam questions',
+      rules: [
+        'Prioritize exam-relevant content: definitions, theorems, key arguments, formulas, algorithms, and typical proof patterns',
+        'Add a dedicated section on likely exam questions and what examiners often test',
+        'Add practical tips, common mistakes, and memory hooks where the lecture supports them'
+      ]
+    },
+    overview: {
+      label: 'Overview',
+      hint: 'The big picture and how ideas connect',
+      rules: [
+        'Lead with the overall narrative: what problem the lecture addresses and how the parts fit together',
+        'Emphasize connections between topics and the intuition behind them over formal detail',
+        'Keep formal statements short — enough to recognise them, not to reproduce every proof'
+      ]
+    },
+    cheatsheet: {
+      label: 'Cheat sheet',
+      hint: 'Dense reference — formulas, definitions, facts',
+      rules: [
+        'Write as a dense reference sheet: short labelled entries, no prose paragraphs',
+        'Favour formulas, definitions, conditions and results over explanation',
+        'Group by topic with compact headers so a specific fact can be found quickly'
+      ]
+    },
+    feynman: {
+      label: 'Explain simply',
+      hint: 'Plain language, worked intuition',
+      rules: [
+        'Explain every major idea in plain language first, as if teaching someone seeing it for the first time',
+        'Use concrete examples and analogies that the lecture itself supports',
+        'Introduce notation only after the idea behind it is clear'
+      ]
+    }
+  };
+
+  const SUMMARY_LENGTHS = {
+    short:    { label: 'Short',    rule: 'Keep it tight — the essentials only, roughly one screen of reading.' },
+    standard: { label: 'Standard', rule: 'Balanced coverage — complete without unnecessary verbosity.' },
+    thorough: { label: 'Thorough', rule: 'Full coverage — every topic in the guide gets its own treatment, with detail.' }
+  };
+
+  const SUMMARY_OPTS_KEY = 'lectureSummaryOptions';
+  let summaryOptions = { style: 'exam', length: 'standard', language: '__guide__', focus: '' };
+
+  function setSummaryOption(key, value) {
+    summaryOptions = { ...summaryOptions, [key]: value };
+    storageSet({ [SUMMARY_OPTS_KEY]: summaryOptions });
+  }
+
   function buildLectureSummaryPrompt() {
     const title = transcript?.lectureTitle || guide?.lecture_title || 'Lecture';
     const guideBlocksStr = guide?.guide?.length
@@ -3978,13 +4063,32 @@ Now process the following transcript:`;
     const fullTranscript = buildFullTranscriptText();
     const qaExtraPrefix = customPromptExtras.qa ? customPromptExtras.qa.trim() + '\n\n' : '';
 
-    return `${qaExtraPrefix}You are an expert ETH Zürich exam preparation tutor. Produce ONE comprehensive lecture summary for exam study based ONLY on the materials below.
+    const style = SUMMARY_STYLES[summaryOptions.style] || SUMMARY_STYLES.exam;
+    const length = SUMMARY_LENGTHS[summaryOptions.length] || SUMMARY_LENGTHS.standard;
+    const styleRules = style.rules.map(r => `- ${r}`).join('\n');
+
+    const lang = summaryOptions.language === '__guide__'
+      ? (guideLanguage || '')
+      : summaryOptions.language;
+    const languageLine = lang
+      ? `\nLANGUAGE: Write the entire summary in ${lang}. Keep LaTeX and technical notation unchanged.`
+      : '\nLANGUAGE: Write in the dominant language of the transcript.';
+
+    const focus = String(summaryOptions.focus || '').trim();
+    const focusLine = focus
+      ? `\nEXTRA FOCUS FROM THE STUDENT (honour it, but never at the cost of coverage): ${focus}`
+      : '';
+
+    return `${qaExtraPrefix}You are an expert ETH Zürich tutor. Produce ONE lecture summary based ONLY on the materials below.
+
+STYLE: ${style.label} — ${style.hint}
+${styleRules}
+
+LENGTH: ${length.label} — ${length.rule}
+${languageLine}${focusLine}
 
 MUST:
 - Cover every major topic from the FULL GUIDE and FULL TRANSCRIPT — nothing important omitted
-- Prioritize exam-relevant content: definitions, theorems, key arguments, formulas, algorithms, and typical proof patterns
-- Add a dedicated section on likely exam questions and what examiners often test
-- Add practical tips, common mistakes, and memory hooks where the lecture supports them
 - Use clear markdown (## sections, bullets). Use LaTeX ($...$ inline, $$...$$ display) for math
 - Reference timestamps [HH:MM:SS] when anchoring content to the video
 
@@ -3992,8 +4096,6 @@ MUST NOT:
 - Invent facts, topics, or exam hints not supported by the guide or transcript
 - Filler, motivational padding, or meta-commentary about being an AI
 - Repeat the same point in multiple sections
-
-Tone: dense and useful — complete coverage without unnecessary verbosity.
 
 --- FULL TRANSCRIPT (${title}) ---
 ${fullTranscript}
@@ -6520,6 +6622,47 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   /** Build the Lecture Summary inline panel body (synced with Q&A) */
+  /** Style / length / language / focus controls for the lecture summary. */
+  function _summaryOptionsHtml() {
+    const styleOpts = Object.entries(SUMMARY_STYLES)
+      .map(([v, d]) => `<option value="${v}"${v === summaryOptions.style ? ' selected' : ''}>${d.label}</option>`).join('');
+    const lengthOpts = Object.entries(SUMMARY_LENGTHS)
+      .map(([v, d]) => `<option value="${v}"${v === summaryOptions.length ? ' selected' : ''}>${d.label}</option>`).join('');
+    const hint = (SUMMARY_STYLES[summaryOptions.style] || SUMMARY_STYLES.exam).hint;
+    return `
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Style</span>
+        <select class="gen-setting-select" data-summary-opt="style">${styleOpts}</select>
+      </div>
+      <p class="inline-tool-hint summary-style-hint">${escHtml(hint)}</p>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Length</span>
+        <select class="gen-setting-select" data-summary-opt="length">${lengthOpts}</select>
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Language</span>
+        ${_inlineLangSelectHtml('it-summary-lang-select').replace('id="it-summary-lang-select"', 'data-summary-opt="language"')}
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label" title="Anything you want emphasised, e.g. a topic you find hard">Focus</span>
+        <input type="text" class="gen-setting-input" data-summary-opt="focus"
+               placeholder="optional — e.g. focus on the proofs"
+               value="${escHtml(summaryOptions.focus || '')}">
+      </div>`;
+  }
+
+  // One delegated listener for every copy of the summary options.
+  document.addEventListener('change', (ev) => {
+    const el = ev.target?.closest?.('[data-summary-opt]');
+    if (!el) return;
+    setSummaryOption(el.getAttribute('data-summary-opt'), el.value);
+    if (el.getAttribute('data-summary-opt') === 'style') refreshInlineLectureSummaryIfOpen();
+  });
+  document.addEventListener('input', (ev) => {
+    const el = ev.target?.closest?.('input[data-summary-opt="focus"]');
+    if (el) setSummaryOption('focus', el.value);
+  });
+
   function _buildInlineLectureSummary(body) {
     if (isLectureSummaryGenerating()) {
       if (lectureSummarySource === 'qa') {
@@ -6540,15 +6683,24 @@ ${guideBlocksStr}${scriptContext}`;
         ${srcHint}
         <div class="inline-tool-actions lecture-summary-actions">
           <button type="button" class="history-load-btn lecture-summary-export-pdf-btn">Export PDF</button>
+          <button type="button" class="history-load-btn lecture-summary-regen-btn" title="Discard this summary and build a new one with the current options">Regenerate</button>
         </div>
+        <details class="summary-options-details">
+          <summary>Summary options</summary>
+          ${_summaryOptionsHtml()}
+        </details>
         <div class="lecture-summary-view"></div>`;
       renderLectureSummaryMarkdown(body.querySelector('.lecture-summary-view'), lectureSummaryText);
       body.querySelector('.lecture-summary-export-pdf-btn')?.addEventListener('click', openSummaryPrintWindow);
+      body.querySelector('.lecture-summary-regen-btn')?.addEventListener('click', () => {
+        regenerateLectureSummary('guide', body);
+      });
       return;
     }
     const canGen = hasUsableSettings() && transcript?.text && guide?.guide?.length;
     body.innerHTML = `
-      <p class="inline-tool-hint">One-shot exam-focused summary from the full guide and transcript. Synced with the Q&amp;A tab.</p>
+      <p class="inline-tool-hint">One summary built from the full guide and transcript. Synced with the Q&amp;A tab.</p>
+      ${_summaryOptionsHtml()}
       <button type="button" class="btn-primary inline-summary-generate-btn" ${canGen ? '' : 'disabled'}>
         Generate lecture summary
       </button>`;
