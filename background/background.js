@@ -20,6 +20,7 @@ importScripts(
   chrome.runtime.getURL('lib/guide-parse.js'),
   chrome.runtime.getURL('lib/providers/catalog-data.js'),
   chrome.runtime.getURL('lib/providers/catalog.js'),
+  chrome.runtime.getURL('lib/providers/reasoning.js'),
   chrome.runtime.getURL('lib/providers/adapters.js'),
   chrome.runtime.getURL('lib/providers/overrides.js'),
   chrome.runtime.getURL('lib/providers/adapter-spec.js')
@@ -159,7 +160,8 @@ async function runModelRequest(cfg) {
     base, model, apiKey: p.kind === 'local' ? null : apiKey,
     system, messages, stream, jsonMode, thinking, temperature, maxTokens,
     quirks: p.quirks,
-    extraHeaders: p.headers
+    extraHeaders: p.headers,
+    providerId: provider   // selects the right way to switch reasoning off
   });
   globalThis.CopilotDebug?.log('background.request', { requestId, provider, model, url: request.url, stream, body: request.body });
 

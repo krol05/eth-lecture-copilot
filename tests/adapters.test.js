@@ -272,7 +272,7 @@ describe('oai adapter', () => {
     expect(body.reasoning_effort).toBe('max');
     // "none" is sent explicitly: omitting the param lets V4 decide to think,
     // which on a non-streaming request is indistinguishable from a hang
-    const off = O.buildRequest(req({ model: 'deepseek-v4-flash', quirks, thinking: 'none' }));
+    const off = O.buildRequest(req({ providerId: 'deepseek', model: 'deepseek-v4-flash', quirks, thinking: 'none' }));
     expect(off.body.thinking).toEqual({ type: 'disabled' });
     expect(off.body.reasoning_effort).toBeUndefined();
   });
@@ -348,23 +348,23 @@ describe('thinking off is always explicit', () => {
 
   test('OpenAI reasoning models get an explicit effort', () => {
     const quirks = Catalog.get('openai').quirks;
-    const gpt5 = O.buildRequest(req({ model: 'gpt-5.6-terra', quirks, thinking: 'none' }));
+    const gpt5 = O.buildRequest(req({ providerId: 'openai', model: 'gpt-5.6-terra', quirks, thinking: 'none' }));
     expect(gpt5.body.reasoning_effort).toBe('none');
     // o-series predates none/minimal — "low" is the safe floor
-    const o = O.buildRequest(req({ model: 'o4-mini', quirks, thinking: 'none' }));
+    const o = O.buildRequest(req({ providerId: 'openai', model: 'o4-mini', quirks, thinking: 'none' }));
     expect(o.body.reasoning_effort).toBe('low');
   });
 
   test('non-reasoning models are left alone', () => {
     const quirks = Catalog.get('openai').quirks;
-    const { body } = O.buildRequest(req({ model: 'gpt-4o', quirks, thinking: 'none' }));
+    const { body } = O.buildRequest(req({ providerId: 'openai', model: 'gpt-4o', quirks, thinking: 'none' }));
     expect(body.reasoning_effort).toBeUndefined();
     expect(body.thinking).toBeUndefined();
   });
 
   test('DeepSeek disables thinking explicitly', () => {
     const quirks = Catalog.get('deepseek').quirks;
-    const { body } = O.buildRequest(req({ model: 'deepseek-v4-pro', quirks, thinking: 'none' }));
+    const { body } = O.buildRequest(req({ providerId: 'deepseek', model: 'deepseek-v4-pro', quirks, thinking: 'none' }));
     expect(body.thinking).toEqual({ type: 'disabled' });
   });
 
