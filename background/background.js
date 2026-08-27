@@ -161,7 +161,10 @@ async function runModelRequest(cfg) {
     system, messages, stream, jsonMode, thinking, temperature, maxTokens,
     quirks: p.quirks,
     extraHeaders: p.headers,
-    providerId: provider   // selects the right way to switch reasoning off
+    // Together these select the right way to switch reasoning off: the
+    // provider decides which parameter, the model which values it accepts.
+    providerId: provider,
+    modelInfo: (p.models || []).find(entry => entry.id === model)
   });
   globalThis.CopilotDebug?.log('background.request', { requestId, provider, model, url: request.url, stream, body: request.body });
 

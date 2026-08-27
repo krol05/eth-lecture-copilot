@@ -26,6 +26,7 @@ import { dirname, join } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const { reasoningOffBody } = require('../lib/providers/reasoning.js');
 const DATA_FILE = join(ROOT, 'lib/providers/catalog-data.js');
 const SOURCE_URL = 'https://models.dev/api.json';
 
@@ -72,6 +73,14 @@ const NON_CHAT = /(^|[-/])(embed|embedding|tts|whisper|transcribe|realtime|live|
 // /models covers the full list at runtime, and the cap is reported below.
 const NEW_MODEL_CAP = 25;
 
+/** The reasoning effort levels a model accepts, when the index reports them. */
+function effortsOf(model) {
+  const values = (model.reasoning_options || [])
+    .filter(o => o && o.type === 'effort' && Array.isArray(o.values))
+    .flatMap(o => o.values);
+  return values.length ? { efforts: [...new Set(values)] } : {};
+}
+
 function isChatTextModel(model) {
   if (NON_CHAT.test(model.id)) return false;
   const out = model.modalities?.output;
@@ -80,6 +89,43 @@ function isChatTextModel(model) {
   if (Array.isArray(inp) && !inp.includes('text')) return false;
   if (model.limit && model.limit.context === 0) return false; // non-text endpoints
   return true;
+}
+
+/**
+ * Cross-check lib/providers/reasoning.js against what models.dev reports each
+ * model actually accepts. This cannot regenerate the table — the off-switches
+ * come from provider docs — but it catches the dangerous case where we would
+ * send a value the model rejects, which is a 400 that breaks the provider.
+ */
+function auditReasoning(catalogModels, upstream) {
+  const problems = [];
+  const gaps = [];
+  for (const [providerId, models] of Object.entries(catalogModels)) {
+    // Anthropic and Google have dedicated adapters that always state their
+    // thinking mode; this table only governs the OpenAI-compatible ones.
+    if (providerId === 'anthropic' || providerId === 'google') continue;
+    const sourceId = PROVIDER_SOURCES[providerId];
+    const upstreamModels = sourceId && upstream[sourceId] ? upstream[sourceId].models : null;
+    if (!upstreamModels) continue;
+
+    for (const entry of models) {
+      const { id } = entry;
+      const info = upstreamModels[id];
+      if (!info) continue;
+      const off = reasoningOffBody(providerId, id, entry);
+      const efforts = (info.reasoning_options || [])
+        .filter(o => o.type === 'effort' && Array.isArray(o.values))
+        .flatMap(o => o.values);
+
+      if (off && off.reasoning_effort && efforts.length && !efforts.includes(off.reasoning_effort)) {
+        problems.push(`  ${providerId}/${id}: we send reasoning_effort "${off.reasoning_effort}" but only [${efforts.join(', ')}] are listed`);
+      }
+      if (!off && info.reasoning === true) {
+        gaps.push(`  ${providerId}/${id}: reasons by default, we send nothing`);
+      }
+    }
+  }
+  return { problems, gaps };
 }
 
 function loadExisting() {
@@ -102,7 +148,17 @@ function mergeProvider(existing, upstreamModels) {
     .sort((a, b) => String(b.release_date || '').localeCompare(String(a.release_date || '')));
 
   const added = candidates.slice(0, NEW_MODEL_CAP);
-  for (const m of added) merged.push({ id: m.id, label: m.name || m.id });
+  for (const m of added) merged.push({ id: m.id, label: m.name || m.id, ...effortsOf(m) });
+
+  // Refresh the accepted reasoning levels on models we already listed — this
+  // is what stops us sending a value the provider would reject.
+  for (const entry of merged) {
+    const info = upstreamModels[entry.id];
+    if (!info) continue;
+    const e = effortsOf(info);
+    if (e.efforts) entry.efforts = e.efforts;
+    else delete entry.efforts;
+  }
   return { merged, addedCount: added.length, skippedCount: candidates.length - added.length };
 }
 
@@ -111,7 +167,10 @@ function serialize(catalogModels, sourceDate) {
   const body = Object.entries(catalogModels).map(([provider, models]) => {
     const idWidth = Math.max(...models.map(m => JSON.stringify(m.id).length));
     const rows = models
-      .map(m => `      { id: ${pad(JSON.stringify(m.id) + ',', idWidth + 1)} label: ${JSON.stringify(m.label)} }`)
+      .map(m => {
+        const efforts = m.efforts ? `, efforts: ${JSON.stringify(m.efforts)}` : '';
+        return `      { id: ${pad(JSON.stringify(m.id) + ',', idWidth + 1)} label: ${JSON.stringify(m.label)}${efforts} }`;
+      })
       .join(',\n');
     return `    ${provider}: [\n${rows}\n    ]`;
   }).join(',\n');
@@ -181,6 +240,20 @@ async function main() {
   console.log('\nModel counts:');
   console.log(report.join('\n'));
   console.log(`\nTotal new models: ${totalAdded}`);
+
+  // Safety check on the reasoning table (see auditReasoning)
+  const { problems, gaps } = auditReasoning(out, upstream);
+  if (problems.length) {
+    console.log('\n⚠ Reasoning settings that may be REJECTED (fix lib/providers/reasoning.js):');
+    console.log(problems.join('\n'));
+  } else {
+    console.log('\nReasoning settings: no rejected values detected.');
+  }
+  if (gaps.length) {
+    console.log(`\nModels that reason by default where we send nothing (${gaps.length}):`);
+    console.log(gaps.slice(0, 15).join('\n'));
+    if (gaps.length > 15) console.log(`  …and ${gaps.length - 15} more`);
+  }
 
   if (!totalAdded) {
     console.log('Nothing new — catalog left unchanged.');

@@ -141,3 +141,48 @@ describe('plain chat models never receive a reasoning parameter', () => {
     expect(reasoningOffBody('nvidia_nim', 'qwen/qwen3-32b')).toEqual({ chat_template_kwargs: { enable_thinking: false } });
   });
 });
+
+describe('accepted effort levels from the catalog override the hand-written value', () => {
+  // Captured from models.dev by the weekly update. Without this, "none" would
+  // be sent to models that only accept "high" — a 400.
+  test('picks the lowest level the model actually accepts', () => {
+    expect(reasoningOffBody('openai', 'gpt-5-pro', { efforts: ['high'] }))
+      .toEqual({ reasoning_effort: 'high' });
+    expect(reasoningOffBody('openai', 'gpt-5-mini', { efforts: ['minimal', 'low', 'medium', 'high'] }))
+      .toEqual({ reasoning_effort: 'minimal' });
+    expect(reasoningOffBody('openai', 'gpt-5.2-pro', { efforts: ['medium', 'high', 'xhigh'] }))
+      .toEqual({ reasoning_effort: 'medium' });
+  });
+
+  test('falls back to the documented value when the levels are unknown', () => {
+    expect(reasoningOffBody('openai', 'gpt-5.6-terra')).toEqual({ reasoning_effort: 'none' });
+    expect(reasoningOffBody('openai', 'gpt-5.6-terra', {})).toEqual({ reasoning_effort: 'none' });
+  });
+
+  test('a gpt-oss model still cannot be pushed to "none" by bad data', () => {
+    // its real list never contains "none"; if it somehow did we would honour it,
+    // but the documented floor protects the common case
+    expect(reasoningOffBody('groq', 'openai/gpt-oss-120b', { efforts: ['low', 'medium', 'high'] }))
+      .toEqual({ reasoning_effort: 'low' });
+    expect(reasoningOffBody('groq', 'openai/gpt-oss-120b')).toEqual({ reasoning_effort: 'low' });
+  });
+
+  test('object-valued switches ignore effort data', () => {
+    expect(reasoningOffBody('deepseek', 'deepseek-v4-pro', { efforts: ['high', 'max'] }))
+      .toEqual({ thinking: { type: 'disabled' } });
+    expect(reasoningOffBody('qwen', 'qwen3.5-plus', { efforts: ['low'] }))
+      .toEqual({ enable_thinking: false });
+  });
+
+  test('the shipped catalog never asks for a level its model rejects', () => {
+    for (const p of Catalog.list()) {
+      if (p.adapter !== 'oai') continue;
+      for (const m of p.models) {
+        const off = reasoningOffBody(p.id, m.id, m);
+        if (off && off.reasoning_effort && Array.isArray(m.efforts) && m.efforts.length) {
+          expect(m.efforts).toContain(off.reasoning_effort);
+        }
+      }
+    }
+  });
+});
