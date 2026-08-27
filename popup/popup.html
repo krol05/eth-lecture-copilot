@@ -62,6 +62,13 @@
       <label class="field-label" for="model-select">
         Model
         <!-- Detect button shown for local providers -->
+        <!-- Live model-list refresh for cloud providers -->
+        <button id="refresh-models-btn" class="label-btn" style="display:none" title="Fetch the provider's current model list">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/>
+          </svg>
+          Refresh
+        </button>
         <button id="detect-btn" class="label-btn" style="display:none" title="Query local server for installed models">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -117,6 +124,7 @@
     <a href="https://github.com/krol05/eth-lecture-copilot" target="_blank" class="footer-link">GitHub ↗</a>
   </footer>
 
+  <script src="../lib/providers/catalog-data.js"></script>
   <script src="../lib/providers/catalog.js"></script>
   <script src="../lib/providers/overrides.js"></script>
   <script src="../lib/ui-settings.js"></script>
