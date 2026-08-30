@@ -1159,7 +1159,7 @@ body {
      bottom of the sidebar, and the body below never got the chance to
      scroll. A flashcard's Study note and "Ask about this" were simply
      unreachable. vh always resolves. */
-  max-height: 68vh;
+  max-height: min(68vh, 640px);
   min-height: 0;
   border-top: 2px solid var(--accent);
   background: var(--bg-1);
@@ -1323,9 +1323,56 @@ body {
   cursor: help;
 }
 
-.qa-lecture-summary-panel-body .lecture-summary-view {
-  max-height: 280px;
+/* Both states are capped, not just the finished one. Only .lecture-summary-view
+   used to be limited, so while the summary streamed the panel grew without
+   bound and pushed the whole conversation off screen — the box only appeared
+   once generation ended, which is exactly when it was no longer needed. */
+.qa-lecture-summary-panel-body .lecture-summary-view,
+.qa-lecture-summary-panel-body .lecture-summary-stream {
+  /* Relative to the window as well as absolute, so a short viewport, a zoomed
+     page or a narrow phone-sized panel never hands the box more room than the
+     screen has. */
+  max-height: min(280px, 38vh);
   overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Popped out: still bounded, just much taller. */
+.qa-lecture-summary-panel.is-expanded .lecture-summary-view,
+.qa-lecture-summary-panel.is-expanded .lecture-summary-stream {
+  max-height: 70vh;
+}
+
+.qa-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.qa-summary-action {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.qa-summary-action:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.qa-summary-action:disabled { opacity: 0.5; cursor: default; }
+
+.qa-summary-settings {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
 }
 
 .lecture-summary-actions {
