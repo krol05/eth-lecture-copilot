@@ -145,26 +145,25 @@
 .cop-err-link:hover { color: var(--text-primary); }
 
 .cop-err-badge {
-  position: fixed;
-  /* Left-anchored and lifted above the composer: the bottom-right corner is
-     the send button, and a floating badge there swallows clicks meant for it.
-     --cop-composer-height is published by the sidebar (see publishChromeHeights)
-     and --cop-gen-height by the generation bar, so the badge stacks above both
-     instead of overlapping whatever happens to be underneath. */
-  left: 12px;
-  right: auto;
-  bottom: calc(var(--cop-composer-height, 0px) + var(--cop-gen-height, 0px) + 12px);
-  z-index: 10000;
-  padding: 6px 10px;
-  border: 1px solid var(--error);
-  border-radius: 999px;
-  background: var(--bg-1);
+  /* A bar in the layout, not a floating dot. Anything that floats eventually
+     lands on top of something — it covered the send button, then Course
+     Scripts. As a flex child of <body> it pushes content down instead, so it
+     can never obscure a control at any window size or zoom level. */
+  flex: 0 0 auto;
+  width: 100%;
+  display: block;
+  padding: 5px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--error);
+  border-radius: 0;
+  background: var(--bg-2);
   color: var(--error);
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 12px;
+  text-align: left;
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
+.cop-err-badge:hover { background: var(--bg-3); }
 
 /* ── What is currently generating ──────────────────────────────────────── */
 /* Sits in the bottom-left corner, out of the way of the sidebar controls.
@@ -289,9 +288,8 @@
 .cop-gen-stop:disabled { opacity: 0.5; cursor: default; }
 
 /* Keep the error panel clear of whatever is generating */
-body.cop-generating .cop-err-panel,
-body.cop-generating .cop-err-badge {
-  bottom: calc(var(--cop-composer-height, 0px) + var(--cop-gen-height, 0px) + 18px);
+body.cop-generating .cop-err-panel {
+  bottom: calc(var(--cop-gen-height, 0px) + 18px);
 }
 
 /* Lecture summary options block */

@@ -86,7 +86,13 @@
     const badge = el('button', 'cop-err-badge cop-err-hidden');
     badge.title = 'Show last error';
 
-    document.body.append(panel, badge);
+    document.body.append(panel);
+    // In the layout, directly under the header, so it displaces content
+    // rather than covering a button. Falls back to the top if there is no
+    // header (print views reuse this stylesheet).
+    const pageHeader = document.querySelector('.sidebar-header');
+    if (pageHeader && pageHeader.parentNode === document.body) pageHeader.after(badge);
+    else document.body.prepend(badge);
 
     btnMin.addEventListener('click', () => { panel.classList.add('cop-err-hidden'); showBadge(); });
     badge.addEventListener('click', () => { badge.classList.add('cop-err-hidden'); panel.classList.remove('cop-err-hidden'); });
@@ -111,7 +117,12 @@
   }
 
   function showBadge() {
-    els.badge.textContent = sessionCount > 1 ? `⚠ ${sessionCount}` : '⚠';
+    // Say what it is, not just that something happened — a lone ⚠ told the
+    // reader nothing and gave no reason to click.
+    const n = sessionCount;
+    els.badge.textContent = n > 1
+      ? `⚠ ${n} errors — click for details`
+      : '⚠ Something went wrong — click for details';
     els.badge.classList.remove('cop-err-hidden');
   }
 
