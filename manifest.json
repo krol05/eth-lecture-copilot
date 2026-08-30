@@ -8,37 +8,17 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   },
 
-  "permissions": ["storage", "unlimitedStorage", "activeTab", "scripting", "alarms"],
+  "permissions": ["storage", "unlimitedStorage", "activeTab", "alarms"],
+
+  "//host_permissions": "Only the pages the extension reads. Every AI provider, custom endpoint, local server and the embedding model download is requested per origin when first needed — see lib/permissions.js — so an install warns about ETH lecture pages and nothing else.",
   "host_permissions": [
-    "<all_urls>",
     "https://video.ethz.ch/*",
-    "https://dist.tobira.ethz.ch/*",
-    "https://api.anthropic.com/*",
-    "https://generativelanguage.googleapis.com/*",
-    "https://api.openai.com/*",
-    "https://api.x.ai/*",
-    "https://api.deepseek.com/*",
-    "https://api.mistral.ai/*",
-    "https://openrouter.ai/*",
-    "https://api.groq.com/*",
-    "https://api.together.ai/*",
-    "https://api.together.xyz/*",
-    "https://api.cerebras.ai/*",
-    "https://integrate.api.nvidia.com/*",
-    "https://api.fireworks.ai/*",
-    "https://api.perplexity.ai/*",
-    "https://api.cohere.ai/*",
-    "https://router.huggingface.co/*",
-    "https://api.hyperbolic.xyz/*",
-    "https://api.sambanova.ai/*",
-    "https://api.moonshot.ai/*",
-    "https://api.z.ai/*",
-    "https://dashscope-intl.aliyuncs.com/*",
-    "https://dashscope-us.aliyuncs.com/*",
+    "https://dist.tobira.ethz.ch/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
     "http://localhost/*",
-    "http://127.0.0.1/*",
-    "https://cdn.jsdelivr.net/*",
-    "https://huggingface.co/*"
+    "http://127.0.0.1/*"
   ],
 
   "background": {
@@ -85,6 +65,7 @@
         "lib/render-inline.js",
         "lib/flashcards.js",
         "lib/prompts.js",
+        "lib/permissions.js",
         "lib/error-format.js",
         "sidebar/error-panel.js",
         "sidebar/generation-bar.js",

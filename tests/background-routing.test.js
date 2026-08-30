@@ -430,3 +430,43 @@ describe('per-tool thinking level', () => {
     expect(JSON.parse(sw.fetchCalls[0][1].body).thinking).toEqual({ type: 'disabled' });
   });
 });
+
+describe('host access is checked before the request goes out', () => {
+  // The extension no longer declares <all_urls>, so a provider's host may not
+  // be granted yet. Without this check the fetch fails as an opaque network
+  // error and the user has no idea a permission prompt is what they need.
+  test('a provider whose origin is not granted fails with a typed error', async () => {
+    const sw = loadServiceWorker({
+      grantedOrigins: [],                       // nothing granted yet
+      fetchImpl: okChat('should never be called')
+    });
+    const res = await sw.send(CHAT);
+
+    expect(res.success).toBe(false);
+    expect(res.errorDetail.code).toBe('permission_missing');
+    expect(res.errorDetail.raw.origin).toBe('https://api.openai.com/*');
+    expect(res.errorDetail.raw.host).toBe('api.openai.com');
+    expect(res.errorDetail.message).toContain('api.openai.com');
+  });
+
+  test('nothing is sent to the provider when access is missing', async () => {
+    const sw = loadServiceWorker({ grantedOrigins: [], fetchImpl: okChat('nope') });
+    await sw.send(CHAT);
+    expect(sw.fetchCalls).toHaveLength(0);
+  });
+
+  test('once the origin is granted the request proceeds normally', async () => {
+    const sw = loadServiceWorker({
+      grantedOrigins: ['https://api.openai.com/*'],
+      fetchImpl: okChat('Hello there')
+    });
+    expect(await sw.send(CHAT)).toEqual({ success: true, data: 'Hello there' });
+    expect(sw.fetchCalls).toHaveLength(1);
+  });
+
+  test('the origin asked for is the single provider host, not a wildcard', async () => {
+    const sw = loadServiceWorker({ grantedOrigins: [], fetchImpl: okChat('x') });
+    await sw.send(CHAT);
+    expect(sw.permissionAsks[0]).toEqual(['https://api.openai.com/*']);
+  });
+});

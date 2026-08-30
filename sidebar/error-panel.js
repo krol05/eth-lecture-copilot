@@ -68,8 +68,11 @@
     const bodyEl = el('div', 'cop-err-body');
     const summary = el('div', 'cop-err-summary');
     const hint = el('div', 'cop-err-hint');
+    // Some failures are fixable right here. The only one so far is a missing
+    // host grant, which Chrome will only prompt for from a click like this.
+    const fix = el('button', 'cop-err-fix cop-err-hidden');
     const details = el('div', 'cop-err-details');
-    bodyEl.append(summary, hint, details);
+    bodyEl.append(summary, hint, fix, details);
 
     const footer = el('div', 'cop-err-footer');
     const btnHistory = el('button', 'cop-err-link', 'History');
@@ -100,7 +103,7 @@
       historyList.classList.remove('cop-err-hidden');
     });
 
-    els = { panel, title, summary, hint, details, badge, historyList, btnHistory };
+    els = { panel, title, summary, hint, fix, details, badge, historyList, btnHistory };
   }
 
   function updateHistoryLabel(n) {
@@ -169,6 +172,7 @@
     els.summary.textContent = formatted.summary;
     els.hint.textContent = formatted.hint;
     els.hint.classList.toggle('cop-err-hidden', !formatted.hint);
+    renderFixAction(normalized);
     renderSections(els.details, formatted);
 
     els.historyList.classList.add('cop-err-hidden');
@@ -179,6 +183,43 @@
       const history = (await storageGet(HISTORY_KEY)) || [];
       updateHistoryLabel(history.length);
     });
+  }
+
+  /**
+   * Offer a one-click fix where one exists.
+   *
+   * Only case today: the extension has never been granted the provider's host.
+   * The prompt must come from this click — a service worker cannot ask, which
+   * is why the failure reached the user as an error in the first place.
+   */
+  function renderFixAction(detail) {
+    const origin = detail.code === 'permission_missing' && detail.raw && detail.raw.origin;
+    els.fix.classList.toggle('cop-err-hidden', !origin);
+    if (!origin) return;
+
+    const host = detail.raw.host || origin;
+    els.fix.textContent = `Allow ${host}`;
+    els.fix.disabled = false;
+    els.fix.onclick = () => {
+      els.fix.disabled = true;
+      els.fix.textContent = 'Waiting for Chrome…';
+      // No await before the call: the gesture stops counting once we yield.
+      self.requestPermission(origin).then(({ granted, reason }) => {
+        if (granted) {
+          els.fix.textContent = `${host} allowed — try again`;
+          els.title.textContent = 'Access granted';
+          els.summary.textContent = `The extension may now contact ${host}. Run that request again.`;
+          els.hint.classList.add('cop-err-hidden');
+          return;
+        }
+        els.fix.disabled = false;
+        els.fix.textContent = `Allow ${host}`;
+        els.hint.classList.remove('cop-err-hidden');
+        els.hint.textContent = reason === 'denied'
+          ? `Access to ${host} was declined, so this provider cannot be reached. Click again to reconsider, or pick a different provider.`
+          : `Chrome would not show the prompt from here. Open the extension popup and select this provider again to grant ${host}.`;
+      });
+    };
   }
 
   if (root) root.ErrorPanel = { report };

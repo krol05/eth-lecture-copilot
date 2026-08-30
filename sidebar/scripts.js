@@ -190,11 +190,36 @@
   let embedPipeline = null;
   let modelLoadPromise = null;
 
+  /**
+   * Host access for the embedding model download.
+   *
+   * Requesting unconditionally rather than checking first is deliberate: the
+   * check is async, and a user gesture stops counting once you await, so a
+   * "do we have it?" round-trip would break the prompt it was guarding.
+   * Chrome resolves immediately and silently when the origin is already held.
+   */
+  function ensureEmbeddingAccess() {
+    if (typeof self === 'undefined' || !self.requestPermission) return Promise.resolve(true);
+    return self.requestPermission(self.EMBEDDING_ORIGINS).then(r => r.granted);
+  }
+
   async function ensureEmbedModel(onStatus) {
     if (embedPipeline) return;
     if (modelLoadPromise) { await modelLoadPromise; return; }
 
     modelLoadPromise = (async () => {
+      // The model weights come from huggingface.co (allowLocalModels is false
+      // below), and that host is no longer granted at install time. Chrome
+      // only prompts during a click, so this must run before any await — the
+      // caller reaches here from the button that switched semantic search on.
+      const granted = await ensureEmbeddingAccess();
+      if (!granted) {
+        throw new Error(
+          'Semantic search needs permission to download its model from huggingface.co. ' +
+          'Turn the setting on again and choose Allow, or keep using fuzzy search.'
+        );
+      }
+
       if (onStatus) onStatus('Loading AI model library...');
       const mod = await import('../lib/transformers/transformers.min.js');
       const { pipeline, env } = mod;

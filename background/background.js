@@ -23,7 +23,8 @@ importScripts(
   chrome.runtime.getURL('lib/providers/reasoning.js'),
   chrome.runtime.getURL('lib/providers/adapters.js'),
   chrome.runtime.getURL('lib/providers/overrides.js'),
-  chrome.runtime.getURL('lib/providers/adapter-spec.js')
+  chrome.runtime.getURL('lib/providers/adapter-spec.js'),
+  chrome.runtime.getURL('lib/permissions.js')
 );
 
 // ─── Structured errors ───────────────────────────────────────────────────────
@@ -42,6 +43,30 @@ function ensureDetails(err, provider, model) {
              : err?.name === 'AbortError'   ? 'aborted'
              : null;
   return apiError({ provider, model, code, message });
+}
+
+// ─── Host access (granted per provider, not up front) ───────────────────────
+
+/**
+ * Throw a typed error when we don't hold the origin this request needs.
+ *
+ * The error carries the exact match pattern so the sidebar can offer a button
+ * that asks for that one host. `chrome.permissions.request` cannot be called
+ * from here — it needs an extension page and a user gesture.
+ */
+async function requireHostAccess(url, provider, model) {
+  const pattern = globalThis.originPattern ? globalThis.originPattern(url) : null;
+  if (!pattern) return;
+  const held = await globalThis.hasPermission(pattern);
+  if (held) return;
+
+  const host = globalThis.hostLabel(pattern);
+  throw apiError({
+    provider, model,
+    code: 'permission_missing',
+    message: `This extension does not have permission to contact ${host} yet.`,
+    raw: { origin: pattern, host }
+  });
 }
 
 // ─── Abort registry (Bug A: Stop now really cancels the fetch) ───────────────
@@ -151,6 +176,11 @@ async function runModelRequest(cfg) {
 
   const base = p.kind === 'local' ? String(localBase || p.base).replace(/\/+$/, '') : p.base;
   if (!base) throw apiError({ provider, model, code: 'missing_base', message: 'Missing base URL for local provider' });
+
+  // Host access is granted per provider, on demand. A service worker cannot
+  // ask for it, so say precisely what is missing and let the UI prompt — a
+  // request without permission fails as an opaque network error otherwise.
+  await requireHostAccess(base, provider, model);
 
   const adapter = adapterFor(provider, p, store);
   // Custom endpoints may be authenticated anywhere (incl. localhost). Catalog
@@ -266,6 +296,7 @@ async function listModels({ provider, apiKey, localBase, force = false }) {
   if (!request) {
     throw apiError({ provider, code: 'no_models_endpoint', message: `${p.label || provider} has no model-list API — pick from the built-in list or type a model ID.` });
   }
+  await requireHostAccess(base, provider, null);
   const resp = await fetch(request.url, { headers: request.headers, signal: AbortSignal.timeout(10000) });
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');

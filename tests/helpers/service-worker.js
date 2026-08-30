@@ -17,11 +17,15 @@ const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..', '..');
 
-function loadServiceWorker({ storage = {}, fetchImpl } = {}) {
+function loadServiceWorker({ storage = {}, fetchImpl, grantedOrigins = null } = {}) {
   const sentMessages = [];   // chrome.tabs.sendMessage calls (progress/stream)
   const alarms = [];
   const store = { ...storage };
   const fetchCalls = [];
+  // null means "every origin granted", which is the state after a user has
+  // approved a provider and the case most tests care about. Pass an array to
+  // exercise the permission-missing path.
+  const permissionAsks = [];
 
   const chrome = {
     runtime: {
@@ -47,6 +51,12 @@ function loadServiceWorker({ storage = {}, fetchImpl } = {}) {
     alarms: {
       create(name, opts) { alarms.push({ name, opts }); },
       onAlarm: { addListener(fn) { chrome.alarms._onAlarm = fn; } }
+    },
+    permissions: {
+      contains({ origins }, cb) {
+        permissionAsks.push(origins);
+        cb(grantedOrigins === null ? true : origins.every(o => grantedOrigins.includes(o)));
+      }
     }
   };
 
@@ -112,6 +122,7 @@ function loadServiceWorker({ storage = {}, fetchImpl } = {}) {
     sentMessages,
     alarms,
     fetchCalls,
+    permissionAsks,
     fireAlarm: name => chrome.alarms._onAlarm({ name })
   };
 }

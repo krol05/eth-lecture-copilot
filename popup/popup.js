@@ -92,6 +92,9 @@ function init() {
   providerSelect.addEventListener('change', () => {
     const p = providerSelect.value;
     const cfg = getConfig(p);
+    // Choosing a provider is a click, which is the only moment Chrome lets us
+    // ask for its host. Doing it here means the sidebar rarely has to.
+    askForProviderHost(p, cfg);
     // Restore saved base URL for this provider, or default
     chrome.storage.local.get(['localBases'], saved => {
       localBaseInput.value = saved.localBases?.[p] || (cfg?.kind === 'local' ? cfg.base : '') || '';
@@ -319,6 +322,11 @@ function save() {
   if (isLocal && !base)    { flash('error', 'Please enter a server URL.'); return; }
   if (!model)              { flash('error', 'Please select or detect a model.'); return; }
 
+  // Saving is the other reliable click: the provider may never have fired a
+  // change event (already selected on open), and a local or custom server's
+  // address is only known now, from the field the user just filled in.
+  askForHostOf(isLocal ? base : cfg?.base);
+
   // Save localBase per provider so switching back restores it
   const update = { provider, model };
   if (!isLocal) update.apiKey = apiKey;
@@ -349,6 +357,35 @@ function onSaved() {
 
 function getConfig(id) {
   return resolveProvider(id, providerStore);
+}
+
+/**
+ * Ask for the host a provider needs, if we don't already hold it.
+ *
+ * Called straight from the change handler on purpose: Chrome only allows a
+ * permission prompt while handling a user gesture, and it stops counting as
+ * one after an await. Declining is not an error here — the user may just be
+ * browsing the list, and the sidebar will offer again when a request needs it.
+ */
+function askForProviderHost(providerId, cfg) {
+  askForHostOf(cfg && cfg.base);
+}
+
+/** Ask for whatever origin a URL belongs to. Must run inside a click. */
+function askForHostOf(url) {
+  if (!window.originPattern) return;
+  const pattern = window.originPattern(url);
+  if (!pattern) return;
+  // Deliberately NOT checking hasPermission first: it is async, and a gesture
+  // stops counting once you await. permissions.request resolves immediately
+  // and silently when the origin is already held, so asking unconditionally
+  // is both simpler and the only version that actually works.
+  window.requestPermission(pattern).then(({ granted, reason }) => {
+    if (granted) flash('ok', `Allowed ${window.hostLabel(pattern)}`);
+    else if (reason === 'denied') {
+      flash('warn', `Without access to ${window.hostLabel(pattern)} this provider can't be reached.`);
+    }
+  });
 }
 
 function flash(type, text) {

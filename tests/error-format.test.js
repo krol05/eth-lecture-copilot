@@ -145,3 +145,28 @@ describe('vision errors point at a model that can actually read images', () => {
     expect(f.hint).toContain('vision-capable model');
   });
 });
+
+describe('a missing host grant is not an auth failure', () => {
+  // The auth branch matches code.includes('permission'), so without an earlier
+  // case "permission_missing" told users their API key was rejected and sent
+  // them to re-check a key that was never the problem.
+  const detail = {
+    status: null, provider: 'groq', model: 'llama-4',
+    code: 'permission_missing',
+    message: 'This extension does not have permission to contact api.groq.com yet.',
+    raw: { origin: 'https://api.groq.com/*', host: 'api.groq.com' },
+    timestamp: 0
+  };
+
+  test('is classified as an access problem', () => {
+    const out = formatError(detail);
+    expect(out.title).toMatch(/access/i);
+    expect(out.title).not.toMatch(/authentication/i);
+  });
+
+  test('names the host and does not blame the API key', () => {
+    const { hint } = formatError(detail);
+    expect(hint).toContain('api.groq.com');
+    expect(hint).not.toMatch(/api key/i);
+  });
+});

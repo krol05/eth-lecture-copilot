@@ -118,6 +118,21 @@
   border-top: 1px solid var(--border);
 }
 
+/* One-click fix for a failure the user can actually resolve (host access). */
+.cop-err-fix {
+  margin-top: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--bg-1);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cop-err-fix:hover:not(:disabled) { filter: brightness(1.08); }
+.cop-err-fix:disabled { opacity: 0.6; cursor: default; }
+
 .cop-err-link {
   border: none;
   background: none;
