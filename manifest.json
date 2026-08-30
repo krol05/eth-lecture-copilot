@@ -87,6 +87,7 @@
         "lib/concept-split.js",
         "lib/render-inline.js",
         "lib/flashcards.js",
+        "lib/guide-parse.js",
         "lib/prompts.js",
         "lib/permissions.js",
         "lib/error-format.js",

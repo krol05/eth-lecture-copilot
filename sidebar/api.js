@@ -219,6 +219,25 @@ const LONG_RUNNING_REQUEST_TYPES = new Set([
   'CROSS_LECTURE_EXAM_REQUEST'
 ]);
 
+/**
+ * A guide has no deadline, only a limit on how long it may go silent. A model
+ * that streams for twenty minutes is fine; one that says nothing for three is
+ * stuck. Any chunk or progress update resets both clocks.
+ */
+const GUIDE_SILENCE_WARN_MS = 180000;      // offer retry / keep going
+const GUIDE_SILENCE_GIVE_UP_MS = 900000;   // settle the promise, never hang
+const GUIDE_SILENCE_CHECK_MS = 5000;
+
+/** Set while a guide request is in flight, so stream handlers can say "still alive". */
+let guideActivityWatcher = null;
+
+/** Called whenever anything arrives for the guide request that is running. */
+function noteGuideActivity(requestId) {
+  if (guideActivityWatcher && guideActivityWatcher.id === requestId) {
+    guideActivityWatcher.bump();
+  }
+}
+
 function makeRequestId() {
   return 'req_' + (++requestIdCounter);
 }
@@ -283,14 +302,15 @@ function apiRequest(payload) {
     const isLongRequest = LONG_RUNNING_REQUEST_TYPES.has(payload?.type);
     let settled = false;
     let timeoutTimer = null;
-    let guideWarnTimer = null;
+    let guideWatchTimer = null;
     let closeTimeoutDialog = null;
 
     const cleanup = () => {
       settled = true;
       if (timeoutTimer) clearTimeout(timeoutTimer);
-      if (guideWarnTimer) clearTimeout(guideWarnTimer);
-      if (closeTimeoutDialog) closeTimeoutDialog();
+      if (guideWatchTimer) clearInterval(guideWatchTimer);
+      if (closeTimeoutDialog) { closeTimeoutDialog(); closeTimeoutDialog = null; }
+      if (guideActivityWatcher?.id === id) guideActivityWatcher = null;
       untrackGeneration(id);
     };
 
@@ -298,23 +318,59 @@ function apiRequest(payload) {
       activeGuideRequestId = id;
       // Inform the user this is now server/provider-side work and can take a while.
       setStatus('loading', 'Generating guide… Request sent from extension backend.');
-      guideWarnTimer = setTimeout(() => {
+
+      // The clock measures silence, not total time: a guide that is still
+      // streaming is working, however long it takes. Only a gap with nothing
+      // arriving means something is actually stuck.
+      let lastHeardFrom = Date.now();
+      guideActivityWatcher = { id, bump: () => { lastHeardFrom = Date.now(); } };
+
+      guideWatchTimer = setInterval(() => {
         if (settled) return;
-        closeTimeoutDialog = showGuideTimeoutDialog({
-          onRetry: () => {
-            if (settled) return;
-            delete pendingRequests[id];
-            if (activeGuideRequestId === id) activeGuideRequestId = null;
-            cleanup();
-            sendAbortToBackground(id); // don't leave the old fetch running
-            reject(new Error('Retry requested by user.'));
-          },
-          onKeepGoing: () => {
-            if (settled) return;
-            setStatus('loading', 'Guide generation still running on provider…');
-          }
-        });
-      }, 180000);
+        const silentFor = Date.now() - lastHeardFrom;
+
+        if (silentFor >= GUIDE_SILENCE_GIVE_UP_MS) {
+          // Nothing has arrived for long enough that no reply is coming. The
+          // old code had no deadline here at all, so the promise never settled
+          // and the Generate button stayed disabled until a reload.
+          delete pendingRequests[id];
+          if (activeGuideRequestId === id) activeGuideRequestId = null;
+          cleanup();
+          sendAbortToBackground(id);
+          reject(new Error(
+            `No response for ${Math.round(silentFor / 60000)} minutes from ` +
+            `${payload.provider || 'the provider'}` +
+            `${payload.model ? ` (${payload.model})` : ''}. ` +
+            `${guideScanner?.blocks.length || 0} blocks and ` +
+            `${Math.round((guideScanner?.length || 0) / 1024)} KB arrived before it went quiet. ` +
+            `The request has been cancelled — try again, or switch model or provider.`
+          ));
+          return;
+        }
+
+        if (silentFor >= GUIDE_SILENCE_WARN_MS && !closeTimeoutDialog) {
+          closeTimeoutDialog = showGuideTimeoutDialog({
+            silentSeconds: Math.round(silentFor / 1000),
+            onRetry: () => {
+              if (settled) return;
+              delete pendingRequests[id];
+              if (activeGuideRequestId === id) activeGuideRequestId = null;
+              cleanup();
+              sendAbortToBackground(id); // don't leave the old fetch running
+              reject(new Error('Retry requested by user.'));
+            },
+            onKeepGoing: () => {
+              if (settled) return;
+              // Restart the clock. If it goes quiet for another stretch the
+              // dialog comes back, so "keep going" can no longer mean
+              // "wait forever with no way out".
+              closeTimeoutDialog = null;
+              lastHeardFrom = Date.now();
+              setStatus('loading', 'Guide generation still running on provider…');
+            }
+          });
+        }
+      }, GUIDE_SILENCE_CHECK_MS);
     } else {
       timeoutTimer = setTimeout(() => {
         if (settled) return;
@@ -381,6 +437,7 @@ function apiRequest(payload) {
 function handleApiProgress(msg) {
   if (!isGenerating) return;
   if (!msg?.requestId || msg.requestId !== activeGuideRequestId) return;
+  noteGuideActivity(msg.requestId);
   switch (msg.stage) {
     case 'queued':
       setStatus('loading', 'Guide request queued in extension backend…');
@@ -395,61 +452,6 @@ function handleApiProgress(msg) {
       setStatus('loading', 'Provider response received. Parsing guide…');
       break;
   }
-}
-
-/**
- * Parse complete block objects from a partial guide JSON string.
- * Looks for "guide":[ and extracts fully balanced {...} objects one by one.
- */
-function extractStreamedBlocks(jsonStr) {
-  const guideMatch = /"guide"\s*:\s*\[/.exec(jsonStr);
-  if (!guideMatch) return [];
-
-  const blocks = [];
-  let i = guideMatch.index + guideMatch[0].length;
-
-  while (i < jsonStr.length) {
-    // Skip whitespace and commas between objects
-    while (i < jsonStr.length && /[\s,]/.test(jsonStr[i])) i++;
-    if (i >= jsonStr.length || jsonStr[i] !== '{') break;
-
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
-    const objStart = i;
-
-    while (i < jsonStr.length) {
-      const ch = jsonStr[i];
-      if (esc) { esc = false; i++; continue; }
-      if (ch === '\\' && inStr) { esc = true; i++; continue; }
-      if (ch === '"') { inStr = !inStr; i++; continue; }
-      if (inStr) { i++; continue; }
-      if (ch === '{') { depth++; i++; continue; }
-      if (ch === '}') {
-        depth--;
-        i++;
-        if (depth === 0) {
-          const objText = jsonStr.slice(objStart, i);
-          try {
-            blocks.push(JSON.parse(objText));
-          } catch (err) {
-            window.CopilotDebug?.warn('sidebar.extractStreamedBlocks.parseError', {
-              error: err.message,
-              objectText: objText,
-              fullJsonSoFar: jsonStr
-            });
-          }
-          break;
-        }
-        continue;
-      }
-      i++;
-    }
-
-    if (depth > 0) break; // Incomplete block — stop here
-  }
-
-  return blocks;
 }
 
 function handleStreamChunk(msg) {
@@ -480,11 +482,13 @@ function handleStreamChunk(msg) {
 
   if (!isGenerating) return;
   if (reqId !== activeGuideRequestId) return;
-  streamBuffer += msg.text || '';
+  noteGuideActivity(reqId);
+  if (!guideScanner) guideScanner = createGuideBlockScanner();
 
-  const blocks = extractStreamedBlocks(streamBuffer);
+  const prevCount = guideScanner.blocks.length;
+  guideScanner.push(msg.text || '');
+  const blocks = guideScanner.blocks;
   const blockCount = blocks.length;
-  const prevCount  = guide?.guide?.length ?? 0;
 
   // Progressive rendering: update guide as new complete blocks arrive
   if (blockCount > prevCount) {
@@ -506,7 +510,7 @@ function handleStreamChunk(msg) {
   }
 
   // Show / update streaming status bar
-  const kbReceived = Math.round(streamBuffer.length / 1024);
+  const kbReceived = Math.round(guideScanner.length / 1024);
   if (blockCount > 0) {
     setStatus('loading', `Streaming guide… ${blockCount} block${blockCount !== 1 ? 's' : ''} received`);
   } else {
@@ -538,7 +542,7 @@ function handleStreamChunk(msg) {
 function clearStreamingBar() {
   const bar = document.getElementById('guide-streaming-bar');
   if (bar) bar.remove();
-  streamBuffer = '';
+  guideScanner = null;
 }
 
 /** Update only the block counter and progress bar during streaming.

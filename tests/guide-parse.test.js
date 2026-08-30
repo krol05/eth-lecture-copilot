@@ -123,3 +123,85 @@ describe('sanitizeGuide', () => {
     }]);
   });
 });
+
+describe('createGuideBlockScanner', () => {
+  const { createGuideBlockScanner } = require('../lib/guide-parse.js');
+
+  const block = (n) => `{"title":"Block ${n}","start_time":${n * 10},"end_time":${n * 10 + 10},` +
+    `"key_concepts":["point ${n}"],"formulas":[],"definitions":[],"notes":""}`;
+
+  const guideJson = (n) =>
+    `{"lecture_title":"Test","total_duration_seconds":${n * 10},"guide":[` +
+    Array.from({ length: n }, (_, i) => block(i)).join(',') + `]}`;
+
+  /** Feed a string through the scanner in fixed-size pieces. */
+  function feed(text, chunkSize) {
+    const scanner = createGuideBlockScanner();
+    for (let i = 0; i < text.length; i += chunkSize) {
+      scanner.push(text.slice(i, i + chunkSize));
+    }
+    return scanner;
+  }
+
+  test('finds every block however the stream is chopped up', () => {
+    const json = guideJson(12);
+    for (const size of [1, 3, 7, 64, 5000]) {
+      const scanner = feed(json, size);
+      expect(scanner.blocks).toHaveLength(12);
+      expect(scanner.blocks[0].title).toBe('Block 0');
+      expect(scanner.blocks[11].title).toBe('Block 11');
+      expect(scanner.done).toBe(true);
+    }
+  });
+
+  test('a chunk size of one still finds the "guide": [ opener', () => {
+    // The opener spans several chunks here, which is why the scanner keeps a
+    // little overlap when it has not found it yet.
+    expect(feed(guideJson(2), 1).blocks).toHaveLength(2);
+  });
+
+  test('push returns only the blocks that just finished', () => {
+    const scanner = createGuideBlockScanner();
+    const half = block(0).slice(0, -1);
+    expect(scanner.push('{"guide":[' + half)).toEqual([]);   // block 0 still open
+    expect(scanner.push('},')).toHaveLength(1);              // block 0 closes here
+    expect(scanner.push(block(1) + ',' + block(2) + ',')).toHaveLength(2);
+    expect(scanner.blocks).toHaveLength(3);
+  });
+
+  test('braces and quotes inside strings do not end a block early', () => {
+    const tricky = '{"title":"a } b { c","notes":"he said \\"hi\\" and \\\\ left"}';
+    const scanner = createGuideBlockScanner();
+    scanner.push(`{"guide":[${tricky}]}`);
+    expect(scanner.blocks).toEqual([{ title: 'a } b { c', notes: 'he said "hi" and \\ left' }]);
+  });
+
+  test('an unfinished block is never handed out', () => {
+    const scanner = createGuideBlockScanner();
+    scanner.push('{"guide":[{"title":"half wri');
+    expect(scanner.blocks).toEqual([]);
+    scanner.push('tten"}]}');
+    expect(scanner.blocks).toEqual([{ title: 'half written' }]);
+  });
+
+  test('nothing before the guide array is mistaken for a block', () => {
+    const scanner = createGuideBlockScanner();
+    scanner.push('{"meta":{"model":"x"},"lecture_title":"T","guide":[' + block(0) + ']}');
+    expect(scanner.blocks).toHaveLength(1);
+    expect(scanner.blocks[0].title).toBe('Block 0');
+  });
+
+  test('each block is parsed once, no matter how many chunks arrive', () => {
+    // This is the regression guard. The old code re-parsed every block already
+    // seen on every chunk, so a long guide slowed down as it streamed.
+    const json = guideJson(30);
+    const spy = jest.spyOn(JSON, 'parse');
+    try {
+      spy.mockClear();
+      feed(json, 4);                       // ~hundreds of chunks
+      expect(spy).toHaveBeenCalledTimes(30);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

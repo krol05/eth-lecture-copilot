@@ -20,6 +20,7 @@ const libGlobals = {
   findMatchingBrace: 'readonly',
   fixEscapes: 'readonly',
   salvageTruncated: 'readonly',
+  createGuideBlockScanner: 'readonly',
   // lib/concept-split.js
   splitConceptText: 'readonly',
   isAbbreviationDot: 'readonly',

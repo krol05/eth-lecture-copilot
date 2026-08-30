@@ -215,18 +215,24 @@ function normalizeRichTextSource(text) {
   return normalizeLatexForKatex(unescapeMathDelimiters(text || ''));
 }
 
-function showGuideTimeoutDialog({ onRetry, onKeepGoing }) {
+function showGuideTimeoutDialog({ onRetry, onKeepGoing, silentSeconds = 180 }) {
   const existing = document.getElementById('guide-timeout-dialog');
   if (existing) existing.remove();
+
+  const blocks = guideScanner?.blocks.length || 0;
+  const soFar = blocks
+    ? `${blocks} block${blocks === 1 ? '' : 's'} arrived before it went quiet.`
+    : 'Nothing has arrived yet.';
 
   const dialog = document.createElement('div');
   dialog.id = 'guide-timeout-dialog';
   dialog.className = 'guide-timeout-dialog';
   dialog.innerHTML = `
-      <div class="guide-timeout-title">Possible timeout detected</div>
+      <div class="guide-timeout-title">Nothing received for ${Math.round(silentSeconds)}s</div>
       <div class="guide-timeout-text">
-        Guide generation ongoing for 180s. Do you want to retry or keep going?
-        Depending on block detail, block count, and API provider, it might take longer.
+        ${soFar} The provider may still be thinking — reasoning models can go
+        quiet for a long time before they start writing. Keep going and this
+        check comes back if it stays silent, or retry to start over.
       </div>
       <div class="guide-timeout-actions">
         <button id="guide-timeout-retry" class="primary-btn">Retry</button>

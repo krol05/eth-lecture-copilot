@@ -155,8 +155,15 @@ const toolAskActiveStreams = new Map();
 let lectureSummaryText = null;
 let lectureSummaryGenerating = false;
 let lectureSummarySource = null; // 'guide' | 'qa'
-/** Stream buffer for guide streaming */
-let streamBuffer = '';
+/** Reads guide blocks out of the response as it streams; see lib/guide-parse.js. */
+let guideScanner = null;
+/**
+ * What Regenerate threw away, kept until its replacement exists.
+ * Regenerating clears the guide, the chats and the summary before the new
+ * guide has been asked for, so a failed generation used to leave nothing at
+ * all — including in storage. Held here so it can be put back.
+ */
+let discardedByRegenerate = null;
 
 const QA_LENGTH_PROFILE_PROMPTS = {
   ultra_concise: 'Respond in 1-2 compact bullets or very short sentences. Keep only the core answer, no extra context.',

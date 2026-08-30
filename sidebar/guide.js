@@ -133,7 +133,7 @@ async function onGenerateClick() {
   isGenerating = true;
 
   // Reset streaming state so incremental rendering starts fresh
-  streamBuffer = '';
+  guideScanner = createGuideBlockScanner();
   clearStreamingBar();
   // If a previous partial/streamed guide exists, clear it so the new stream starts from block 0
   if (guide && guide.guide) guide.guide = [];
@@ -159,7 +159,6 @@ async function onGenerateClick() {
   // All providers support SSE streaming via the shared adapter layer.
   const supportsStream = !!settings.provider;
 
-  streamBuffer = '';
   const payload = {
     type: 'GENERATE_GUIDE',
     transcriptText: transcript.text,
@@ -209,6 +208,8 @@ async function onGenerateClick() {
     });
     saveToHistory();
     _syncToolLanguageSelects();
+    // The replacement is on disk, so the old guide is no longer needed.
+    discardedByRegenerate = null;
 
     setStatus('ready', `Guide ready · ${guide.guide.length} blocks`);
     showGuideContent();
@@ -218,10 +219,19 @@ async function onGenerateClick() {
   } catch (err) {
     console.error('[Copilot] GENERATE_GUIDE error:', err.message);
     clearStreamingBar();
-    if (err.message !== 'Request aborted.') {
+    const aborted = err.message === 'Request aborted.';
+    // A regenerate that never produced a guide gives the old one back rather
+    // than leaving the lecture empty.
+    const restored = restoreDiscardedGuide();
+
+    if (!aborted) {
       showGuideError(err.message);
-      setStatus('error', 'Guide generation failed');
-      showManualPasteOption();
+      setStatus('error', restored
+        ? 'Guide generation failed · previous guide restored'
+        : 'Guide generation failed');
+      if (!restored) showManualPasteOption();
+    } else if (restored) {
+      setStatus('ready', `Generation stopped · previous guide restored`);
     } else {
       restoreMainStatus();
     }
@@ -273,8 +283,60 @@ function showRegenerateConfirmToast() {
   _regenConfirmTimer = setTimeout(hideRegenerateConfirmToast, 8000);
 }
 
+/**
+ * Everything Regenerate is about to clear, in a form that can be put back.
+ * Deep-copied because the live arrays are cleared in place a moment later.
+ */
+function snapshotBeforeRegenerate() {
+  if (!guide) return null;
+  const copy = (value) => {
+    try { return structuredClone(value); } catch { return JSON.parse(JSON.stringify(value)); }
+  };
+  return {
+    lectureUrl: normalizeLectureUrl(currentLectureUrl),
+    guide: copy(guide),
+    guideLanguage,
+    blockIndex: currentBlockIndex,
+    qaChats: copy(qaChats.map(c => ({
+      id: c.id, name: c.name, messages: c.messages,
+      guideSentForLectureUrl: c.guideSentForLectureUrl || null,
+      summaryInContext: !!c.summaryInContext
+    }))),
+    lectureSummaryText,
+    lectureSummarySource,
+    toolOutputs: copy(buildToolOutputsSnapshot())
+  };
+}
+
+/**
+ * Puts back what Regenerate cleared, after the replacement failed to arrive.
+ * Returns false when there is nothing to restore or it belongs to another
+ * lecture, so the caller can leave the failure message alone.
+ */
+function restoreDiscardedGuide() {
+  const saved = discardedByRegenerate;
+  if (!saved) return false;
+  if (saved.lectureUrl !== normalizeLectureUrl(currentLectureUrl)) return false;
+  discardedByRegenerate = null;
+
+  applyRestoredGuide(saved.guide, null, true, saved.qaChats);
+  currentBlockIndex = saved.blockIndex >= 0 ? saved.blockIndex : 0;
+  renderBlock(currentBlockIndex);
+
+  if (saved.lectureSummaryText) {
+    setLectureSummaryComplete(saved.lectureSummaryText, saved.lectureSummarySource || 'guide');
+  }
+  if (toolOutputsHasData(saved.toolOutputs)) {
+    applyToolOutputsSnapshot(saved.toolOutputs);
+    persistToolOutputs();
+  }
+  return true;
+}
+
 function confirmRegenerateGuide() {
   hideRegenerateConfirmToast();
+  // Held until the new guide is safely in place — see restoreDiscardedGuide.
+  discardedByRegenerate = snapshotBeforeRegenerate();
   guide = null;
   currentBlockIndex = -1;
   resetQaChats();
