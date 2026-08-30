@@ -15,11 +15,15 @@ on:
     paths:
       - "lib/providers/**"
       - "scripts/check-api-params.mjs"
+      - "scripts/litellm-params.py"
+      - "scripts/lib/**"
       - ".github/workflows/check-api-params.yml"
   pull_request:
     paths:
       - "lib/providers/**"
       - "scripts/check-api-params.mjs"
+      - "scripts/litellm-params.py"
+      - "scripts/lib/**"
   schedule:
     - cron: "0 7 * * 1" # Mondays, just after the model catalog job
   workflow_dispatch:
@@ -43,6 +47,18 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # LiteLLM is the second opinion for the ~28 providers that publish no
+      # schema of their own. It is a CI-only tool queried through
+      # scripts/litellm-params.py — nothing Python ships to users, and the
+      # check degrades to a note if this step fails.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install LiteLLM (cross-check only)
+        continue-on-error: true
+        run: pip install --quiet litellm
 
       - name: Validate request parameters against provider specs
         id: check

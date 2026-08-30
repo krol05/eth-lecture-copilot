@@ -186,3 +186,91 @@ describe('accepted effort levels from the catalog override the hand-written valu
     }
   });
 });
+
+// ── Asking for a level (reasoningOnBody) ─────────────────────────────────────
+// The mirror of the "off" table. This exists because getting it wrong is
+// SILENT: OpenRouter ignores parameters a backend does not understand, so
+// sending reasoning_effort where reasoning.effort was needed produced a
+// perfectly successful request that ignored the user's thinking choice.
+
+const { reasoningOnBody, clampEffort } = require('../lib/providers/reasoning.js');
+
+describe('asking for a reasoning level', () => {
+  test('OpenRouter uses the unified reasoning.effort form (openrouter.md §5)', () => {
+    expect(reasoningOnBody('openrouter', 'openai/gpt-5.6-sol', null, 'high'))
+      .toEqual({ reasoning: { effort: 'high' } });
+  });
+
+  test('Together uses the same unified form', () => {
+    expect(reasoningOnBody('together', 'deepseek-ai/DeepSeek-V4-Pro', null, 'low'))
+      .toEqual({ reasoning: { effort: 'low' } });
+  });
+
+  test('OpenAI and friends use plain reasoning_effort', () => {
+    expect(reasoningOnBody('openai', 'gpt-5.6-terra', null, 'high'))
+      .toEqual({ reasoning_effort: 'high' });
+  });
+
+  test('DashScope and NIM use their own thinking switches', () => {
+    expect(reasoningOnBody('qwen', 'qwen3.5-flash', null, 'high'))
+      .toEqual({ enable_thinking: true });
+    expect(reasoningOnBody('nvidia_nim', 'deepseek-ai/deepseek-v4-pro', null, 'high'))
+      .toEqual({ chat_template_kwargs: { enable_thinking: true } });
+  });
+
+  test('Moonshot splits by generation: K3 effort, K2.x thinking object', () => {
+    expect(reasoningOnBody('moonshot', 'kimi-k3', null, 'high'))
+      .toEqual({ reasoning_effort: 'high' });
+    expect(reasoningOnBody('moonshot', 'kimi-k2.6', null, 'high'))
+      .toEqual({ thinking: { type: 'enabled' } });
+  });
+
+  test('a non-reasoning model on a mixed provider is sent nothing', () => {
+    expect(reasoningOnBody('openai', 'gpt-4o', null, 'high')).toBeNull();
+  });
+});
+
+describe('clampEffort keeps us inside what a model accepts', () => {
+  test('passes the level through when it is accepted', () => {
+    expect(clampEffort('high', ['low', 'medium', 'high'])).toBe('high');
+  });
+
+  test('moves to the nearest accepted level instead of erroring', () => {
+    // gpt-5-pro accepts only "high" — asking for "low" would be a 400
+    expect(clampEffort('low', ['high'])).toBe('high');
+    expect(clampEffort('none', ['low', 'medium', 'high'])).toBe('low');
+  });
+
+  test('prefers more thinking when two levels are equally close', () => {
+    expect(clampEffort('medium', ['low', 'high'])).toBe('high');
+  });
+
+  test('with no list to check against, the request is unchanged', () => {
+    expect(clampEffort('xhigh', null)).toBe('xhigh');
+  });
+});
+
+describe('models that cannot stop reasoning', () => {
+  test('alwaysOn from the catalog asks for the least it will accept', () => {
+    expect(reasoningOffBody('someprovider', 'some-model', { alwaysOn: true, efforts: ['medium', 'high'] }))
+      .toEqual({ reasoning_effort: 'medium' });
+  });
+
+  test('alwaysOn with no effort levels sends nothing at all', () => {
+    expect(reasoningOffBody('someprovider', 'some-model', { alwaysOn: true })).toBeNull();
+  });
+});
+
+describe('unverified providers stay untouched in both directions', () => {
+  // A model gaining an `efforts` list from an upstream dataset says what the
+  // MODEL accepts, not what this HOST forwards. The HuggingFace router rejects
+  // the parameter (reasoning-controls.md §5), so neither path may send it.
+  test.each(['huggingface', 'hyperbolic', 'local_lmstudio', 'custom_myserver'])(
+    '%s is sent no reasoning parameter even for a model with effort levels',
+    (provider) => {
+      const modelInfo = { efforts: ['low', 'medium', 'high'] };
+      expect(reasoningOnBody(provider, 'google/gemma-4-31b-it', modelInfo, 'high')).toBeNull();
+      expect(reasoningOffBody(provider, 'google/gemma-4-31b-it', modelInfo)).toBeNull();
+    }
+  );
+});

@@ -8,3 +8,4 @@ remotion-showcase/
 PLAN.md
 docs/refactor-plan.md
 coverage/
+__pycache__/

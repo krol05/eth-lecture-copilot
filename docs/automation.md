@@ -31,9 +31,23 @@ cannot; none is sufficient alone.
 | Layer | Runs | Catches | Cannot catch |
 |---|---|---|---|
 | Request parameter check | Every provider-code change + weekly | Sending a parameter or value the provider does not document | Whether a provider still honours its own documentation |
-| Model catalog sync | Weekly | New models; reasoning levels a model no longer accepts | Anything about request shape |
+| Dataset cross-check | With the parameter check | Disagreements with LiteLLM and OpenRouter — including parameters that are accepted but *ignored* | Anything all three of us are wrong about |
+| Model catalog sync | Weekly | New models; reasoning levels a model no longer accepts; what a model is *for* | Anything about request shape |
 | Background test suite | Every test run | Our own plumbing: aborts, timeouts, error shapes, streaming, caching | Anything about what providers actually accept |
 | Provider research docs | By hand, on demand | Everything else — parameter names, defaults, quirks | Nothing, but it goes stale silently |
+
+### Where the data comes from
+
+Four public, no-auth sources, fetched by `scripts/lib/model-sources.mjs` and
+`scripts/litellm-params.py`. None is authoritative and they are wrong in
+different places, which is the point — disagreement is the signal.
+
+| Source | What only it gives us | Blind spots |
+|---|---|---|
+| [models.dev](https://models.dev) | broadest model lists; accepted effort levels per provider | claims embedding and protein models are ordinary chat models |
+| [LiteLLM's JSON](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) | `mode` (chat / embedding / rerank / …), `thinking_always_on`, `supports_none_reasoning_effort` | covers ~79% of our catalog; lists no NVIDIA specialist models; calls a safety classifier `chat` |
+| LiteLLM's Python API | the parameters each provider accepts — the only source for the ~28 providers publishing no schema | does not know Moonshot K2.x takes `thinking`, or Anthropic's `output_config` |
+| [OpenRouter `/api/v1/models`](https://openrouter.ai/api/v1/models) | `supported_parameters` **per model**, ~400 models | the OpenRouter path only |
 
 ### 1. Request parameter check
 
@@ -86,6 +100,35 @@ open one) rather than only turning a tick red, because a provider changing their
 API while nobody is working on the extension is exactly the case where a red
 tick goes unseen.
 
+### 1b. Dataset cross-check (tier 3)
+
+Same script, but **reports instead of failing**. It asks LiteLLM (via
+`scripts/litellm-params.py`, which needs `pip install litellm` — CI installs it,
+and the check degrades to a note if it is missing) and OpenRouter what each
+provider accepts, and lists anything we send that they do not recognise.
+
+It reports rather than fails because both datasets are third-party and
+incomplete: LiteLLM does not know that Moonshot K2.x takes `thinking`, which our
+own docs confirm from Moonshot's documentation. Treat a disagreement as a prompt
+to read the provider's docs, never as proof of a bug. `--strict-cross-check`
+turns them into failures for local investigation; CI does not use it.
+
+**This tier is not theoretical — it found two real bugs on its first run.**
+Both were invisible to every other layer, because the requests *succeeded*:
+
+- **Thinking levels did nothing on OpenRouter.** Reasoning-model detection was
+  name-based (`^o[0-9]` or a provider prefix), and no OpenRouter id — they look
+  like `openai/gpt-5.6-sol` — matched. So the user's choice was dropped and the
+  backend used its own default. Detection is now driven by the catalog's
+  `efforts` data, and the level is sent as OpenRouter's documented
+  `reasoning: {effort}` rather than `reasoning_effort`, which only a third of
+  their catalogue accepts.
+- **`temperature` was sent to reasoning models** that reject it. OpenRouter
+  silently ignores unsupported parameters, so nothing ever surfaced.
+
+A cross-check that only ever agreed with us would be worthless. The value is
+precisely in a second party that implements these APIs for real.
+
 ### 2. Model catalog sync
 
 `scripts/update-catalog.mjs` — workflow `.github/workflows/update-models.yml`
@@ -117,11 +160,21 @@ providers (Anthropic, OpenAI, Google, DeepSeek, Groq, xAI, Mistral, …) are sti
 extended automatically, which is where a new model actually matters.
 
 **Reasoning levels are refreshed too.** models.dev reports which effort levels
-each model accepts, and those land in the catalog as `efforts`. This is load
-bearing: `gpt-5-pro` accepts only `high`, and the `-pro` variants only
-`medium` and above. A hand-written table said `none` for all of them, which
-would have been rejected. The data decides the value now; the documentation only
-decides which *parameter* to use.
+each model accepts, and those land in the catalog as `efforts`; LiteLLM fills in
+models models.dev has no opinion on. This is load bearing: `gpt-5-pro` accepts
+only `high`, and the `-pro` variants only `medium` and above. A hand-written
+table said `none` for all of them, which would have been rejected. The data
+decides the value now; the documentation only decides which *parameter* to use.
+
+`efforts` also became the answer to "does this model reason at all", replacing
+the name matching that silently broke every OpenRouter model (see tier 3 above).
+
+**`alwaysOn` replaces a hand-written list.** LiteLLM's `thinking_always_on`
+marks models that cannot stop reasoning, where an off-value is an error rather
+than a no-op. It lands on the catalog entry and `lib/providers/reasoning.js`
+reads it, so the regex there is now the fallback for models no dataset covers
+rather than the only defence. Reassuringly, the first sync flagged exactly the
+one model our hand-written Anthropic rule already knew about.
 
 The job also prints two audits into the PR body: any value we would send that a
 model rejects, and any model that reasons by default where we send nothing.
@@ -134,9 +187,17 @@ left out rather than hiding the truncation.
 *Judging a model by its declared modality doesn't work.* models.dev reports the
 embedding model `baai/bge-m3`, the protein-folding model `meta/esmfold` and the
 audio model `nvidia/studiovoice` all as ordinary `text → text` models with normal
-context lengths. The first generated PR duly added all three. The `NON_CHAT`
-name pattern is therefore the only real filter, and the modality check is a
-backstop, not the primary defence.
+context lengths. The first generated PR duly added all three.
+
+LiteLLM's `mode` field now answers this properly — it states outright whether a
+model is `chat`, `embedding`, `rerank`, `image_generation` and so on. **It did
+not replace the name pattern, and shouldn't.** LiteLLM covers ~79% of our
+catalog, lists none of the NVIDIA specialist models that caused the original
+problem, and labels at least one safety classifier as `chat`. So a model is
+added only if *no* source objects: LiteLLM's mode, the name pattern, and the
+declared modality each get a veto. Over-blocking costs a dropdown entry that the
+live `/models` list and the free-text field still reach; under-blocking ships a
+broken choice.
 
 *The ID column width is a fixed constant (`ID_COLUMN`), never derived from the
 data.* It used to be computed as the longest ID in each provider's list, so one
@@ -184,6 +245,23 @@ explain, or every few months. There is no way to automate it — it requires
 reading prose.
 
 ## Design decisions
+
+### Why we query LiteLLM instead of porting it
+
+LiteLLM knows how to talk to 134 providers, which is exactly the knowledge we
+need. It is not copyable: each provider is ~370 lines of Python using class
+inheritance, runtime capability lookups and per-model conditionals, and this
+extension has no build step and ships no Python.
+
+What *is* usable is asking it. `litellm.get_supported_openai_params(model,
+custom_llm_provider)` answers the one question we cannot answer ourselves for
+the providers that publish no schema. So LiteLLM is a CI dependency and an
+oracle, never a runtime dependency. Nothing about it reaches users.
+
+The same reasoning rules out the JavaScript alternatives. The Vercel AI SDK
+(16 providers) and token.js both need a bundler, and every mature option assumes
+a server rather than browser-direct calls with the user's own key — which is the
+one thing this extension must do.
 
 ### Why there are no live API calls in CI
 
@@ -272,4 +350,11 @@ npm run check:api        # validate request parameters against provider specs
 npm run update:catalog   # refresh model lists (add --dry-run to preview)
 npm test                 # unit + background routing tests
 npm run lint
+```
+
+The LiteLLM cross-check is optional locally and reports itself as skipped when
+absent. To enable it:
+
+```bash
+pip install litellm      # CI does this automatically
 ```
