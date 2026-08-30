@@ -170,3 +170,20 @@ describe('a missing host grant is not an auth failure', () => {
     expect(hint).not.toMatch(/api key/i);
   });
 });
+
+describe('lecture data blocked after a redirect', () => {
+  // dist.tobira.ethz.ch 302s to dist02.tobira.ethz.ch. The permission check
+  // runs against the URL we request, so a redirect to an ungranted host slips
+  // past it and arrives as a bare CORS "Failed to fetch" with no clue.
+  test('points at the redirect rather than blaming the connection', () => {
+    const out = formatError({
+      status: null, provider: 'transcript', model: null,
+      code: 'transcript_fetch_failed',
+      message: 'Failed to fetch',
+      raw: { url: 'https://dist.tobira.ethz.ch/mh_default_org/engage-player/x/data.json' },
+      timestamp: 0
+    });
+    expect(out.hint).toMatch(/redirect/i);
+    expect(out.hint).not.toMatch(/check your connection/i);
+  });
+});

@@ -38,9 +38,29 @@ describe('the install prompt stays narrow', () => {
 
   test('only the ETH lecture hosts are required', () => {
     expect(required.sort()).toEqual([
-      'https://dist.tobira.ethz.ch/*',
+      'https://*.tobira.ethz.ch/*',
       'https://video.ethz.ch/*'
     ]);
+  });
+
+  test('the media host wildcard covers the numbered storage nodes', () => {
+    // dist.tobira.ethz.ch 302s to dist02.tobira.ethz.ch (and presumably dist03,
+    // …). A redirect target needs its own grant, and cannot be checked before
+    // the request — permission is verified against the URL we ask for, not the
+    // one we end up at. Granting the family is the only thing that works.
+    expect(reachable('https://dist.tobira.ethz.ch/*')).toBe(true);
+    expect(reachable('https://dist02.tobira.ethz.ch/*')).toBe(true);
+    expect(reachable('https://dist17.tobira.ethz.ch/*')).toBe(true);
+  });
+
+  test('the wildcard grants nothing outside tobira.ethz.ch', () => {
+    // Checked against the REQUIRED list: optional permissions deliberately
+    // include https://*/*, so "reachable" is true for everything there.
+    const grantedOnInstall = t => required.some(p => covers(p, t));
+    expect(grantedOnInstall('https://dist02.tobira.ethz.ch/*')).toBe(true);
+    expect(grantedOnInstall('https://elsewhere.ethz.ch/*')).toBe(false);
+    expect(grantedOnInstall('https://evil.example.com/*')).toBe(false);
+    expect(required).not.toContain('https://*.ethz.ch/*');
   });
 
   test('no provider API is required up front', () => {
