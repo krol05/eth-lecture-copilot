@@ -969,8 +969,15 @@
         break;
 
       case 'CAPTURE_FRAME':
+        lastCaptureError = null;
         captureVideoFrame().then(b64 => {
-          postToSidebar({ type: 'FRAME_CAPTURED', imageBase64: b64, requestId: msg.requestId });
+          postToSidebar({
+            type: 'FRAME_CAPTURED',
+            imageBase64: b64,
+            // Why it failed, so the sidebar can say more than nothing at all
+            error: b64 ? null : (lastCaptureError || 'No video frame available'),
+            requestId: msg.requestId
+          });
         });
         break;
 
@@ -1020,9 +1027,15 @@
       return null;
     }
 
-    // ETH video streams are cross-origin HLS (dist.tobira.ethz.ch), so canvas
-    // drawImage and captureStream() are both blocked by CORS. We use tab screenshot
-    // (captureVisibleTab) which requires <all_urls> in manifest host_permissions.
+    // ETH video streams are cross-origin HLS, so canvas drawImage and
+    // captureStream() are both blocked by CORS. We screenshot the tab instead.
+    //
+    // captureVisibleTab needs access to the tab's URL — either activeTab
+    // (granted when the user invokes the extension on that tab) or a matching
+    // host permission. video.ethz.ch is required in the manifest, so lecture
+    // pages qualify. This used to lean on <all_urls>; if it ever fails the
+    // reason is reported rather than swallowed, because a silent null here
+    // looks to the user like the button simply does nothing.
     try {
       const rect = vid.getBoundingClientRect();
       const dpr  = window.devicePixelRatio || 1;
@@ -1052,9 +1065,13 @@
       return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null;
     } catch (e) {
       console.warn('[ETH Copilot] captureVideoFrame failed:', e.message);
+      lastCaptureError = e.message || 'Screenshot failed';
       return null;
     }
   }
+
+  /** Why the last frame capture failed, so the sidebar can say so. */
+  let lastCaptureError = null;
 
   function loadImage(src) {
     return new Promise((resolve, reject) => {
