@@ -526,10 +526,19 @@
 
     qaLectureSummaryBtn?.addEventListener('click', onQaLectureSummaryClick);
 
-    publishChromeHeights();
-
     qaFrameBtn?.addEventListener('click', async () => {
       qaFrameBtn.disabled = true;
+
+      // Chrome only allows a tab screenshot with <all_urls> or an active
+      // activeTab grant, and refuses host access to the lecture page alone.
+      // Ask here, on the click, so people who never attach frames are never
+      // asked for it — and so this is the only place that broad grant is used.
+      if (!(await ensureScreenshotAccess())) {
+        qaFrameBtn.disabled = false;
+        setStatus('error', 'Attaching a frame needs permission to screenshot the page. Click Attach frame again and choose Allow.');
+        return;
+      }
+
       const { b64, error } = await captureFrame();
       qaFrameBtn.disabled = false;
       if (b64) {
@@ -2051,27 +2060,13 @@
   }
 
   /**
-   * Publish the height of the chat composer so floating UI can sit above it.
-   *
-   * The error badge used to be pinned to the bottom-right corner, which is
-   * exactly where the send button is — it swallowed clicks meant for Enter.
-   * Measuring instead of guessing keeps it clear as the composer grows with
-   * the attachment strip, the customization row, or a multi-line question.
+   * The broad grant that tab screenshots require. Requested unconditionally
+   * rather than checked first: the check is async, and a user gesture stops
+   * counting once you await. Chrome resolves it silently when already held.
    */
-  function publishChromeHeights() {
-    const footer = document.querySelector('.qa-footer-stack');
-    if (!footer) return;
-    const apply = () => {
-      const visible = footer.offsetParent !== null;
-      document.body.style.setProperty(
-        '--cop-composer-height', visible ? `${footer.offsetHeight}px` : '0px');
-    };
-    apply();
-    if (typeof ResizeObserver === 'function') {
-      new ResizeObserver(apply).observe(footer);
-    }
-    // Switching tabs hides the composer entirely; re-measure when that happens.
-    document.addEventListener('click', () => setTimeout(apply, 0), true);
+  function ensureScreenshotAccess() {
+    if (typeof self === 'undefined' || !self.requestPermission) return Promise.resolve(true);
+    return self.requestPermission(self.SCREENSHOT_ORIGINS).then(r => r.granted);
   }
 
   function captureFrame() {
@@ -3931,6 +3926,12 @@ Now process the following transcript:`;
       <p class="qa-lecture-summary-panel-hint" title="This panel is for reading only. Your normal Q&amp;A messages are sent separately; the summary is injected via the system prompt only when In AI context.">
         For reading only — not sent as chat history. AI uses it via system prompt when marked “In AI context”.
       </p>
+      <div class="qa-summary-actions">
+        <button type="button" class="qa-summary-action" data-summary-act="expand">Expand</button>
+        <button type="button" class="qa-summary-action" data-summary-act="regenerate">Regenerate</button>
+        <button type="button" class="qa-summary-action" data-summary-act="settings">Settings</button>
+      </div>
+      <div class="qa-summary-settings" hidden>${_summaryOptionsHtml()}</div>
       <div class="qa-lecture-summary-panel-body"></div>`;
 
     const body = panel.querySelector('.qa-lecture-summary-panel-body');
@@ -3950,11 +3951,76 @@ Now process the following transcript:`;
       renderLectureSummaryMarkdown(body.querySelector('.lecture-summary-view'), lectureSummaryText);
     }
 
+    if (generatingHere) {
+      panel.querySelector('[data-summary-act="regenerate"]').disabled = true;
+    }
+
+    // Restore the reader's choices: the panel is rebuilt as the summary
+    // streams, and without this it would snap shut on every chunk.
+    if (_qaSummaryExpanded) {
+      panel.classList.add('is-expanded');
+      panel.querySelector('[data-summary-act="expand"]').textContent = 'Shrink';
+    }
+    if (_qaSummarySettingsOpen) {
+      panel.querySelector('.qa-summary-settings').hidden = false;
+      panel.querySelector('[data-summary-act="settings"]').textContent = 'Hide settings';
+    }
+
     col.appendChild(panel);
     requestAnimationFrame(() => {
-      col.scrollTo({ top: col.scrollHeight, behavior: 'smooth' });
+      // While generating, follow the text inside the box. Scrolling the whole
+      // conversation on every chunk is what made this so intrusive.
+      if (generatingHere) keepSummaryStreamPinned(panel);
+      else col.scrollTo({ top: col.scrollHeight, behavior: 'smooth' });
     });
     return panel.querySelector('.qa-summary-stream-bubble');
+  }
+
+  /**
+   * Buttons on the Q&A summary panel. Delegated once, so every chat's copy
+   * works and rebuilding a panel mid-stream never loses its handlers.
+   *
+   * "Expand" only raises the height cap — the box stays scrollable either
+   * way. Letting it grow freely is what made streaming unreadable.
+   */
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target?.closest?.('[data-summary-act]');
+    if (!btn) return;
+    const panel = btn.closest('.qa-lecture-summary-panel');
+    if (!panel) return;
+
+    switch (btn.getAttribute('data-summary-act')) {
+      case 'expand': {
+        const expanded = panel.classList.toggle('is-expanded');
+        btn.textContent = expanded ? 'Shrink' : 'Expand';
+        _qaSummaryExpanded = expanded;
+        break;
+      }
+      case 'settings': {
+        const box = panel.querySelector('.qa-summary-settings');
+        box.hidden = !box.hidden;
+        btn.textContent = box.hidden ? 'Settings' : 'Hide settings';
+        _qaSummarySettingsOpen = !box.hidden;
+        break;
+      }
+      case 'regenerate':
+        // Same entry point the guide-side button uses, so both routes share
+        // one definition of what regenerating means (and it clears first).
+        regenerateLectureSummary('qa', null);
+        break;
+    }
+  });
+
+  // Remembered across the rebuilds that streaming triggers, so the panel does
+  // not snap shut every time a chunk arrives.
+  let _qaSummaryExpanded = false;
+  let _qaSummarySettingsOpen = false;
+
+  /** Keep the newest text in view without dragging the whole chat down. */
+  function keepSummaryStreamPinned(panel) {
+    const box = panel?.querySelector('.lecture-summary-stream');
+    if (!box) return;
+    box.scrollTop = box.scrollHeight;
   }
 
   function renderAllQaSummaryPanels() {
