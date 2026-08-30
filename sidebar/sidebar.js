@@ -2396,6 +2396,11 @@
         break;
       case 'error':
         setStatus('error', 'Transcript error: ' + (msg.error || 'unknown'));
+        // The full detail goes to the error panel, which can offer a fix when
+        // the cause is a media host we have not been granted yet.
+        if (msg.errorDetail) {
+          try { ErrorPanel.report(msg.errorDetail); } catch { /* panel optional */ }
+        }
         showManualPasteOption();
         break;
     }
@@ -7713,6 +7718,20 @@ ${guideBlocksStr}${scriptContext}`;
     return [...new Set(parts.map(e => String(e).trim()).filter(Boolean))].join('; ');
   }
 
+  const ANKI_ORIGIN = 'http://127.0.0.1/*';
+
+  /**
+   * Anki runs AnkiConnect on 127.0.0.1, which is no longer granted at install
+   * time. Ask before the first call; Chrome resolves instantly when we already
+   * hold it. Must be reached from the export click — a gesture stops counting
+   * after an await, so this is called before anything else awaits.
+   */
+  async function ensureAnkiAccess() {
+    if (typeof self === 'undefined' || !self.requestPermission) return true;
+    const { granted } = await self.requestPermission(ANKI_ORIGIN);
+    return granted;
+  }
+
   async function ankiConnect(action, params = {}) {
     const resp = await fetch('http://127.0.0.1:8765', {
       method: 'POST',
@@ -7817,6 +7836,13 @@ ${guideBlocksStr}${scriptContext}`;
   async function sendFlashcardsToAnki() {
     const cards = getEditedFlashcards();
     if (!cards.length) return;
+
+    // Before any other await, so this still counts as the export click.
+    if (!(await ensureAnkiAccess())) {
+      setStatus('error', 'Anki needs permission to reach AnkiConnect on 127.0.0.1. Click "Send to Anki" again and choose Allow, or use "Export as TSV" instead.');
+      return;
+    }
+
     const deckName = await buildAnkiDeckNameForCurrentLecture();
     const notes = buildAnkiNoteSpecs(cards, deckName);
     try {

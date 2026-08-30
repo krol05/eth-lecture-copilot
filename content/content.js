@@ -509,7 +509,12 @@
         return;
       }
       if (!vttResp || !vttResp.success) {
-        postToSidebar({ type: 'TRANSCRIPT_STATUS', status: 'error', error: vttResp?.error || 'VTT request failed' });
+        postToSidebar({
+          type: 'TRANSCRIPT_STATUS',
+          status: 'error',
+          error: vttResp?.error || 'VTT request failed',
+          errorDetail: vttResp?.errorDetail || null
+        });
         return;
       }
 

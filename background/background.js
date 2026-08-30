@@ -404,6 +404,7 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
       const base = String(msg.localBase || '').trim().replace(/\/+$/, '');
       if (!base) throw apiError({ provider, code: 'missing_base', message: 'localBase required for model discovery' });
       const req = Adapters.oai.buildModelsRequest({ base, apiKey: null });
+      await requireHostAccess(base, provider, null);
       const resp = await fetch(req.url, { headers: req.headers, signal: AbortSignal.timeout(4000) });
       if (!resp.ok) throw apiError({ status: resp.status, provider, message: `Server at ${base} returned ${resp.status}` });
       const ids = Adapters.oai.parseModelsResponse(await resp.json()).map(m => m.id);
@@ -463,13 +464,18 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
       return safeParseJson(raw, { type, requestId });
     }
 
+    // Lecture data. The URLs are discovered from the page, so a course can
+    // point at a media host we do not hold — say precisely which one instead
+    // of letting it surface as a bare "Failed to fetch".
     case 'FETCH_VTT': {
+      await requireHostAccess(msg.url, 'transcript', null);
       const resp = await fetch(msg.url, { signal: AbortSignal.timeout(45000) });
       if (!resp.ok) throw apiError({ status: resp.status, message: `VTT fetch failed: ${resp.status}` });
       return resp.text();
     }
 
     case 'FETCH_JSON': {
+      await requireHostAccess(msg.url, 'transcript', null);
       const resp = await fetch(msg.url, { signal: AbortSignal.timeout(45000) });
       if (!resp.ok) throw apiError({ status: resp.status, message: `JSON fetch failed: ${resp.status}` });
       return resp.json();
