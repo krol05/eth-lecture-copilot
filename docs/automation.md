@@ -102,6 +102,20 @@ disappearing entry silently breaks the setup of whoever was using it. Only IDs
 verified as *retired* (in the script's `RETIRED` set) are kept out, because
 those genuinely fail.
 
+There is one deliberate exception: models.dev marks its "latest" alias rows with
+a leading `~` (`~x-ai/grok-latest`). That prefix is its own bookkeeping and is
+not part of any provider's model ID, so those entries are dropped — they would
+404 if anyone selected them.
+
+**Marketplaces are not auto-extended.** OpenRouter lists 354 models, NVIDIA NIM
+103, HuggingFace 72, and they gain more every week. Adding "the newest 25" to
+each of them weekly grew those lists without bound while mostly surfacing models
+nobody asked for. They keep their curated seed list; their real range comes from
+the runtime `/models` fetch, which is unfiltered and complete. Their existing
+entries are still kept and still get their reasoning levels refreshed. Direct
+providers (Anthropic, OpenAI, Google, DeepSeek, Groq, xAI, Mistral, …) are still
+extended automatically, which is where a new model actually matters.
+
 **Reasoning levels are refreshed too.** models.dev reports which effort levels
 each model accepts, and those land in the catalog as `efforts`. This is load
 bearing: `gpt-5-pro` accepts only `high`, and the `-pro` variants only
@@ -112,10 +126,24 @@ decides which *parameter* to use.
 The job also prints two audits into the PR body: any value we would send that a
 model rejects, and any model that reasons by default where we send nothing.
 
-Newly added models are capped at 25 per provider so a 400-model aggregator does
-not bloat the offline fallback — and the PR states how many were left out rather
-than hiding the truncation. The live model refresh inside the extension covers
-the full list at runtime anyway.
+Newly added models are capped at 25 per provider, and the PR states how many were
+left out rather than hiding the truncation.
+
+**Two traps this script fell into once, both fixed — don't reintroduce them:**
+
+*Judging a model by its declared modality doesn't work.* models.dev reports the
+embedding model `baai/bge-m3`, the protein-folding model `meta/esmfold` and the
+audio model `nvidia/studiovoice` all as ordinary `text → text` models with normal
+context lengths. The first generated PR duly added all three. The `NON_CHAT`
+name pattern is therefore the only real filter, and the modality check is a
+backstop, not the primary defence.
+
+*The ID column width is a fixed constant (`ID_COLUMN`), never derived from the
+data.* It used to be computed as the longest ID in each provider's list, so one
+unusually long new ID re-padded every other row: a PR adding a handful of models
+showed 56 lines of pure whitespace change out of 123, and nobody could see what
+actually changed. Long IDs now overflow their own row and leave every other line
+alone. Changing the constant reformats the whole file exactly once.
 
 ### 3. Background test suite
 

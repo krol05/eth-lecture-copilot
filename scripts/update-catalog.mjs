@@ -19,7 +19,7 @@
  * Usage: node scripts/update-catalog.mjs [--dry-run]
  */
 
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -66,11 +66,54 @@ const RETIRED = new Set([
 // listing them would only offer the user broken choices: other modalities
 // (image/audio/video), different API surfaces (Live/realtime = websockets,
 // deep-research = its own endpoint), and non-conversational specialists.
-const NON_CHAT = /(^|[-/])(embed|embedding|tts|whisper|transcribe|realtime|live|image|dall-e|moderation|rerank|guard|audio|video|veo|imagen|lyria|music|robotics|computer-use|deep-research|search-preview|codex-spark)/i;
+//
+// This regex is the ONLY thing standing between us and junk entries. The
+// modality check below cannot help: models.dev reports embedding models
+// (baai/bge-m3), protein models (meta/esmfold) and audio models
+// (nvidia/studiovoice) all as plain "text -> text" with a normal context
+// length. Judge by name or not at all.
+//
+// Matched only at a word boundary, for tokens that would otherwise hit real
+// chat models ("live" inside "olive", "sam" inside "samantha").
+//
+// Short or dictionary-word tokens ALSO need a boundary on the right, or they
+// eat real models: "music" matched "gemma-4-26b-a4b-it-musica", a 262k-context
+// tool-calling chat model. Tokens that legitimately run into other words
+// ("embed" in "nv-embedcode", "rerank" in "reranker") must stay loose.
+const WHOLE_WORD = ['music', 'esm', 'e5', 'gte', 'bge', 'asr', 'stt', 'sana', 'depth',
+  'canary', 'riva', 'veo', 'ocr', 'tts', 'live', 'safety', 'guard', 'shield'];
+const LOOSE = ['embed', 'embedding', 'embedqa', 'whisper', 'transcribe', 'realtime',
+  'image', 'dall-e', 'moderation', 'rerank', 'reranker', 'jailbreak', 'topic-control',
+  'gliner', 'content-safety', 'audio', 'video', 'imagen', 'lyria', 'robotics',
+  'computer-use', 'deep-research', 'search-preview', 'codex-spark', 'paligemma',
+  'retriever', 'nemoretriever', 'sam2', 'segment', 'upscal', 'parakeet', 'fastpitch',
+  'hifigan', 'esmfold', 'evo2', 'molmim', 'diffdock', 'alphafold', 'proteinmpnn', 'genemol',
+  'nv-embed', 'arctic-embed'];
 
-// Cap on NEWLY ADDED models per provider, so a 400-model aggregator doesn't
-// bloat the static fallback. Existing entries are never affected, live
-// /models covers the full list at runtime, and the cap is reported below.
+const NON_CHAT = new RegExp(
+  `(^|[-/_])(?:(?:${WHOLE_WORD.join('|')})(?![a-z])|(?:${LOOSE.join('|')}))`, 'i');
+
+// Matched anywhere in the id — unambiguous enough that a substring hit is
+// always a non-chat model. ("studiovoice" has no separator before "voice".)
+const NON_CHAT_ANY = /(voice|speech|embedding|reranker)/i;
+
+// models.dev marks "latest" alias rows with a leading "~". That prefix is its
+// own bookkeeping, not part of any provider's model id — sending
+// "~x-ai/grok-latest" would 404. Never add them, and prune any that an earlier
+// run let through.
+const ALIAS_PREFIX = '~';
+
+// Providers whose catalogue is a marketplace of hundreds of third-party models
+// (OpenRouter alone lists 354). Auto-adding "the newest 25" every week grows
+// these lists without bound and mostly surfaces models nobody asked for, so we
+// keep the curated seed list and let the runtime /models fetch — which is
+// unfiltered and complete — cover the real range. Their existing entries are
+// still kept and still get their reasoning levels refreshed.
+const AGGREGATORS = new Set(['openrouter', 'nvidia_nim', 'huggingface']);
+
+// Cap on NEWLY ADDED models per provider (non-aggregators only). Existing
+// entries are never affected, live /models covers the full list at runtime,
+// and the cap is reported below.
 const NEW_MODEL_CAP = 25;
 
 /** The reasoning effort levels a model accepts, when the index reports them. */
@@ -82,7 +125,8 @@ function effortsOf(model) {
 }
 
 function isChatTextModel(model) {
-  if (NON_CHAT.test(model.id)) return false;
+  if (model.id.startsWith(ALIAS_PREFIX)) return false;
+  if (NON_CHAT.test(model.id) || NON_CHAT_ANY.test(model.id)) return false;
   const out = model.modalities?.output;
   const inp = model.modalities?.input;
   if (Array.isArray(out) && !out.includes('text')) return false;
@@ -138,17 +182,31 @@ function loadExisting() {
   }
 }
 
-function mergeProvider(existing, upstreamModels) {
-  const merged = existing.map(m => ({ ...m }));
+/** Upstream names are sometimes just the id again, or carry a vendor prefix. */
+function cleanLabel(model) {
+  const name = String(model.name || '').trim();
+  const bare = model.id.includes('/') ? model.id.slice(model.id.lastIndexOf('/') + 1) : model.id;
+  if (!name || name === model.id || name === bare) return bare;
+  return name.replace(/^[\w .-]{2,20}:\s+/, '');   // "NVIDIA: Nemotron 3" -> "Nemotron 3"
+}
+
+function mergeProvider(existing, upstreamModels, { addNew = true } = {}) {
+  // Alias rows are not real model ids; drop any a previous run added.
+  const kept = existing.filter(m => !m.id.startsWith(ALIAS_PREFIX));
+  const prunedCount = existing.length - kept.length;
+
+  const merged = kept.map(m => ({ ...m }));
   const seen = new Set(merged.map(m => m.id));
 
-  const candidates = Object.values(upstreamModels)
-    .filter(isChatTextModel)
-    .filter(m => !RETIRED.has(m.id) && !seen.has(m.id))
-    .sort((a, b) => String(b.release_date || '').localeCompare(String(a.release_date || '')));
+  const candidates = addNew
+    ? Object.values(upstreamModels)
+      .filter(isChatTextModel)
+      .filter(m => !RETIRED.has(m.id) && !seen.has(m.id))
+      .sort((a, b) => String(b.release_date || '').localeCompare(String(a.release_date || '')))
+    : [];
 
   const added = candidates.slice(0, NEW_MODEL_CAP);
-  for (const m of added) merged.push({ id: m.id, label: m.name || m.id, ...effortsOf(m) });
+  for (const m of added) merged.push({ id: m.id, label: cleanLabel(m), ...effortsOf(m) });
 
   // Refresh the accepted reasoning levels on models we already listed — this
   // is what stops us sending a value the provider would reject.
@@ -159,17 +217,34 @@ function mergeProvider(existing, upstreamModels) {
     if (e.efforts) entry.efforts = e.efforts;
     else delete entry.efforts;
   }
-  return { merged, addedCount: added.length, skippedCount: candidates.length - added.length };
+  return {
+    merged,
+    addedCount: added.length,
+    skippedCount: candidates.length - added.length,
+    prunedCount
+  };
+}
+
+// Column width for the id field. A FIXED constant on purpose: deriving it from
+// the data (max id length) meant that one unusually long new id re-padded every
+// other row in that provider, so a PR adding 3 models showed 60 changed lines
+// of pure whitespace. Ids longer than this simply overflow their own row and
+// leave every other line untouched. Changing this number reformats the whole
+// file once, so don't, unless that is what you want.
+const ID_COLUMN = 46;
+
+/** The sync date changes every run; ignore it when asking "did anything change". */
+function stripSyncDate(text) {
+  return text.replace(/Model data last synced from models\.dev: .*/, '');
 }
 
 function serialize(catalogModels, sourceDate) {
   const pad = (s, n) => s + ' '.repeat(Math.max(0, n - s.length));
   const body = Object.entries(catalogModels).map(([provider, models]) => {
-    const idWidth = Math.max(...models.map(m => JSON.stringify(m.id).length));
     const rows = models
       .map(m => {
         const efforts = m.efforts ? `, efforts: ${JSON.stringify(m.efforts)}` : '';
-        return `      { id: ${pad(JSON.stringify(m.id) + ',', idWidth + 1)} label: ${JSON.stringify(m.label)}${efforts} }`;
+        return `      { id: ${pad(JSON.stringify(m.id) + ',', ID_COLUMN + 1)} label: ${JSON.stringify(m.label)}${efforts} }`;
       })
       .join(',\n');
     return `    ${provider}: [\n${rows}\n    ]`;
@@ -230,11 +305,21 @@ async function main() {
       report.push(`  ${providerId}: no upstream data — kept ${models.length} existing`);
       continue;
     }
-    const { merged, addedCount, skippedCount } = mergeProvider(models, upstreamModels);
+    const isAggregator = AGGREGATORS.has(providerId);
+    const { merged, addedCount, skippedCount, prunedCount } =
+      mergeProvider(models, upstreamModels, { addNew: !isAggregator });
     out[providerId] = merged;
     totalAdded += addedCount;
-    const skipNote = skippedCount ? ` (${skippedCount} more available, capped at ${NEW_MODEL_CAP} — live model refresh covers the rest)` : '';
-    report.push(`  ${providerId}: ${models.length} → ${merged.length} (+${addedCount})${skipNote}`);
+
+    const notes = [];
+    if (isAggregator) {
+      notes.push(`marketplace — not auto-extended, live /models covers its ${Object.keys(upstreamModels).length} models`);
+    } else if (skippedCount) {
+      notes.push(`${skippedCount} more available, capped at ${NEW_MODEL_CAP} — live model refresh covers the rest`);
+    }
+    if (prunedCount) notes.push(`${prunedCount} alias id${prunedCount > 1 ? 's' : ''} removed`);
+    const note = notes.length ? ` (${notes.join('; ')})` : '';
+    report.push(`  ${providerId}: ${models.length} → ${merged.length} (+${addedCount})${note}`);
   }
 
   console.log('\nModel counts:');
@@ -255,15 +340,21 @@ async function main() {
     if (gaps.length > 15) console.log(`  …and ${gaps.length - 15} more`);
   }
 
-  if (!totalAdded) {
-    console.log('Nothing new — catalog left unchanged.');
+  // Compare against the file as it stands rather than trusting the added
+  // count: refreshed reasoning levels and pruned alias ids are real changes
+  // that add no models, and an early return here used to discard them.
+  const today = new Date().toISOString().slice(0, 10);
+  const previous = readFileSync(DATA_FILE, 'utf8');
+  const content = serialize(out, today);
+  const unchangedApartFromDate =
+    stripSyncDate(content) === stripSyncDate(previous);
+
+  if (unchangedApartFromDate) {
+    console.log('\nNothing to change — catalog left untouched.');
     return;
   }
-
-  const today = new Date().toISOString().slice(0, 10);
-  const content = serialize(out, today);
   if (dryRun) {
-    console.log('\n--dry-run: not writing.');
+    console.log(`\n--dry-run: would write ${DATA_FILE}.`);
     return;
   }
   writeFileSync(DATA_FILE, content);
