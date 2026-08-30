@@ -529,21 +529,26 @@
     qaFrameBtn?.addEventListener('click', async () => {
       qaFrameBtn.disabled = true;
 
-      // No permission is asked for up front. The page copies the frame out of
-      // the video directly, which needs none — only if the browser refuses
-      // that do we fall back to screenshotting the tab, and only then is the
-      // broad grant worth asking about.
-      let { b64, error, needsScreenshot } = await captureFrame();
-
-      if (!b64 && needsScreenshot && await ensureScreenshotAccess()) {
-        ({ b64, error } = await captureFrame());
-      }
+      // Nothing broad is ever requested here. ETH's player taints the canvas,
+      // so the frame cannot be copied out of the video, and the only remaining
+      // route is a screenshot — which Chrome allows solely with access to
+      // every website, or with activeTab. activeTab is granted by running a
+      // keyboard shortcut, so we point at that instead of asking for the web.
+      const { b64, error, needsScreenshot } = await captureFrame();
       qaFrameBtn.disabled = false;
       if (b64) {
         attachedImages.push({ dataUrl: `data:image/jpeg;base64,${b64}`, label: 'Frame' });
         renderImageStrip();
         return;
       }
+      if (needsScreenshot) {
+        // The video is copy-protected, so this has to be a screenshot, and
+        // Chrome grants that only for all sites or via a shortcut (activeTab).
+        // Offer the choice on a button instead of firing a prompt unasked.
+        offerScreenshotPermission();
+        return;
+      }
+
       // Never fail silently: say what the browser actually reported.
       setStatus('error', `Frame capture failed: ${error || 'unknown reason'}`);
       reportSidebarError(new Error(error || 'Frame capture failed'), { operation: 'Attaching a video frame' });
@@ -1434,6 +1439,17 @@
         }
         break;
 
+      case 'FRAME_ATTACHED':
+        // Arrived via the keyboard shortcut rather than the button.
+        if (msg.imageBase64) {
+          attachedImages.push({ dataUrl: `data:image/jpeg;base64,${msg.imageBase64}`, label: 'Frame' });
+          renderImageStrip();
+          setStatus('ready', 'Frame attached');
+        } else {
+          setStatus('error', `Frame capture failed: ${msg.error || 'unknown reason'}`);
+        }
+        break;
+
       case 'FRAME_CAPTURED':
         if (pendingRequests[msg.requestId]) {
           pendingRequests[msg.requestId]({
@@ -1948,17 +1964,15 @@
       // New complete math block(s) found.
       // Set the zone's textContent so the $$ delimiters live in a SINGLE text
       // node — renderMathInElement can then find multi-line equations.
-      katexZ.textContent = buf.slice(0, katexCutoff);
-      if (typeof renderMathInElement === 'function') {
-        renderMathInElement(katexZ, {
-          delimiters: [
-            { left: '$$', right: '$$', display: true },
-            { left: '$',  right: '$',  display: false }
-          ],
-          throwOnError: false,
-          trust: false
-        });
-      }
+      // Typeset ONLY the newly completed span and append it. This used to
+      // reset the whole zone to buf.slice(0, cutoff) and re-render it, so
+      // every finished equation re-typeset all the equations before it —
+      // quadratic work that made a long answer crawl as it streamed.
+      const part = document.createElement('span');
+      part.className = 'qa-katex-part';
+      part.textContent = buf.slice(state.katexEnd, katexCutoff);
+      katexZ.appendChild(part);
+      applyKatex(part);
       state.katexEnd = katexCutoff;
 
       // Remove all existing plain spans/brs (now covered by the katex zone).
@@ -1985,17 +1999,91 @@
         }
       });
       state.stableEnd = buf.length;
+      coalesceStreamChunks(state.bubble, cursor);
+    }
+  }
+
+  /**
+   * Fold older fade-in spans into one plain text node.
+   *
+   * Layer B adds a span per line on every flush, so a long answer ends up with
+   * thousands of animated elements live at once — the single biggest cost
+   * while streaming. Only the newest handful need to be individually animated;
+   * everything above is settled text and can be one node.
+   */
+  function coalesceStreamChunks(bubble, cursor) {
+    const KEEP_ANIMATED = 24;
+    const chunks = bubble.querySelectorAll('.qa-chunk');
+    if (chunks.length <= KEEP_ANIMATED * 3) return;   // amortise the work
+
+    const first = chunks[0];
+    const stopAt = chunks[chunks.length - KEEP_ANIMATED];
+
+    // Walk the real sibling range so the <br>s between spans travel with them
+    // and nothing is reordered. Inserting at the top would push settled text
+    // above the maths zone, which sits first in the bubble.
+    const merged = document.createElement('span');
+    merged.className = 'qa-chunk-settled';
+    bubble.insertBefore(merged, first);
+
+    let node = merged.nextSibling;
+    while (node && node !== stopAt && node !== cursor) {
+      const next = node.nextSibling;
+      if (node.classList && node.classList.contains('qa-chunk')) {
+        // UNWRAP, don't just move: a relocated span keeps its class and so
+        // keeps its animation, which would leave the cost exactly where it
+        // was. Lifting the contents out drops the element entirely.
+        while (node.firstChild) merged.appendChild(node.firstChild);
+        node.remove();
+      } else {
+        merged.appendChild(node);       // the <br>s between lines
+      }
+      node = next;
     }
   }
 
   /** Apply KaTeX to an element — shared helper used by streaming, flashcards, etc. */
+  /**
+   * Delimiters we accept for maths.
+   *
+   * \[..\] and \(..\) matter as much as the dollar forms: they are what
+   * DeepSeek and most current models emit, and with only $-forms configured
+   * those blocks were shown to the user as raw LaTeX source.
+   *
+   * Order matters — the longer opener must be tried before the shorter one, or
+   * "$$" is matched as two empty "$" spans.
+   */
+  const KATEX_DELIMITERS = [
+    { left: '$$',  right: '$$',  display: true },
+    { left: '\\[', right: '\\]', display: true },
+    { left: '\\(', right: '\\)', display: false },
+    { left: '$',   right: '$',   display: false }
+  ];
+
+  /**
+   * Shorthands models write as if a preamble defined them. KaTeX ships no
+   * preamble, so \E and friends came out as red error text mid-formula.
+   * Defining them costs nothing and removes a whole class of "broken maths".
+   */
+  const KATEX_MACROS = {
+    '\\E': '\\mathbb{E}',
+    '\\P': '\\mathbb{P}',
+    '\\R': '\\mathbb{R}',
+    '\\N': '\\mathbb{N}',
+    '\\Z': '\\mathbb{Z}',
+    '\\Q': '\\mathbb{Q}',
+    '\\Var': '\\operatorname{Var}',
+    '\\Cov': '\\operatorname{Cov}',
+    '\\Pr': '\\operatorname{Pr}',
+    '\\argmin': '\\operatorname{arg\\,min}',
+    '\\argmax': '\\operatorname{arg\\,max}'
+  };
+
   function applyKatex(el) {
     if (!el || typeof renderMathInElement !== 'function') return;
     renderMathInElement(el, {
-      delimiters: [
-        { left: '$$', right: '$$', display: true },
-        { left: '$',  right: '$',  display: false }
-      ],
+      delimiters: KATEX_DELIMITERS,
+      macros: KATEX_MACROS,
       throwOnError: false,
       trust: false
     });
@@ -2061,14 +2149,42 @@
     return close;
   }
 
+  /** Shown to the user; matches the suggested_key in manifest.json. */
+  const FRAME_SHORTCUT = navigator.platform?.startsWith('Mac') ? '⌥⇧F' : 'Alt+Shift+F';
+
   /**
-   * The broad grant that tab screenshots require. Requested unconditionally
-   * rather than checked first: the check is async, and a user gesture stops
-   * counting once you await. Chrome resolves it silently when already held.
+   * Explain the screenshot permission and let the user decide, on a button.
+   *
+   * Reuses the error panel's grant-and-retry flow: its button asks, and on
+   * success re-runs the capture, so one click finishes the job. Nothing is
+   * requested until that button is pressed.
    */
-  function ensureScreenshotAccess() {
-    if (typeof self === 'undefined' || !self.requestPermission) return Promise.resolve(true);
-    return self.requestPermission(self.SCREENSHOT_ORIGINS).then(r => r.granted);
+  function offerScreenshotPermission() {
+    setStatus('warning', 'Attaching a frame needs one of the steps below.');
+    ErrorPanel.report({
+      status: null, provider: null, model: null,
+      code: 'permission_missing',
+      message:
+        'The lecture video is copy-protected, so the frame has to be taken as a picture of the page, and Chrome guards that.\n\n' +
+        'Either of these works and neither asks for anything:\n' +
+        '  1. Click the extension icon in your toolbar once, then press Attach frame again. That allows this tab only, until you navigate away.\n' +
+        '  2. Press ' + FRAME_SHORTCUT + '.\n\n' +
+        'Or grant it permanently with the button below, if you would rather the button just worked from now on.',
+      raw: { origin: '<all_urls>', host: 'all sites' },
+      timestamp: Date.now()
+    }, {
+      onGranted: async () => {
+        const { b64, error } = await captureFrame();
+        if (b64) {
+          attachedImages.push({ dataUrl: `data:image/jpeg;base64,${b64}`, label: 'Frame' });
+          renderImageStrip();
+          setStatus('ready', 'Frame attached');
+          return;
+        }
+        setStatus('error', `Frame capture failed: ${error || 'unknown reason'}`);
+        throw new Error(error || 'Frame capture failed');
+      }
+    });
   }
 
   function captureFrame() {
@@ -2176,8 +2292,17 @@
       const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1);
       const cW = Math.round(img.naturalWidth * scale);
       const cH = Math.round(img.naturalHeight * scale);
-      canvas.width  = cW;
-      canvas.height = cH;
+
+      // Back the canvas at screen density and let CSS scale it down. Sizing
+      // the bitmap to the CSS box made the editor show a soft, pixellated
+      // copy of a sharp image — the crop was fine, the preview was not.
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      canvas.width  = Math.round(cW * dpr);
+      canvas.height = Math.round(cH * dpr);
+      canvas.style.width  = cW + 'px';
+      canvas.style.height = cH + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.imageSmoothingQuality = 'high';
 
       // Offscreen canvas for drawing strokes
       const drawCanvas = document.createElement('canvas');
@@ -2187,6 +2312,9 @@
       _imgEd = {
         imageIdx,
         img,
+        // Logical editor size. The canvas bitmap is dpr times larger so the
+        // preview is sharp; every coordinate below stays in these units.
+        cssW: cW, cssH: cH,
         canvas, ctx,
         drawCanvas, drawCtx: drawCanvas.getContext('2d'),
         crop: { x: 0, y: 0, w: cW, h: cH },
@@ -2215,7 +2343,7 @@
   function _imgEdRender() {
     if (!_imgEd) return;
     const { img, canvas, ctx, drawCanvas, crop } = _imgEd;
-    const W = canvas.width, H = canvas.height;
+    const W = _imgEd.cssW, H = _imgEd.cssH;
 
     ctx.clearRect(0, 0, W, H);
     // 1. Base image
@@ -2360,8 +2488,8 @@
 
   function _imgEdCanvasXY(e) {
     const rect = _imgEd.canvas.getBoundingClientRect();
-    const sx = _imgEd.canvas.width  / rect.width;
-    const sy = _imgEd.canvas.height / rect.height;
+    const sx = _imgEd.cssW / rect.width;
+    const sy = _imgEd.cssH / rect.height;
     return [(e.clientX - rect.left) * sx, (e.clientY - rect.top) * sy];
   }
 
@@ -2384,11 +2512,11 @@
     if (!_imgEd?.dragHandle) return;
     const { dragHandle, dragStart, dragStartCrop: C, canvas } = _imgEd;
     const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width  / rect.width;
-    const sy = canvas.height / rect.height;
+    const sx = _imgEd.cssW / rect.width;
+    const sy = _imgEd.cssH / rect.height;
     const dx = (e.clientX - dragStart.x) * sx;
     const dy = (e.clientY - dragStart.y) * sy;
-    const MIN = 20, MAX_X = canvas.width, MAX_Y = canvas.height;
+    const MIN = 20, MAX_X = _imgEd.cssW, MAX_Y = _imgEd.cssH;
     let { x, y, w, h } = C;
 
     switch (dragHandle) {
@@ -2428,18 +2556,25 @@
   function applyImageEditor() {
     if (!_imgEd) return;
     const { img, canvas, drawCanvas, crop, imageIdx } = _imgEd;
+
+    // The editor shows the image shrunk to fit the panel, but the crop must be
+    // saved at the SOURCE scale. Sizing the output canvas in display pixels
+    // threw the resolution away: a 1920x1080 frame came out around 330px wide,
+    // which is why attached frames looked soft however well they were captured.
+    const scaleX = img.naturalWidth  / _imgEd.cssW;
+    const scaleY = img.naturalHeight / _imgEd.cssH;
+
     const out = document.createElement('canvas');
-    out.width  = Math.max(1, Math.round(crop.w));
-    out.height = Math.max(1, Math.round(crop.h));
+    out.width  = Math.max(1, Math.round(crop.w * scaleX));
+    out.height = Math.max(1, Math.round(crop.h * scaleY));
     const oc = out.getContext('2d');
-    // Draw original image pixels (full-resolution crop)
-    const scaleX = img.naturalWidth  / canvas.width;
-    const scaleY = img.naturalHeight / canvas.height;
+    oc.imageSmoothingQuality = 'high';
+
     oc.drawImage(img,
       crop.x * scaleX, crop.y * scaleY, crop.w * scaleX, crop.h * scaleY,
       0, 0, out.width, out.height
     );
-    // Overlay drawing strokes (at display scale, cropped)
+    // Strokes were drawn at display scale, so stretch them to match.
     oc.drawImage(drawCanvas, crop.x, crop.y, crop.w, crop.h, 0, 0, out.width, out.height);
     attachedImages[imageIdx] = {
       ...attachedImages[imageIdx],
@@ -4520,14 +4655,20 @@ ${guideBlocksStr}`;
     } else {
       qaSend.classList.remove('qa-send-stop');
       qaSend.disabled = !hasText || !hasSettings || !hasTranscript;
+      // A greyed-out button with the reason hidden in a tooltip is the same as
+      // no reason at all — say it in the box the user is already looking at.
       if (!hasSettings) {
         qaSend.title = 'Add an API key in Settings first';
+        qaInput.placeholder = 'Add an API key in Settings before asking…';
       } else if (!hasTranscript) {
         qaSend.title = 'Waiting for transcript to load';
+        qaInput.placeholder = 'Waiting for the transcript — reload the page if this persists…';
       } else if (!hasText) {
         qaSend.title = 'Type a question first';
+        qaInput.placeholder = 'Ask a question about the lecture…';
       } else {
         qaSend.title = 'Send (Enter)';
+        qaInput.placeholder = 'Ask a question about the lecture…';
       }
     }
     // Auto-resize textarea
@@ -6182,12 +6323,23 @@ ${guideBlocksStr}${scriptContext}`;
   }
 
   function normalizeLatexForKatex(str) {
+    // ── Step 0: Convert \[..\] and \(..\) to the dollar forms ────────────────
+    // Configuring KaTeX to accept these delimiters is not enough on its own:
+    // it only matches a pair inside ONE text node, and markdown puts the
+    // opening \[, the formula and the closing \] in separate nodes — which is
+    // why they reached the reader as raw source. Rewriting them here, before
+    // markdown runs, funnels them through the same collapsing that already
+    // makes multi-line $$ work.
+    str = String(str || '')
+      .replace(/\\\[[ \t]*\n?([\s\S]*?)\n?[ \t]*\\\]/g, (_m, inner) => '$$' + inner.trim() + '$$')
+      .replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => '$' + inner.trim() + '$');
+
     // ── Step 1: Collapse multi-line display math ──────────────────────────────
     // AI often outputs:   $$\n<math>\n$$   (opening/closing $$ on their own line)
     // Our renderMarkdown splits on newlines → the opening $$ and content end up
     // in separate <p> elements → KaTeX never finds the delimiters.
     // Fix: if $$ appears alone on a line, merge the whole block to one span.
-    str = String(str || '').replace(/\$\$[ \t]*\n([\s\S]*?)\n[ \t]*\$\$/g, (_m, inner) =>
+    str = str.replace(/\$\$[ \t]*\n([\s\S]*?)\n[ \t]*\$\$/g, (_m, inner) =>
       '$$' + inner + '$$'
     );
     // ── Step 2: \sideset transformation ──────────────────────────────────────
