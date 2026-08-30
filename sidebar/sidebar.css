@@ -1152,8 +1152,15 @@ body {
   flex: 0 0 auto;
   /* No CSS min-height — height is content-driven on first open.
      After the user drags the handle, panel.style.height is set explicitly.
-     max-height prevents overflow if content is unusually tall. */
-  max-height: 68%;
+
+     The cap is in vh, NOT %. A percentage max-height resolves against the
+     parent's height, and when that parent has no definite height CSS treats
+     it as `none` — so the panel grew to fit all its content, ran off the
+     bottom of the sidebar, and the body below never got the chance to
+     scroll. A flashcard's Study note and "Ask about this" were simply
+     unreachable. vh always resolves. */
+  max-height: 68vh;
+  min-height: 0;
   border-top: 2px solid var(--accent);
   background: var(--bg-1);
   overflow: hidden;
@@ -1203,9 +1210,11 @@ body {
 }
 
 .guide-inline-tool-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* Don't hand the scroll on to the guide behind once this reaches its end */
+  overscroll-behavior: contain;
   padding: 12px 14px 16px;
   display: flex;
   flex-direction: column;
