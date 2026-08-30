@@ -118,13 +118,32 @@ describe('everything the extension contacts is still reachable', () => {
   });
 });
 
-describe('optional patterns are broad enough to cover a plain http server', () => {
-  test('http is only offered for loopback, not the whole web', () => {
-    // An extension that could reach any http:// site would be back to
-    // warning about everything; local servers are the only http case.
-    expect(optional).toContain('http://localhost/*');
-    expect(optional).toContain('http://127.0.0.1/*');
-    expect(optional).not.toContain('http://*/*');
-    expect(reachable('http://random-site.example/*')).toBe(false);
+describe('any self-hosted server can be reached, on any address', () => {
+  // optional_host_permissions do NOT appear in the install warning — Chrome
+  // only warns about REQUIRED permissions, and prompts for optional ones per
+  // origin at the moment they are requested. So listing http://*/* here costs
+  // nothing at install time and is what makes a proxy like LiteLLM usable
+  // wherever the user actually runs it.
+  test('loopback, by name or by address', () => {
+    expect(reachable('http://localhost/*')).toBe(true);
+    expect(reachable('http://127.0.0.1/*')).toBe(true);
+  });
+
+  test('a machine elsewhere on the network', () => {
+    // LiteLLM, Ollama or vLLM on a desktop, a home server, or a lab box
+    expect(reachable('http://192.168.1.50/*')).toBe(true);
+    expect(reachable('http://10.0.0.7/*')).toBe(true);
+    expect(reachable('http://my-server.local/*')).toBe(true);
+  });
+
+  test('a port never narrows what is reachable', () => {
+    // Match patterns carry no port, so one grant covers every port on a host
+    expect(originPattern('http://localhost:4000/v1')).toBe('http://localhost/*');
+    expect(originPattern('http://192.168.1.50:8000/v1')).toBe('http://192.168.1.50/*');
+  });
+
+  test('breadth here does not leak into the install warning', () => {
+    expect(required).not.toContain('http://*/*');
+    expect(required).not.toContain('https://*/*');
   });
 });
