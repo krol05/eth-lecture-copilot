@@ -526,16 +526,20 @@
 
     qaLectureSummaryBtn?.addEventListener('click', onQaLectureSummaryClick);
 
+    publishChromeHeights();
+
     qaFrameBtn?.addEventListener('click', async () => {
       qaFrameBtn.disabled = true;
-      const b64 = await captureFrame();
+      const { b64, error } = await captureFrame();
       qaFrameBtn.disabled = false;
       if (b64) {
         attachedImages.push({ dataUrl: `data:image/jpeg;base64,${b64}`, label: 'Frame' });
         renderImageStrip();
-      } else {
-        setStatus('warning', 'Frame capture failed');
+        return;
       }
+      // Never fail silently: say what the browser actually reported.
+      setStatus('error', `Frame capture failed: ${error || 'unknown reason'}`);
+      reportSidebarError(new Error(error || 'Frame capture failed'), { operation: 'Attaching a video frame' });
     });
 
     // Paste images anywhere in the Q&A input area
@@ -1425,7 +1429,7 @@
 
       case 'FRAME_CAPTURED':
         if (pendingRequests[msg.requestId]) {
-          pendingRequests[msg.requestId](msg.imageBase64);
+          pendingRequests[msg.requestId]({ b64: msg.imageBase64, error: msg.error || null });
           delete pendingRequests[msg.requestId];
         }
         break;
@@ -2046,6 +2050,30 @@
     return close;
   }
 
+  /**
+   * Publish the height of the chat composer so floating UI can sit above it.
+   *
+   * The error badge used to be pinned to the bottom-right corner, which is
+   * exactly where the send button is — it swallowed clicks meant for Enter.
+   * Measuring instead of guessing keeps it clear as the composer grows with
+   * the attachment strip, the customization row, or a multi-line question.
+   */
+  function publishChromeHeights() {
+    const footer = document.querySelector('.qa-footer-stack');
+    if (!footer) return;
+    const apply = () => {
+      const visible = footer.offsetParent !== null;
+      document.body.style.setProperty(
+        '--cop-composer-height', visible ? `${footer.offsetHeight}px` : '0px');
+    };
+    apply();
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(apply).observe(footer);
+    }
+    // Switching tabs hides the composer entirely; re-measure when that happens.
+    document.addEventListener('click', () => setTimeout(apply, 0), true);
+  }
+
   function captureFrame() {
     return new Promise((resolve) => {
       const id = makeRequestId();
@@ -2053,12 +2081,12 @@
       const timer = setTimeout(() => {
         window.CopilotDebug?.warn('[Copilot] captureFrame: timed out waiting for FRAME_CAPTURED', id);
         delete pendingRequests[id];
-        resolve(null);
+        resolve({ b64: null, error: 'The page did not respond within 8 seconds. Reload the lecture tab and try again.' });
       }, 8000);
       pendingRequests[id] = (result) => {
         clearTimeout(timer);
-        window.CopilotDebug?.log('[Copilot] captureFrame: got result', id, result ? 'b64 length=' + result.length : 'null');
-        resolve(result);
+        window.CopilotDebug?.log('[Copilot] captureFrame: got result', id, result?.b64 ? 'b64 length=' + result.b64.length : 'null');
+        resolve(result || { b64: null, error: 'No response from the lecture page.' });
       };
       postToContent({ type: 'CAPTURE_FRAME', requestId: id });
     });

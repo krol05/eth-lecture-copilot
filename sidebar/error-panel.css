@@ -146,8 +146,14 @@
 
 .cop-err-badge {
   position: fixed;
-  right: 12px;
-  bottom: 12px;
+  /* Left-anchored and lifted above the composer: the bottom-right corner is
+     the send button, and a floating badge there swallows clicks meant for it.
+     --cop-composer-height is published by the sidebar (see publishChromeHeights)
+     and --cop-gen-height by the generation bar, so the badge stacks above both
+     instead of overlapping whatever happens to be underneath. */
+  left: 12px;
+  right: auto;
+  bottom: calc(var(--cop-composer-height, 0px) + var(--cop-gen-height, 0px) + 12px);
   z-index: 10000;
   padding: 6px 10px;
   border: 1px solid var(--error);
@@ -285,7 +291,7 @@
 /* Keep the error panel clear of whatever is generating */
 body.cop-generating .cop-err-panel,
 body.cop-generating .cop-err-badge {
-  bottom: calc(var(--cop-gen-height, 0px) + 18px);
+  bottom: calc(var(--cop-composer-height, 0px) + var(--cop-gen-height, 0px) + 18px);
 }
 
 /* Lecture summary options block */
