@@ -970,12 +970,17 @@
 
       case 'CAPTURE_FRAME':
         lastCaptureError = null;
+        needsScreenshotPermission = false;
         captureVideoFrame().then(b64 => {
           postToSidebar({
             type: 'FRAME_CAPTURED',
             imageBase64: b64,
             // Why it failed, so the sidebar can say more than nothing at all
             error: b64 ? null : (lastCaptureError || 'No video frame available'),
+            // Only true when copying the frame directly was refused and the
+            // tab screenshot is the sole remaining option — the one case
+            // where asking for broad access is justified.
+            needsScreenshot: needsScreenshotPermission,
             requestId: msg.requestId
           });
         });
@@ -1015,6 +1020,28 @@
 
   // ─── Frame Capture ───────────────────────────────────────────────────────────
 
+  /**
+   * Copy the current video frame into a canvas.
+   *
+   * Returns base64 JPEG, or null when the browser refuses because the frame is
+   * cross-origin (a SecurityError on toDataURL — the canvas is "tainted").
+   * Refusal is expected and handled, never an error worth surfacing.
+   */
+  function drawVideoToCanvas(vid) {
+    try {
+      const w = vid.videoWidth;
+      const h = vid.videoHeight;
+      if (!w || !h) return null;          // metadata not loaded yet
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(vid, 0, 0, w, h);
+      return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null;
+    } catch {
+      return null;                        // tainted — caller falls back
+    }
+  }
+
   async function captureVideoFrame() {
     // Re-query if the stored reference is stale (SPA navigation, player reinit)
     let vid = videoEl;
@@ -1027,8 +1054,20 @@
       return null;
     }
 
-    // ETH video streams are cross-origin HLS, so canvas drawImage and
-    // captureStream() are both blocked by CORS. We screenshot the tab instead.
+    // Preferred path: draw the video straight into a canvas. This needs no
+    // permission at all.
+    //
+    // The old code skipped this on the assumption that a cross-origin HLS
+    // stream taints the canvas. That is true of a video loaded natively from
+    // another origin, but ETH's player feeds the element through MediaSource
+    // with a blob: URL, and MSE-sourced frames are NOT tainted — the media was
+    // fetched by the page's own JS under CORS. So this usually just works, and
+    // the tab screenshot below (which Chrome only allows with access to every
+    // site) becomes a fallback almost nobody has to accept.
+    const direct = drawVideoToCanvas(vid);
+    if (direct) return direct;
+
+    // Fallback: screenshot the tab and crop to the player.
     //
     // captureVisibleTab needs access to the tab's URL — either activeTab
     // (granted when the user invokes the extension on that tab) or a matching
@@ -1066,12 +1105,15 @@
     } catch (e) {
       console.warn('[ETH Copilot] captureVideoFrame failed:', e.message);
       lastCaptureError = e.message || 'Screenshot failed';
+      if (/all_urls|activeTab|permission/i.test(lastCaptureError)) needsScreenshotPermission = true;
       return null;
     }
   }
 
   /** Why the last frame capture failed, so the sidebar can say so. */
   let lastCaptureError = null;
+  /** Set when only a tab screenshot is left, which needs a broad grant. */
+  let needsScreenshotPermission = false;
 
   function loadImage(src) {
     return new Promise((resolve, reject) => {

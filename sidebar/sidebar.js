@@ -529,17 +529,15 @@
     qaFrameBtn?.addEventListener('click', async () => {
       qaFrameBtn.disabled = true;
 
-      // Chrome only allows a tab screenshot with <all_urls> or an active
-      // activeTab grant, and refuses host access to the lecture page alone.
-      // Ask here, on the click, so people who never attach frames are never
-      // asked for it — and so this is the only place that broad grant is used.
-      if (!(await ensureScreenshotAccess())) {
-        qaFrameBtn.disabled = false;
-        setStatus('error', 'Attaching a frame needs permission to screenshot the page. Click Attach frame again and choose Allow.');
-        return;
-      }
+      // No permission is asked for up front. The page copies the frame out of
+      // the video directly, which needs none — only if the browser refuses
+      // that do we fall back to screenshotting the tab, and only then is the
+      // broad grant worth asking about.
+      let { b64, error, needsScreenshot } = await captureFrame();
 
-      const { b64, error } = await captureFrame();
+      if (!b64 && needsScreenshot && await ensureScreenshotAccess()) {
+        ({ b64, error } = await captureFrame());
+      }
       qaFrameBtn.disabled = false;
       if (b64) {
         attachedImages.push({ dataUrl: `data:image/jpeg;base64,${b64}`, label: 'Frame' });
@@ -1438,7 +1436,11 @@
 
       case 'FRAME_CAPTURED':
         if (pendingRequests[msg.requestId]) {
-          pendingRequests[msg.requestId]({ b64: msg.imageBase64, error: msg.error || null });
+          pendingRequests[msg.requestId]({
+            b64: msg.imageBase64,
+            error: msg.error || null,
+            needsScreenshot: !!msg.needsScreenshot
+          });
           delete pendingRequests[msg.requestId];
         }
         break;
