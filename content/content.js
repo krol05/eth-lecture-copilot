@@ -24,7 +24,17 @@
   const SIDEBAR_MIN_VIDEO_RESERVE_PX = 160;
 
   // ─── State ──────────────────────────────────────────────────────────────────
+  /**
+   * The lecture's own <video>, never the hidden one used to copy frames.
+   * That decoder lives in the DOM too, and document.querySelector('video')
+   * happily returned it — which made focus mode resize a 1x1 invisible
+   * element and blank the lecture.
+   */
+  const REAL_VIDEO = 'video:not([data-eth-copilot-decoder])';
+
   let sidebarIframe = null;
+  /** True once the extension page inside the iframe has loaded. */
+  let sidebarReady = false;
   let sidebarToggle = null;
   let sidebarResizeHandle = null;
   let sidebarVisible = false;
@@ -151,6 +161,10 @@
       // Invalidate any extraction still running for the previous lecture (callbacks may otherwise
       // never post a terminal status after the next initiateTranscriptExtraction bumps the gen).
       extractionGen++;
+      // Everything cached about the OLD lecture must go, or the next frame
+      // capture serves the previous lecture's video: the rendition list and
+      // the decoder are both keyed to a URL that is no longer on screen.
+      forgetFrameCaptureState();
       postToSidebar({ type: 'EXTENSION_READY', lectureUrl: location.href });
       waitForVideo(15000).then(video => {
         videoEl = video;
@@ -183,7 +197,7 @@
   function waitForVideo(timeout = 15000) {
     return new Promise((resolve, reject) => {
       const check = () => {
-        const v = document.querySelector('video');
+        const v = document.querySelector(REAL_VIDEO);
         if (v) return resolve(v);
       };
       check();
@@ -192,7 +206,7 @@
       setTimeout(() => {
         obs.disconnect();
         // Return null video rather than rejecting — sidebar still useful without video
-        const v = document.querySelector('video');
+        const v = document.querySelector(REAL_VIDEO);
         resolve(v);
       }, timeout);
     });
@@ -227,6 +241,8 @@
     sidebarIframe.setAttribute('aria-label', 'ETH Lecture Copilot sidebar');
     sidebarIframe.setAttribute('title', 'ETH Lecture Copilot');
     sidebarIframe.setAttribute('role', 'complementary');
+    sidebarReady = false;
+    sidebarIframe.addEventListener('load', () => { sidebarReady = true; });
     document.body.appendChild(sidebarIframe);
 
     sidebarResizeHandle = document.createElement('div');
@@ -397,11 +413,17 @@
 
   // ─── Timestamp Sync ──────────────────────────────────────────────────────────
 
+  let lastSentTimestamp = -1;
+
   function startTimestampSync() {
     if (timestampInterval) clearInterval(timestampInterval);
     timestampInterval = setInterval(() => {
-      if (!videoEl || !sidebarVisible) return;
+      if (!videoEl || !sidebarVisible || !sidebarReady) return;
+      // Only send when it actually changed. A paused video used to post the
+      // same number forever, waking the sidebar twice a second for nothing.
       const t = videoEl.currentTime;
+      if (Math.abs(t - lastSentTimestamp) < 0.25) return;
+      lastSentTimestamp = t;
       postToSidebar({ type: 'TIMESTAMP_UPDATE', currentTime: t });
     }, 500);
   }
@@ -477,6 +499,7 @@
               return;
             }
 
+            lastPlayerData = response.data;
             const vttUrl = findCaptionsUrl(response.data);
             if (!vttUrl) {
               tryCandidate(idx + 1);
@@ -828,6 +851,52 @@
     return null;
   }
 
+  /** The player's own description of this lecture, kept for frame capture. */
+  let lastPlayerData = null;
+
+  /**
+   * The sharpest video the server offers.
+   *
+   * The player picks a rendition for smooth playback, not for stills, so
+   * currentSrc is often a modest one — which is why an attached frame looked
+   * soft even when copied perfectly at "native" size. The engage-player
+   * description lists every rendition with its resolution, so a still can use
+   * the best one regardless of what is being streamed.
+   *
+   * Prefers the slide feed ("presentation") over the lecturer camera, since
+   * that is what people attach a frame to ask about.
+   */
+  function bestVideoTrackUrl(playerData) {
+    if (!playerData) return null;
+    const candidates = [];
+
+    const consider = (url, w, h, flavor) => {
+      if (!url || !/\.mp4(\?|$)/i.test(url)) return;
+      candidates.push({ url, pixels: (Number(w) || 0) * (Number(h) || 0), flavor: String(flavor || '') });
+    };
+
+    for (const t of playerData.tracks || []) {
+      consider(t.url || t.src, t.video?.resolution?.split('x')[0] ?? t.width,
+        t.video?.resolution?.split('x')[1] ?? t.height, t.type || t.flavor);
+    }
+    for (const s of playerData.streams || []) {
+      for (const key of ['mp4', 'hls', 'sources']) {
+        for (const src of (s?.sources?.[key] || [])) {
+          consider(src.src || src.url, src.res?.w ?? src.width, src.res?.h ?? src.height,
+            s.content || s.flavor);
+        }
+      }
+    }
+    if (!candidates.length) return null;
+
+    const slides = candidates.filter(c => /present(ation)?|slide|screen/i.test(c.flavor));
+    const pool = slides.length ? slides : candidates;
+    pool.sort((a, b) => b.pixels - a.pixels);
+    console.info('[ETH Copilot] video renditions on offer:',
+      pool.map(c => `${c.flavor || '?'} ${c.pixels || 'unknown size'}`).join(' | '));
+    return pool[0].pixels ? pool[0].url : null;
+  }
+
   function findCaptionsUrl(playerData) {
     if (Array.isArray(playerData.captions)) {
       const t = playerData.captions.find(c => /en|de/i.test(c.lang)) || playerData.captions[0];
@@ -932,6 +1001,12 @@
 
   function postToSidebar(msg) {
     if (!sidebarIframe?.contentWindow) return;
+    // Until the extension page has loaded, contentWindow is still about:blank
+    // and inherits the PAGE's origin, so posting to our extension origin is
+    // rejected — and the browser logs a warning with a stack trace for every
+    // attempt. The timestamp sync fires twice a second, so that alone was
+    // half of all main-thread work on a lecture page.
+    if (!sidebarReady) return;
     try {
       // Restrict to our own extension origin — prevents other pages from spoofing reads.
       sidebarIframe.contentWindow.postMessage(msg, _extOrigin);
@@ -942,6 +1017,9 @@
     // Only accept messages that literally came from our sidebar iframe's window object.
     // This prevents any page script from sending forged _copilot messages.
     if (e.source !== sidebarIframe?.contentWindow) return;
+    // Hearing from the sidebar proves it has loaded, even if we somehow
+    // missed the load event. Never let a missed event mute the extension.
+    sidebarReady = true;
     const msg = e.data;
     if (!msg?._copilot) return;
     if (!msg?.type) return;
@@ -967,6 +1045,33 @@
           postToSidebar({ type: 'SPEED_UPDATED', rate: newRate });
         }
         break;
+
+      case 'HIDE_PLAYER_CHROME': {
+        // Hide the controls and hold them hidden long enough for the
+        // background's screenshot to land, then put everything back.
+        let v = videoEl;
+        if (!v || !v.isConnected) v = document.querySelector(REAL_VIDEO);
+        if (v) withPlayerControlsHidden(v, () => new Promise(r => setTimeout(r, 900)));
+        break;
+      }
+
+      case 'FRAME_SHORTCUT_CAPTURED': {
+        // Sent by the background after the keyboard shortcut, which is what
+        // grants activeTab and therefore makes the screenshot legal without
+        // access to every website. Crop it to the player and hand it over.
+        if (msg.error) {
+          postToSidebar({ type: 'FRAME_ATTACHED', error: msg.error });
+          break;
+        }
+        cropTabShotToVideo(msg.dataUrl).then(b64 => {
+          postToSidebar({
+            type: 'FRAME_ATTACHED',
+            imageBase64: b64,
+            error: b64 ? null : 'Could not find the video on this page.'
+          });
+        });
+        break;
+      }
 
       case 'CAPTURE_FRAME':
         lastCaptureError = null;
@@ -1028,17 +1133,23 @@
    * Refusal is expected and handled, never an error worth surfacing.
    */
   function drawVideoToCanvas(vid) {
+    const w = vid.videoWidth;
+    const h = vid.videoHeight;
+    if (!w || !h) {
+      directFrameFailure = `video reports no dimensions (readyState ${vid.readyState}, src ${String(vid.currentSrc || vid.src || '').slice(0, 40)})`;
+      return null;
+    }
     try {
-      const w = vid.videoWidth;
-      const h = vid.videoHeight;
-      if (!w || !h) return null;          // metadata not loaded yet
       const canvas = document.createElement('canvas');
       canvas.width = w;
       canvas.height = h;
       canvas.getContext('2d').drawImage(vid, 0, 0, w, h);
       return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null;
-    } catch {
-      return null;                        // tainted — caller falls back
+    } catch (e) {
+      // SecurityError here means the frame really is protected and only a tab
+      // screenshot can reach it. Anything else is a bug worth reading.
+      directFrameFailure = `${e.name}: ${e.message}`;
+      return null;
     }
   }
 
@@ -1046,7 +1157,7 @@
     // Re-query if the stored reference is stale (SPA navigation, player reinit)
     let vid = videoEl;
     if (!vid || !vid.isConnected) {
-      vid = document.querySelector('video');
+      vid = document.querySelector(REAL_VIDEO);
       if (vid) videoEl = vid;
     }
     if (!vid) {
@@ -1064,8 +1175,19 @@
     // fetched by the page's own JS under CORS. So this usually just works, and
     // the tab screenshot below (which Chrome only allows with access to every
     // site) becomes a fallback almost nobody has to accept.
+    directFrameFailure = null;
+    nativeFrameFailure = null;
+
+    // 1. Read the visible element's pixels. Free and exact, when not tainted.
     const direct = drawVideoToCanvas(vid);
     if (direct) return direct;
+    console.warn('[ETH Copilot] direct frame copy failed:', directFrameFailure);
+
+    // 2. Re-open the same media with CORS enabled. Full source resolution,
+    //    no controls, no permissions — see captureAtNativeResolution.
+    const native = await captureAtNativeResolution(vid);
+    if (native) return native;
+    console.warn('[ETH Copilot] native-resolution copy failed:', nativeFrameFailure);
 
     // Fallback: screenshot the tab and crop to the player.
     //
@@ -1076,36 +1198,41 @@
     // reason is reported rather than swallowed, because a silent null here
     // looks to the user like the button simply does nothing.
     try {
-      const rect = vid.getBoundingClientRect();
-      const dpr  = window.devicePixelRatio || 1;
-      const cw   = Math.round(rect.width  * dpr);
-      const ch   = Math.round(rect.height * dpr);
-
-      if (cw <= 0 || ch <= 0) {
+      const dpr = window.devicePixelRatio || 1;
+      if (!vid.getBoundingClientRect().width) {
         console.warn('[ETH Copilot] captureVideoFrame: video element has zero dimensions');
         return null;
       }
 
-      const dataUrl = await new Promise((resolve, reject) => {
+      const dataUrl = await withPlayerControlsHidden(vid, () => new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({ type: 'CAPTURE_VISIBLE_TAB' }, resp => {
           if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
           if (!resp?.success) return reject(new Error(resp?.error || 'Tab capture failed'));
           resolve(resp.data);
         });
-      });
+      }));
 
-      const img    = await loadImage(dataUrl);
-      const cx     = Math.round(rect.left * dpr);
-      const cy     = Math.round(rect.top  * dpr);
+      // Re-measure INSIDE the hidden/enlarged state: the element now fills the
+      // window, so this is the rectangle the screenshot actually contains.
+      const shot = vid.getBoundingClientRect();
+      const cw = Math.round(shot.width * dpr);
+      const ch = Math.round(shot.height * dpr);
+      if (cw <= 0 || ch <= 0) return null;
+
+      const img = await loadImage(dataUrl);
       const canvas = document.createElement('canvas');
       canvas.width  = cw;
       canvas.height = ch;
-      canvas.getContext('2d').drawImage(img, cx, cy, cw, ch, 0, 0, cw, ch);
-      return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null;
+      canvas.getContext('2d').drawImage(
+        img, Math.round(shot.left * dpr), Math.round(shot.top * dpr), cw, ch, 0, 0, cw, ch);
+      // 0.92: the browser already compressed this once as JPEG, so a low
+      // second pass compounds the artefacts on slide text.
+      return canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || null;
     } catch (e) {
       console.warn('[ETH Copilot] captureVideoFrame failed:', e.message);
       lastCaptureError = e.message || 'Screenshot failed';
-      if (/all_urls|activeTab|permission/i.test(lastCaptureError)) needsScreenshotPermission = true;
+      if (directFrameFailure) lastCaptureError += ` (copying the frame directly first failed with: ${directFrameFailure})`;
+      if (/all_urls|activeTab|permission/i.test(e.message || '')) needsScreenshotPermission = true;
       return null;
     }
   }
@@ -1114,6 +1241,268 @@
   let lastCaptureError = null;
   /** Set when only a tab screenshot is left, which needs a broad grant. */
   let needsScreenshotPermission = false;
+  /** Why copying the frame directly did not work — decides the whole strategy. */
+  let directFrameFailure = null;
+  /** Why re-opening the media with CORS did not work. */
+  let nativeFrameFailure = null;
+
+  /**
+   * Ask the background where a media URL actually lands.
+   *
+   * Falls back to the original address if anything goes wrong: a failed lookup
+   * should cost us the high-quality path, never the whole capture.
+   */
+  async function resolveMediaUrl(url) {
+    try {
+      const resp = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'RESOLVE_MEDIA_URL', url }, resolve);
+      });
+      if (chrome.runtime.lastError || !resp?.success || !resp.data?.url) return url;
+      return resp.data.url;
+    } catch {
+      return url;
+    }
+  }
+
+  /**
+   * Capture at the video's NATIVE resolution by decoding it a second time.
+   *
+   * The visible <video> is tainted because the page never set crossorigin on
+   * it, so its pixels cannot be read. That is a property of the element, not
+   * of the file: a second element that declares crossorigin="anonymous" gets
+   * clean pixels, provided the server sends CORS headers — which this one must,
+   * since the player fetches its media over XHR and that requires them.
+   *
+   * Worth the effort because it fixes all three problems at once: full source
+   * resolution instead of the on-screen crop, no player controls in the frame,
+   * and no permission of any kind.
+   *
+   * Returns null for a blob:/MediaSource src (nothing to re-open), if the
+   * server declines CORS after all, or if it takes too long.
+   */
+  async function captureAtNativeResolution(vid) {
+    const best = bestVideoTrackUrl(lastPlayerData);
+    if (!best) {
+      console.warn('[ETH Copilot] no rendition list available — falling back to the streamed quality',
+        lastPlayerData ? '(player data present but no usable tracks)' : '(no player data yet)');
+    }
+    const src = best || vid.currentSrc || vid.src || '';
+    if (!src || src.startsWith('blob:') || src.startsWith('data:')) return null;
+
+    // Resolve any redirect FIRST. ETH sends dist.tobira.ethz.ch on to a
+    // numbered node, and a browser sets Origin: null across that hop, which
+    // stops matching the fixed Access-Control-Allow-Origin the server returns
+    // — so the copy fails. Which node you are sent to varies, which is why
+    // this appeared to fail at random. Loading the final address directly
+    // keeps the origin intact.
+    const finalSrc = await resolveMediaUrl(src);
+
+    // Reuse the element between captures. Building it fresh meant re-fetching
+    // the address, the headers and the index of the file every single time,
+    // which is where the "sometimes instant, sometimes five seconds" came
+    // from. Kept, it only has to seek.
+    const reused = shotVideo && shotVideo.dataset.src === src && shotVideo.readyState >= 1;
+    const clone = reused ? shotVideo : document.createElement('video');
+    if (!reused) {
+      if (shotVideo) { shotVideo.removeAttribute('src'); shotVideo.load(); shotVideo.remove(); }
+      clone.crossOrigin = 'anonymous';
+      // 'metadata', never 'auto': 'auto' tells the browser to fetch the whole
+      // lecture in the background, and since this element is kept between
+      // captures it never stops. Seeking pulls only the bytes it needs.
+      clone.preload = 'metadata';
+      clone.muted = true;
+      clone.playsInline = true;
+      clone.dataset.src = src;
+      clone.dataset.ethCopilotDecoder = '1';
+      // Kept out of the layout, and out of the tab screenshot if we fall back.
+      clone.style.cssText = 'position:fixed;left:-99999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
+    }
+
+    const settled = (event, ms) => new Promise((resolve, reject) => {
+      const done = () => { cleanup(); resolve(); };
+      const fail = () => { cleanup(); reject(new Error(`${event} failed`)); };
+      const timer = setTimeout(() => { cleanup(); reject(new Error(`${event} timed out`)); }, ms);
+      function cleanup() {
+        clearTimeout(timer);
+        clone.removeEventListener(event, done);
+        clone.removeEventListener('error', fail);
+      }
+      clone.addEventListener(event, done, { once: true });
+      clone.addEventListener('error', fail, { once: true });
+    });
+
+    try {
+      if (!reused) {
+        document.body.appendChild(clone);
+        clone.src = finalSrc;
+        await settled('loadedmetadata', 8000);
+      }
+      clone.currentTime = vid.currentTime;
+      await settled('seeked', 8000);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = clone.videoWidth;
+      canvas.height = clone.videoHeight;
+      if (!canvas.width || !canvas.height) return null;
+      canvas.getContext('2d').drawImage(clone, 0, 0, canvas.width, canvas.height);
+      console.info(
+        `[ETH Copilot] frame copied from the video: ${canvas.width}x${canvas.height}`,
+        `(source ${finalSrc.split('/').pop()})`);
+      return canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || null;
+    } catch (e) {
+      nativeFrameFailure = e.message || String(e);
+      return null;
+    } finally {
+      // Keep it around for the next frame; dropped when the lecture changes,
+      // and by the browser when the page goes away.
+      shotVideo = clone.isConnected ? clone : null;
+    }
+  }
+
+  /** Drop everything remembered about the current lecture's video. */
+  function forgetFrameCaptureState() {
+    lastPlayerData = null;
+    lastSentTimestamp = -1;
+    if (shotVideo) {
+      shotVideo.removeAttribute('src');
+      shotVideo.load();
+      shotVideo.remove();
+      shotVideo = null;
+    }
+  }
+
+  /** The reusable off-screen decoder from captureAtNativeResolution. */
+  let shotVideo = null;
+
+  /**
+   * Hide the player's own controls for the moment of a screenshot.
+   *
+   * A tab screenshot captures whatever is on screen, so the play button,
+   * scrubber and timestamps ended up baked into the attached frame — noise in
+   * the picture and noise for a vision model reading the slide. Copying from
+   * the video element would avoid this for free, but ETH's stream taints the
+   * canvas, so the screenshot has to be tidied instead.
+   *
+   * Everything is restored in a finally block: a thrown capture must never
+   * leave the user with an invisible seek bar.
+   */
+  async function withPlayerControlsHidden(vid, fn) {
+    const player = vid.closest('[class*="player" i], [class*="paella" i]') || vid.parentElement || vid;
+    const style = document.createElement('style');
+    // Conservative selectors: control bars and buttons only. Deliberately not
+    // matching "overlay", which on this player also covers slide content.
+    style.textContent = `
+      [data-eth-copilot-shot] [class*="control" i],
+      [data-eth-copilot-shot] [class*="controlbar" i],
+      [data-eth-copilot-shot] [class*="playbackbar" i],
+      [data-eth-copilot-shot] [class*="progressbar" i],
+      [data-eth-copilot-shot] [class*="toolbar" i],
+      [data-eth-copilot-shot] [id*="control" i] { visibility: hidden !important; }
+    `;
+    const hadControls = vid.controls;
+    let hidden = [];
+    let prevStyle = null;
+    try {
+      player.setAttribute('data-eth-copilot-shot', '');
+      document.head.appendChild(style);
+      vid.controls = false;
+
+      // A tab screenshot can only ever be as sharp as the player is on
+      // screen, and with the sidebar open that is a few hundred pixels. Blow
+      // the video up to fill the window for the instant of the shot: the crop
+      // then comes back at roughly viewport size instead of thumbnail size.
+      // Restored immediately afterwards, in the finally below.
+      prevStyle = vid.getAttribute('style');
+      vid.style.cssText = (prevStyle ? prevStyle + ';' : '') +
+        'position:fixed!important;left:0!important;top:0!important;' +
+        'width:100vw!important;height:100vh!important;max-width:none!important;' +
+        'max-height:none!important;z-index:2147483646!important;' +
+        'object-fit:contain!important;background:#000!important';
+      // Nudge players that hide their own chrome when the pointer leaves.
+      player.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+      player.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+
+      // A paused player keeps its controls up on purpose, so no amount of
+      // nudging will clear them. Hide anything that actually overlaps the
+      // video instead — measured, not guessed from class names.
+      hidden = overlappingElements(vid, player);
+      for (const el of hidden) {
+        el.dataset.ethCopilotPrevVis = el.style.visibility || '';
+        el.style.visibility = 'hidden';
+      }
+      // Two frames plus a beat: enough for a fade-out to finish painting.
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 120))));
+      return await fn();
+    } finally {
+      if (prevStyle === null) vid.removeAttribute('style');
+      else vid.setAttribute('style', prevStyle);
+      vid.controls = hadControls;
+      for (const el of hidden) {
+        el.style.visibility = el.dataset.ethCopilotPrevVis || '';
+        delete el.dataset.ethCopilotPrevVis;
+      }
+      style.remove();
+      player.removeAttribute('data-eth-copilot-shot');
+    }
+  }
+
+  /**
+   * Elements painted on top of the video, by geometry rather than by name.
+   *
+   * Class names differ per player and change without notice; overlap does not.
+   * Anything covering less than 60% of the video is chrome (a control bar, a
+   * button); anything larger is treated as content and left alone, so a slide
+   * layer is never blanked out.
+   */
+  function overlappingElements(vid, player) {
+    const v = vid.getBoundingClientRect();
+    const area = v.width * v.height;
+    if (!area) return [];
+    const out = [];
+    for (const el of player.querySelectorAll('*')) {
+      if (el === vid || el.contains(vid)) continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const ox = Math.max(0, Math.min(v.right, r.right) - Math.max(v.left, r.left));
+      const oy = Math.max(0, Math.min(v.bottom, r.bottom) - Math.max(v.top, r.top));
+      const overlap = ox * oy;
+      if (overlap > 0 && overlap < area * 0.6) out.push(el);
+    }
+    return out;
+  }
+
+  /**
+   * Crop a full-tab screenshot down to just the video player.
+   *
+   * Shared by both routes into a screenshot: the keyboard shortcut (which
+   * carries activeTab) and the old broad-permission path.
+   */
+  async function cropTabShotToVideo(dataUrl) {
+    let vid = videoEl;
+    if (!vid || !vid.isConnected) {
+      vid = document.querySelector(REAL_VIDEO);
+      if (vid) videoEl = vid;
+    }
+    if (!vid || !dataUrl) return null;
+    try {
+      const rect = vid.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const cw = Math.round(rect.width * dpr);
+      const ch = Math.round(rect.height * dpr);
+      if (cw <= 0 || ch <= 0) return null;
+
+      const img = await loadImage(dataUrl);
+      const canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      canvas.getContext('2d').drawImage(
+        img, Math.round(rect.left * dpr), Math.round(rect.top * dpr), cw, ch, 0, 0, cw, ch);
+      return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null;
+    } catch (e) {
+      console.warn('[ETH Copilot] cropTabShotToVideo failed:', e.message);
+      return null;
+    }
+  }
 
   function loadImage(src) {
     return new Promise((resolve, reject) => {

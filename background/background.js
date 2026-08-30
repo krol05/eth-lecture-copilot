@@ -383,9 +383,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+/**
+ * Keyboard shortcut for attaching a video frame.
+ *
+ * The frame cannot be copied from the video — the canvas is tainted, Chrome
+ * confirms it with "Tainted canvases may not be exported" — so the only route
+ * left is a screenshot of the tab, and Chrome allows that ONLY with access to
+ * every website or with activeTab.
+ *
+ * Running a command grants activeTab for that tab, so this shortcut makes the
+ * screenshot legal without asking for anything broad. The grant is scoped to
+ * the one tab and lapses when it navigates.
+ */
+chrome.commands?.onCommand.addListener(async (command) => {
+  if (command !== 'attach-video-frame') return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+  try {
+    // Ask the page to hide the player chrome first, so the shortcut and the
+    // button produce the same picture — a slide, not a slide plus a seek bar.
+    await chrome.tabs.sendMessage(tab.id, { type: 'HIDE_PLAYER_CHROME' }).catch(() => {});
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    await chrome.tabs.sendMessage(tab.id, { type: 'FRAME_SHORTCUT_CAPTURED', dataUrl });
+  } catch (err) {
+    await chrome.tabs.sendMessage(tab.id, {
+      type: 'FRAME_SHORTCUT_CAPTURED',
+      error: err?.message || 'Screenshot failed'
+    }).catch(() => {});
+  }
+});
+
   if (message?.type === 'CAPTURE_VISIBLE_TAB') {
     const wid = sender?.tab?.windowId ?? null;
-    chrome.tabs.captureVisibleTab(wid, { format: 'jpeg', quality: 85 })
+    chrome.tabs.captureVisibleTab(wid, { format: 'png' })
       .then(dataUrl => sendResponse({ success: true, data: dataUrl }))
       .catch(err => sendResponse({ success: false, error: err.message, errorDetail: ensureDetails(err).details }));
     return true;
@@ -489,6 +519,24 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
     // Lecture data. The URLs are discovered from the page, so a course can
     // point at a media host we do not hold — say precisely which one instead
     // of letting it surface as a bare "Failed to fetch".
+    // Follow a media redirect on the extension's behalf and report where it
+    // lands. ETH bounces dist.tobira.ethz.ch to a numbered node, and a browser
+    // sends Origin: null across that redirect — which no longer matches the
+    // fixed Access-Control-Allow-Origin the server returns, so the video
+    // becomes unreadable. Loading the FINAL url directly keeps the origin
+    // intact and the frame copyable. The service worker may follow it because
+    // *.tobira.ethz.ch is a granted host; a page may not.
+    case 'RESOLVE_MEDIA_URL': {
+      await requireHostAccess(msg.url, 'transcript', null);
+      const resp = await fetch(msg.url, {
+        method: 'GET',
+        headers: { Range: 'bytes=0-0' },     // one byte: we only want the address
+        redirect: 'follow',
+        signal: AbortSignal.timeout(10000)
+      });
+      return { url: resp.url || msg.url, redirected: resp.url !== msg.url };
+    }
+
     case 'FETCH_VTT': {
       await requireHostAccess(msg.url, 'transcript', null);
       // A redirect can land on a host we do not hold (ETH sends

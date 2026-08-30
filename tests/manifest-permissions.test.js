@@ -9,7 +9,7 @@
  */
 const manifest = require('../manifest.json');
 const { Catalog } = require('../lib/providers/catalog.js');
-const { originPattern, EMBEDDING_ORIGINS, SCREENSHOT_ORIGINS } = require('../lib/permissions.js');
+const { originPattern, EMBEDDING_ORIGINS } = require('../lib/permissions.js');
 
 /** Does a Chrome match pattern cover a concrete origin pattern? */
 function covers(matchPattern, target) {
@@ -152,14 +152,18 @@ describe('any self-hosted server can be reached, on any address', () => {
 
 
 describe('attaching a video frame', () => {
-  test('the screenshot grant is offered, but only as an optional one', () => {
-    // Chrome refuses captureVisibleTab with host access to the lecture page:
-    // "Either the '<all_urls>' or 'activeTab' permission is required".
-    // activeTab never goes live for a sidebar injected into the page, so this
-    // feature genuinely needs the broad grant — asked for on the click.
-    for (const origin of SCREENSHOT_ORIGINS) {
-      expect(optional).toContain(origin);
-      expect(required).not.toContain(origin);
-    }
+  test('the screenshot grant exists, but only as an optional one', () => {
+    // Chrome allows a tab screenshot only with <all_urls> or activeTab, and
+    // refuses a specific host permission. activeTab cannot be obtained from a
+    // button inside the sidebar, so the button has to mean this — offered on
+    // an explicit button, never requested automatically, never at install.
+    expect(optional).toContain('<all_urls>');
+    expect(required).not.toContain('<all_urls>');
+  });
+
+  test('the no-permission route is still available', () => {
+    // Running a command grants activeTab, so the shortcut needs nothing.
+    expect(manifest.commands?.['attach-video-frame']).toBeTruthy();
+    expect(manifest.permissions).toContain('activeTab');
   });
 });

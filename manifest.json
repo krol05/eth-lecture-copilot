@@ -10,6 +10,13 @@
 
   "permissions": ["storage", "unlimitedStorage", "activeTab", "alarms"],
 
+  "commands": {
+    "attach-video-frame": {
+      "suggested_key": { "default": "Alt+Shift+F" },
+      "description": "Attach the current video frame to the chat"
+    }
+  },
+
   "host_permissions": [
     "https://video.ethz.ch/*",
     "https://*.tobira.ethz.ch/*"

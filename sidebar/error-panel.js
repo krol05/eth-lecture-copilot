@@ -209,7 +209,11 @@
     if (!origin) return;
 
     const host = detail.raw.host || origin;
-    els.fix.textContent = `Allow ${host}`;
+    // "<all_urls>" is not something to show a reader; the caller supplies a
+    // plain-language host, and the button says what will actually be granted.
+    els.fix.textContent = origin === '<all_urls>'
+      ? 'Allow screenshots on all sites'
+      : `Allow ${host}`;
     els.fix.disabled = false;
     els.fix.onclick = () => {
       els.fix.disabled = true;
