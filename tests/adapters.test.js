@@ -381,3 +381,78 @@ describe('thinking off is always explicit', () => {
     expect(body.enable_thinking).toBe(false);
   });
 });
+
+// ── Reasoning reaches the wire correctly ─────────────────────────────────────
+// Regression tests for a bug the LiteLLM/OpenRouter cross-check found: model
+// detection was name-based, so no OpenRouter model ("openai/gpt-5.6-sol")
+// looked like a reasoning model. Thinking levels were silently dropped and
+// temperature was sent to models that reject it.
+
+describe('reasoning levels on OpenRouter-style model ids', () => {
+  const openrouter = Catalog.get('openrouter');
+  const build = (model, opts) => Adapters.oai.buildRequest({
+    base: openrouter.base, providerId: 'openrouter', model,
+    modelInfo: openrouter.models.find(m => m.id === model),
+    quirks: openrouter.quirks, apiKey: 'k', system: 's',
+    messages: [{ role: 'user', content: 'hi' }], ...opts
+  }).body;
+
+  test('a chosen level is actually sent', () => {
+    expect(build('openai/gpt-5.6-sol', { thinking: 'high' }))
+      .toMatchObject({ reasoning: { effort: 'high' } });
+  });
+
+  test('"none" still disables rather than setting an effort', () => {
+    expect(build('openai/gpt-5.6-sol', { thinking: 'none' }))
+      .toMatchObject({ reasoning: { enabled: false } });
+  });
+
+  test('temperature is withheld from a reasoning model', () => {
+    const body = build('openai/gpt-5.6-sol', { thinking: 'high', temperature: 0.4 });
+    expect(body.temperature).toBeUndefined();
+  });
+
+  test('temperature still reaches a plain chat model', () => {
+    const body = build('meta-llama/llama-4-maverick', { thinking: 'none', temperature: 0.4 });
+    expect(body.temperature).toBe(0.4);
+  });
+
+  test('OpenRouter takes max_tokens, not max_completion_tokens', () => {
+    const body = build('openai/gpt-5.6-sol', { thinking: 'high', maxTokens: 2048 });
+    expect(body.max_tokens).toBe(2048);
+    expect(body.max_completion_tokens).toBeUndefined();
+  });
+});
+
+describe('OpenAI keeps its own token-cap parameter', () => {
+  test('max_completion_tokens for a reasoning model on OpenAI itself', () => {
+    const openai = Catalog.get('openai');
+    const model = 'gpt-5.6-terra';
+    const body = Adapters.oai.buildRequest({
+      base: openai.base, providerId: 'openai', model,
+      modelInfo: openai.models.find(m => m.id === model),
+      quirks: openai.quirks, apiKey: 'k', system: 's',
+      messages: [{ role: 'user', content: 'hi' }], thinking: 'high', maxTokens: 2048
+    }).body;
+    expect(body.max_completion_tokens).toBe(2048);
+    expect(body.reasoning_effort).toBe('high');
+  });
+});
+
+describe('an unverified host is sent no reasoning parameter', () => {
+  // reasoningOnBody returning null is a decision, not a gap. An earlier
+  // version fell back to reasoning_effort whenever it got null, which sent the
+  // parameter to exactly the hosts the docs said to leave alone.
+  test('HuggingFace gets no effort even at thinking: high', () => {
+    const hf = Catalog.get('huggingface');
+    const model = hf.defaultModel || hf.models[0].id;
+    const body = Adapters.oai.buildRequest({
+      base: hf.base, providerId: 'huggingface', model,
+      modelInfo: hf.models.find(m => m.id === model),
+      quirks: hf.quirks, apiKey: 'k', system: 's',
+      messages: [{ role: 'user', content: 'hi' }], thinking: 'high'
+    }).body;
+    expect(body.reasoning_effort).toBeUndefined();
+    expect(body.reasoning).toBeUndefined();
+  });
+});
