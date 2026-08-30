@@ -73,6 +73,153 @@ function buildApiPayloadBase() {
   };
 }
 
+// ─── One generation path per tool, two places to start it ─────────────────
+//
+// Every study tool exists twice: as a section in the Tools tab and as a panel
+// inline in the guide. Both used to carry their own copy of the whole
+// generate-and-render sequence, which is how they drifted apart — the inline
+// exam never stored its questions, the inline flashcards skipped the settings
+// check, and error wording differed. The request is written once here; the two
+// copies supply only their own control ids and their own way of showing the
+// result.
+
+/**
+ * Run a study-tool generation and hand the response to the caller.
+ *
+ * @param {object}   spec
+ * @param {string}   spec.type          message type for the background worker
+ * @param {string}   spec.thinkingKey   which tool's thinking level to send
+ * @param {string}   spec.buttonId      button to show a spinner in
+ * @param {string}   spec.errorId       element to write a failure into
+ * @param {Function} spec.buildPrompt   () => system prompt
+ * @param {Function} spec.onSuccess     (data) => void, may throw to show an error
+ */
+async function runToolGeneration({ type, thinkingKey, buttonId, errorId, buildPrompt, onSuccess }) {
+  const btn = document.getElementById(buttonId);
+  const errEl = document.getElementById(errorId);
+
+  const showError = (message) => {
+    if (errEl) {
+      errEl.textContent = message;
+      errEl.style.display = '';
+    } else {
+      setStatus('error', message);
+    }
+  };
+
+  if (!guide?.guide?.length) {
+    showError('Generate a study guide first — the tools work from it.');
+    return;
+  }
+  // Silently doing nothing here is what made the button look broken.
+  if (!hasUsableSettings()) {
+    showError('Set your API key in the extension popup first.');
+    return;
+  }
+
+  setFeatureBtnLoading(btn, true);
+  if (errEl) errEl.style.display = 'none';
+  try {
+    const resp = await apiRequest({
+      ...buildApiPayloadBase(),
+      type,
+      toolThinking: getToolThinking(thinkingKey),
+      guideJson: guide,
+      systemPrompt: buildPrompt()
+    });
+    if (!resp.success) throw new Error(resp.error);
+    onSuccess(resp.data);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    setFeatureBtnLoading(btn, false);
+  }
+}
+
+/** Flashcard controls, wherever they live. Ids are unique across the page. */
+function readFlashcardOptions(ids) {
+  const customRaw = parseInt(document.getElementById(ids.custom)?.value?.trim() || '', 10);
+  return {
+    count: (!isNaN(customRaw) && customRaw > 0)
+      ? String(customRaw)
+      : (getActivePillValue(ids.count) || 'auto'),
+    cardTypes: getSelectedFlashcardTypes(ids.types),
+    includeFormulas: !!document.getElementById(ids.formulas)?.checked,
+    language: getToolLanguage(ids.lang)
+  };
+}
+
+/** Quiz controls, wherever they live. */
+function readQuizOptions(ids) {
+  const customRaw = parseInt(document.getElementById(ids.custom)?.value?.trim() || '', 10);
+  return {
+    count: (!isNaN(customRaw) && customRaw > 0)
+      ? customRaw
+      : parseInt(getActivePillValue(ids.count) || '10', 10),
+    type: getActivePillValue(ids.type) || 'mixed',
+    language: getToolLanguage(ids.lang)
+  };
+}
+
+/**
+ * Exam controls other than block selection, which differs between the two
+ * copies and is passed in separately.
+ */
+function readExamOptions(ids) {
+  const countPill = getActivePillValue(ids.count) || '5';
+  const perBlock = countPill === 'per-block';
+  const customRaw = parseInt(document.getElementById(ids.custom)?.value?.trim() || '', 10);
+  return {
+    difficulty: getActivePillValue(ids.difficulty) || 'mixed',
+    format: getActivePillValue(ids.format) || 'open',
+    answerLength: getActivePillValue(ids.answer) || 'medium',
+    questionsPerBlock: perBlock,
+    count: perBlock ? 2
+      : ((!isNaN(customRaw) && customRaw > 0) ? customRaw : parseInt(countPill, 10) || 5),
+    language: getToolLanguage(ids.lang)
+  };
+}
+
+/** Control ids for the Tools-tab copy of each generator. */
+const TAB_TOOL_IDS = {
+  flashcards: { count: 'flashcards-count-pills', custom: 'flashcards-custom-count',
+    types: 'flashcards-card-type-pills', formulas: 'flashcards-formulas-cb',
+    lang: 'flashcards-lang-select' },
+  quiz: { count: 'quiz-count-pills', custom: 'quiz-custom-count',
+    type: 'quiz-type-pills', lang: 'quiz-lang-select' },
+  exam: { count: 'exam-count-pills', custom: 'exam-custom-count',
+    difficulty: 'exam-difficulty-pills', format: 'exam-format-pills',
+    answer: 'exam-answer-pills', lang: 'exam-lang-select' }
+};
+
+/** Control ids for the inline-panel copy of each generator. */
+const INLINE_TOOL_IDS = {
+  flashcards: { count: 'it-fc-count-pills', custom: 'it-fc-custom-count',
+    types: 'it-fc-card-type-pills', formulas: 'it-fc-formulas-cb',
+    lang: 'it-fc-lang-select' },
+  quiz: { count: 'it-quiz-count-pills', custom: 'it-quiz-custom-count',
+    type: 'it-quiz-type-pills', lang: 'it-quiz-lang-select' },
+  exam: { count: 'it-exam-count-pills', custom: 'it-exam-custom-count',
+    difficulty: 'it-exam-difficulty-pills', format: 'it-exam-format-pills',
+    answer: 'it-exam-answer-pills', lang: 'it-exam-lang-select' }
+};
+
+/** Store a freshly generated flashcard deck. Both copies land here. */
+function acceptFlashcards(data) {
+  applyFlashcardsResponse(data);
+  if (!flashcardData.length) throw new Error('No flashcards returned. Try different settings.');
+  persistToolOutputs();
+}
+
+/** Store freshly generated exam questions. Both copies land here. */
+function acceptExamQuestions(data) {
+  const questions = data?.questions || [];
+  if (!questions.length) throw new Error('No questions returned. Try different settings.');
+  examQuestionData = questions;
+  persistToolOutputs();
+  return questions;
+}
+
 // ─── Tool section helpers ─────────────────────────────────────────────────
 
 /** Switch to the Tools tab and open a specific tool section (details element). */
@@ -398,34 +545,18 @@ function _buildInlineFlashcards(body) {
       `;
     initPillGroup('it-fc-count-pills');
     initFlashcardTypePills('it-fc-card-type-pills');
-    body.querySelector('#it-fc-generate-btn').addEventListener('click', async () => {
-      const btn  = body.querySelector('#it-fc-generate-btn');
-      const errEl = body.querySelector('#it-fc-error');
-      setFeatureBtnLoading(btn, true);
-      errEl.style.display = 'none';
-      try {
-        const customRaw = parseInt(body.querySelector('#it-fc-custom-count')?.value || '', 10);
-        const count  = (!isNaN(customRaw) && customRaw > 0) ? String(customRaw) : (getActivePillValue('it-fc-count-pills') || 'auto');
-        const cardTypes = getSelectedFlashcardTypes('it-fc-card-type-pills');
-        const formulas = !!body.querySelector('#it-fc-formulas-cb')?.checked;
-        const langVal = body.querySelector('#it-fc-lang-select')?.value || '__guide__';
-        const language = langVal === '__guide__' ? guideLanguage : langVal;
-        const systemPrompt = promptForFlashcards(guide, { count, cardTypes, includeFormulas: formulas, language });
-        const payload = { ...buildApiPayloadBase(), type: 'FLASHCARDS_REQUEST', guideJson: guide, systemPrompt, toolThinking: getToolThinking('flashcards') };
-        const resp = await apiRequest(payload);
-        if (!resp.success) throw new Error(resp.error);
-        applyFlashcardsResponse(resp.data);
-        if (!flashcardData.length) throw new Error('No flashcards returned.');
-        persistToolOutputs();
+    body.querySelector('#it-fc-generate-btn').addEventListener('click', () => runToolGeneration({
+      type: 'FLASHCARDS_REQUEST',
+      thinkingKey: 'flashcards',
+      buttonId: 'it-fc-generate-btn',
+      errorId: 'it-fc-error',
+      buildPrompt: () => promptForFlashcards(guide, readFlashcardOptions(INLINE_TOOL_IDS.flashcards)),
+      onSuccess: (data) => {
+        acceptFlashcards(data);
         body.innerHTML = '';
         _renderInlineFlashcardResults(body);
-      } catch (err) {
-        errEl.textContent = err.message;
-        errEl.style.display = '';
-      } finally {
-        setFeatureBtnLoading(btn, false);
       }
-    });
+    }));
   }
 }
 
@@ -534,38 +665,18 @@ function _buildInlineQuiz(body) {
     `;
   initPillGroup('it-quiz-count-pills');
   initPillGroup('it-quiz-type-pills');
-  body.querySelector('#it-quiz-start-btn').addEventListener('click', async () => {
-    const btn   = body.querySelector('#it-quiz-start-btn');
-    const errEl = body.querySelector('#it-quiz-error');
-    setFeatureBtnLoading(btn, true);
-    errEl.style.display = 'none';
-    try {
-      const customRaw = parseInt(body.querySelector('#it-quiz-custom-count')?.value || '', 10);
-      const count = (!isNaN(customRaw) && customRaw > 0) ? customRaw : parseInt(getActivePillValue('it-quiz-count-pills') || '10', 10);
-      const type  = getActivePillValue('it-quiz-type-pills') || 'mixed';
-      const langVal = body.querySelector('#it-quiz-lang-select')?.value || '__guide__';
-      const language = langVal === '__guide__' ? guideLanguage : langVal;
-      const systemPrompt = promptForQuiz(guide, { count, type, language });
-      const payload = { ...buildApiPayloadBase(), type: 'QUIZ_REQUEST', guideJson: guide, systemPrompt, toolThinking: getToolThinking('quiz') };
-      const resp  = await apiRequest(payload);
-      if (!resp.success) throw new Error(resp.error);
-      const questions = resp.data?.questions || [];
-      if (!questions.length) throw new Error('No questions returned.');
-      quizData = questions;
-      quizState = { questions, currentIndex: 0, scores: questions.map(() => null), done: false };
-      quizData = questions;
-      persistToolOutputs();
+  body.querySelector('#it-quiz-start-btn').addEventListener('click', () => runToolGeneration({
+    type: 'QUIZ_REQUEST',
+    thinkingKey: 'quiz',
+    buttonId: 'it-quiz-start-btn',
+    errorId: 'it-quiz-error',
+    buildPrompt: () => promptForQuiz(guide, readQuizOptions(INLINE_TOOL_IDS.quiz)),
+    onSuccess: (data) => {
       openToolSection('tool-quiz');
-      showQuizPanel('active');
-      renderQuizQuestion();
+      startQuiz(data?.questions || []);
       closeInlineToolPanel();
-    } catch (err) {
-      errEl.textContent = err.message;
-      errEl.style.display = '';
-    } finally {
-      setFeatureBtnLoading(btn, false);
     }
-  });
+  }));
 }
 
 /** Build the Exam Questions inline panel body */
@@ -666,50 +777,39 @@ function _buildInlineExam(body) {
   body.querySelector('#it-exam-scope-pills').addEventListener('click', toggleBlockArea);
   if (scopeVal === 'select') blockArea.style.display = 'flex';
 
-  body.querySelector('#it-exam-gen-btn').addEventListener('click', async () => {
-    const btn    = body.querySelector('#it-exam-gen-btn');
-    const errEl  = body.querySelector('#it-exam-error');
-    const resDiv = body.querySelector('#it-exam-results');
-    setFeatureBtnLoading(btn, true);
-    errEl.style.display = 'none';
-    resDiv.innerHTML = '';
-    try {
-      const scope      = getActivePillValue('it-exam-scope-pills') || 'whole';
-      const difficulty = getActivePillValue('it-exam-difficulty-pills') || 'mixed';
-      const format     = getActivePillValue('it-exam-format-pills') || 'open';
-      const answerLen  = getActivePillValue('it-exam-answer-pills') || 'medium';
-      const countPill  = getActivePillValue('it-exam-count-pills') || '5';
-      const perBlock   = countPill === 'per-block';
-      const customRaw  = parseInt(body.querySelector('#it-exam-custom-count')?.value || '', 10);
-      const count = perBlock ? 2 : ((!isNaN(customRaw) && customRaw > 0) ? customRaw : parseInt(countPill, 10) || 5);
-      const langVal = body.querySelector('#it-exam-lang-select')?.value || '__guide__';
-      const language = langVal === '__guide__' ? guideLanguage : langVal;
-
-      let blocks;
-      if (scope === 'current') {
-        const b = guide.guide[Math.max(0, currentBlockIndex)];
-        blocks = b ? [b.title] : guide.guide.map(b => b.title);
-      } else if (scope === 'select') {
-        const checks = blockArea.querySelectorAll('input[type=checkbox]:checked');
-        const indices = [...checks].map(c => parseInt(c.value, 10));
-        blocks = indices.map(i => guide.guide[i]?.title).filter(Boolean);
-        if (!blocks.length) blocks = guide.guide.map(b => b.title);
-      } else {
-        blocks = guide.guide.map(b => b.title);
-      }
-
-      const systemPrompt = promptForExam(guide, blocks, { count, format, difficulty, answerLength: answerLen, questionsPerBlock: perBlock, language });
-      const payload = { ...buildApiPayloadBase(), type: 'EXAM_QUESTIONS_REQUEST', guideJson: guide, systemPrompt, toolThinking: getToolThinking('exam') };
-      const resp = await apiRequest(payload);
-      if (!resp.success) throw new Error(resp.error);
-      const questions = resp.data?.questions || [];
-      if (!questions.length) throw new Error('No questions returned.');
-      renderExamQuestionList('it-exam-results', questions);
-    } catch (err) {
-      errEl.textContent = err.message;
-      errEl.style.display = '';
-    } finally {
-      setFeatureBtnLoading(btn, false);
+  /** Which block titles the scope pills currently select. */
+  const selectedExamBlocks = () => {
+    const scope = getActivePillValue('it-exam-scope-pills') || 'whole';
+    const allTitles = guide.guide.map(b => b.title);
+    if (scope === 'current') {
+      const block = guide.guide[Math.max(0, currentBlockIndex)];
+      return block ? [block.title] : allTitles;
     }
+    if (scope === 'select') {
+      const checked = [...blockArea.querySelectorAll('input[type=checkbox]:checked')]
+        .map(c => guide.guide[parseInt(c.value, 10)]?.title)
+        .filter(Boolean);
+      return checked.length ? checked : allTitles;
+    }
+    return allTitles;
+  };
+
+  body.querySelector('#it-exam-gen-btn').addEventListener('click', () => {
+    const resDiv = body.querySelector('#it-exam-results');
+    if (resDiv) resDiv.innerHTML = '';
+    return runToolGeneration({
+      type: 'EXAM_QUESTIONS_REQUEST',
+      thinkingKey: 'exam',
+      buttonId: 'it-exam-gen-btn',
+      errorId: 'it-exam-error',
+      buildPrompt: () => promptForExam(
+        guide, selectedExamBlocks(), readExamOptions(INLINE_TOOL_IDS.exam)
+      ),
+      onSuccess: (data) => {
+        // Storing the questions is what the inline copy used to skip, so they
+        // vanished on reload while the Tools-tab copy kept them.
+        renderExamQuestionList('it-exam-results', acceptExamQuestions(data));
+      }
+    });
   });
 }

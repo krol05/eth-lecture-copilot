@@ -22,44 +22,21 @@ function showQuizPanel(panel) {
 }
 
 async function generateQuiz() {
-  if (!guide?.guide?.length || !hasUsableSettings()) return;
-
-  const customCountEl = document.getElementById('quiz-custom-count');
-  const customCountRaw = parseInt(customCountEl?.value?.trim() || '', 10);
-  const count = (!isNaN(customCountRaw) && customCountRaw > 0)
-    ? customCountRaw
-    : parseInt(getActivePillValue('quiz-count-pills') || '10', 10);
-  const type  = getActivePillValue('quiz-type-pills') || 'mixed';
-
-  const btn = document.getElementById('quiz-generate-btn');
-  const errEl = document.getElementById('quiz-error');
-  setFeatureBtnLoading(btn, true);
-  errEl.style.display = 'none';
-
-  try {
-    const language = getToolLanguage('quiz-lang-select');
-    const systemPrompt = promptForQuiz(guide, { count, type, language });
-    const payload = {
-      ...buildApiPayloadBase(),
-      type: 'QUIZ_REQUEST',
-      toolThinking: getToolThinking('quiz'),
-      guideJson: guide,
-      systemPrompt
-    };
-    const resp = await apiRequest(payload);
-    if (!resp.success) throw new Error(resp.error);
-    quizData = resp.data?.questions || [];
-    if (!quizData.length) throw new Error('No quiz questions returned. Try different settings.');
-    startQuiz(quizData);
-  } catch (err) {
-    errEl.textContent = err.message;
-    errEl.style.display = '';
-  } finally {
-    setFeatureBtnLoading(btn, false);
-  }
+  await runToolGeneration({
+    type: 'QUIZ_REQUEST',
+    thinkingKey: 'quiz',
+    buttonId: 'quiz-generate-btn',
+    errorId: 'quiz-error',
+    buildPrompt: () => promptForQuiz(guide, readQuizOptions(TAB_TOOL_IDS.quiz)),
+    onSuccess: (data) => {
+      startQuiz(data?.questions || []);
+    }
+  });
 }
 
+/** Validate, store and start a generated quiz. Both copies land here. */
 function startQuiz(questions) {
+  if (!questions.length) throw new Error('No quiz questions returned. Try different settings.');
   quizState = {
     questions,
     currentIndex: 0,
@@ -328,51 +305,23 @@ function getSelectedExamBlocks() {
 }
 
 async function generateExamQuestions() {
-  if (!guide?.guide?.length || !hasUsableSettings()) return;
-
-  const difficulty  = getActivePillValue('exam-difficulty-pills') || 'mixed';
-  const format      = getActivePillValue('exam-format-pills') || 'open';
-  const answerLen   = getActivePillValue('exam-answer-pills') || 'medium';
-  const countPill   = getActivePillValue('exam-count-pills') || '5';
-  const perBlock    = countPill === 'per-block';
-  const customCountEl = document.getElementById('exam-custom-count');
-  const customCountRaw = parseInt(customCountEl?.value?.trim() || '', 10);
-  const count = perBlock ? 2
-    : (!isNaN(customCountRaw) && customCountRaw > 0) ? customCountRaw
-    : parseInt(countPill, 10) || 5;
   const selectedBlocks = getSelectedExamBlocks();
-
-  const btn = document.getElementById('exam-generate-btn');
-  const errEl = document.getElementById('exam-error');
-  setFeatureBtnLoading(btn, true);
-  errEl.style.display = 'none';
-
-  try {
-    const language = getToolLanguage('exam-lang-select');
-    const systemPrompt = promptForExam(guide, selectedBlocks, {
-      difficulty, format, answerLength: answerLen, questionsPerBlock: perBlock, count, language
-    });
-    const payload = {
-      ...buildApiPayloadBase(),
-      type: 'EXAM_QUESTIONS_REQUEST',
-      toolThinking: getToolThinking('exam'),
-      guideJson: guide,
-      systemPrompt
-    };
-    const resp = await apiRequest(payload);
-    if (!resp.success) throw new Error(resp.error);
-    const questions = resp.data?.questions || [];
-    if (!questions.length) throw new Error('No questions returned. Try different settings.');
-    renderExamQuestionList('exam-question-list', questions);
-    const countLabel = document.getElementById('exam-count-label');
-    if (countLabel) countLabel.textContent = `${questions.length} question${questions.length !== 1 ? 's' : ''}`;
-    showExamPanel('results');
-  } catch (err) {
-    errEl.textContent = err.message;
-    errEl.style.display = '';
-  } finally {
-    setFeatureBtnLoading(btn, false);
-  }
+  await runToolGeneration({
+    type: 'EXAM_QUESTIONS_REQUEST',
+    thinkingKey: 'exam',
+    buttonId: 'exam-generate-btn',
+    errorId: 'exam-error',
+    buildPrompt: () => promptForExam(guide, selectedBlocks, readExamOptions(TAB_TOOL_IDS.exam)),
+    onSuccess: (data) => {
+      const questions = acceptExamQuestions(data);
+      renderExamQuestionList('exam-question-list', questions);
+      const countLabel = document.getElementById('exam-count-label');
+      if (countLabel) {
+        countLabel.textContent = `${questions.length} question${questions.length !== 1 ? 's' : ''}`;
+      }
+      showExamPanel('results');
+    }
+  });
 }
 
 function renderCrossExamTopics(topics) {
@@ -401,14 +350,12 @@ function renderCrossExamTopics(topics) {
   });
 }
 
+/**
+ * Draws a question list. Storing and persisting is the caller's job — this
+ * used to guess from the container id, which meant restoring a saved lecture
+ * wrote the same questions straight back to storage.
+ */
 function renderExamQuestionList(containerId, questions) {
-  if (containerId === 'exam-question-list' || containerId === 'it-exam-results') {
-    examQuestionData = questions;
-    persistToolOutputs();
-  } else if (containerId === 'cross-exam-question-list') {
-    crossExamQuestionData = questions;
-    persistToolOutputs();
-  }
   const container = document.getElementById(containerId);
   if (!container) return;
   container.innerHTML = '';
@@ -723,6 +670,8 @@ async function generateCrossLecturePrediction() {
     // Render questions
     const questions = data.questions || [];
     if (!questions.length) throw new Error('No predictions returned. Try different settings.');
+    crossExamQuestionData = questions;
+    persistToolOutputs();
     renderExamQuestionList('cross-exam-question-list', questions);
     const countLabel = document.getElementById('cross-exam-count-label');
     if (countLabel) countLabel.textContent = `${questions.length} question${questions.length !== 1 ? 's' : ''}`;

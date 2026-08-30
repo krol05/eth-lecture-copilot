@@ -66,47 +66,23 @@ function renderFlashcardMetadata(card) {
 }
 
 async function generateFlashcards() {
-  if (!guide?.guide?.length || !hasUsableSettings()) return;
-
-  const customCountEl = document.getElementById('flashcards-custom-count');
-  const customCountRaw = parseInt(customCountEl?.value?.trim() || '', 10);
-  const count = (!isNaN(customCountRaw) && customCountRaw > 0)
-    ? String(customCountRaw)
-    : getActivePillValue('flashcards-count-pills') || 'auto';
-  const cardTypes = getSelectedFlashcardTypes('flashcards-card-type-pills');
-  const formulas = !!document.getElementById('flashcards-formulas-cb')?.checked;
-
-  const btn = document.getElementById('flashcards-generate-btn');
-  const errEl = document.getElementById('flashcards-error');
-  setFeatureBtnLoading(btn, true);
-  errEl.style.display = 'none';
-
-  try {
-    const language = getToolLanguage('flashcards-lang-select');
-    const systemPrompt = promptForFlashcards(guide, { count, cardTypes, includeFormulas: formulas, language });
-    const payload = {
-      ...buildApiPayloadBase(),
-      type: 'FLASHCARDS_REQUEST',
-      toolThinking: getToolThinking('flashcards'),
-      guideJson: guide,
-      systemPrompt
-    };
-    const resp = await apiRequest(payload);
-    if (!resp.success) throw new Error(resp.error);
-    applyFlashcardsResponse(resp.data);
-    if (!flashcardData.length) throw new Error('No flashcards returned. Try different settings.');
-    renderFlashcardList(flashcardData);
-    const countLabel = document.getElementById('flashcards-count-label');
-    if (countLabel) countLabel.textContent = `${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}`;
-    updateFlashcardDeckTitleUI();
-    showFlashcardsPanel('results');
-    persistToolOutputs();
-  } catch (err) {
-    errEl.textContent = err.message;
-    errEl.style.display = '';
-  } finally {
-    setFeatureBtnLoading(btn, false);
-  }
+  await runToolGeneration({
+    type: 'FLASHCARDS_REQUEST',
+    thinkingKey: 'flashcards',
+    buttonId: 'flashcards-generate-btn',
+    errorId: 'flashcards-error',
+    buildPrompt: () => promptForFlashcards(guide, readFlashcardOptions(TAB_TOOL_IDS.flashcards)),
+    onSuccess: (data) => {
+      acceptFlashcards(data);
+      renderFlashcardList(flashcardData);
+      const countLabel = document.getElementById('flashcards-count-label');
+      if (countLabel) {
+        countLabel.textContent = `${flashcardData.length} card${flashcardData.length !== 1 ? 's' : ''}`;
+      }
+      updateFlashcardDeckTitleUI();
+      showFlashcardsPanel('results');
+    }
+  });
 }
 
 /** Show all cards in paginated single-card view.  Wires up prev/next nav. */
