@@ -24,15 +24,28 @@
  *     accepts a parameter, but it does guarantee we never send one that isn't
  *     documented somewhere — which is the mistake we can actually make.
  *
- * Exit code 1 means we would send something no source documents.
+ *  3. CROSS-CHECKED against two independent datasets, when they are reachable:
+ *       LiteLLM     per-provider accepted parameters, via its own Python API
+ *                   (scripts/litellm-params.py). Covers the providers that
+ *                   publish nothing themselves, which is most of them.
+ *       OpenRouter  `supported_parameters` per model, for its routed catalog.
+ *     These REPORT rather than fail the build. They describe what LiteLLM and
+ *     OpenRouter believe, and both are wrong sometimes — LiteLLM does not know
+ *     that Moonshot K2.x takes `thinking`, for instance. Treat a disagreement
+ *     as a prompt to check the provider's docs, not as proof of a bug.
  *
- * Usage: node scripts/check-api-params.mjs [--verbose]
+ * Exit code 1 means we would send something no source documents (tiers 1-2).
+ *
+ * Usage: node scripts/check-api-params.mjs [--verbose] [--strict-cross-check]
+ *   --strict-cross-check also fails on tier-3 disagreements (not used in CI).
  */
 
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
+import { fetchOpenRouter } from './lib/model-sources.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -40,6 +53,7 @@ const { Adapters } = require(join(ROOT, 'lib/providers/adapters.js'));
 const { Catalog } = require(join(ROOT, 'lib/providers/catalog.js'));
 
 const VERBOSE = process.argv.includes('--verbose');
+const STRICT_CROSS = process.argv.includes('--strict-cross-check');
 
 /**
  * Non-OpenAI parameters our adapters send, each with the provider that needs it
@@ -52,6 +66,48 @@ const DOCUMENTED_EXTENSIONS = {
   chat_template_kwargs: 'NVIDIA NIM / SambaNova reasoning switch — docs/providers/reasoning-controls.md',
   reasoning: 'OpenRouter / Together unified reasoning parameter — docs/providers/openrouter.md §5'
 };
+
+/**
+ * our catalog id → LiteLLM's provider id, for the tier-3 cross-check.
+ *
+ * null means "do not compare", and the reason matters: Cohere and Zhipu are
+ * listed because we call their OpenAI-COMPATIBILITY endpoints while LiteLLM
+ * models their native APIs. Comparing those produces confident nonsense —
+ * "cohere does not support response_format" is true of the native API and
+ * false of the compatibility one.
+ */
+const LITELLM_PROVIDERS = {
+  anthropic: 'anthropic',
+  openai: 'openai',
+  google: 'gemini',
+  deepseek: 'deepseek',
+  openrouter: 'openrouter',
+  groq: 'groq',
+  xai: 'xai',
+  mistral: 'mistral',
+  together: 'together_ai',
+  cerebras: 'cerebras',
+  perplexity: 'perplexity',
+  nvidia_nim: 'nvidia_nim',
+  fireworks: 'fireworks_ai',
+  huggingface: 'huggingface',
+  moonshot: 'moonshot',
+  sambanova: 'sambanova',
+  qwen: 'dashscope',
+  cohere: null,           // we use /compatibility/v1; LiteLLM models native /v1/chat
+  zhipu: null,            // same: we use the OpenAI-compatible surface
+  hyperbolic: null        // LiteLLM has no hyperbolic provider
+};
+
+/**
+ * Keys that are part of every chat request's structure rather than tunable
+ * options. LiteLLM's "supported params" lists options only, so these would
+ * otherwise all look unrecognised.
+ */
+const STRUCTURAL = new Set([
+  'model', 'messages', 'stream', 'system', 'contents', 'generationConfig',
+  'systemInstruction', 'anthropic_version', 'input', 'stream_options'
+]);
 
 const SPEC_SOURCES = {
   openai: {
@@ -91,7 +147,8 @@ const VARIANTS = [
   { label: 'with an image', thinking: 'none', messages: [{ role: 'user', content: 'what is this?', images: ['data:image/png;base64,AAAA'] }] }
 ];
 
-const findings = [];
+const findings = [];        // fail the build
+const crossFindings = [];   // report only — see tier 3 in the header
 const notes = [];
 const coverage = [];
 
@@ -181,9 +238,9 @@ async function loadOpenApiRequestSchema(source, providerId) {
 
 // ── Checks ───────────────────────────────────────────────────────────────────
 
-function buildBody(providerId, variant) {
+function buildBody(providerId, variant, modelOverride) {
   const provider = Catalog.get(providerId);
-  const model = provider.defaultModel || provider.models[0]?.id || 'test-model';
+  const model = modelOverride || provider.defaultModel || provider.models[0]?.id || 'test-model';
   const modelInfo = provider.models.find(m => m.id === model);
   const { messages, label, ...opts } = variant;
   void label;
@@ -285,6 +342,106 @@ function checkAgainstBaseline(providerIds, baseline) {
   }
 }
 
+// ── Tier 3: independent datasets ─────────────────────────────────────────────
+
+/**
+ * Every parameter key our adapter produces for a provider, across all variants.
+ * The model matters: our adapters already drop `temperature` for reasoning
+ * models and switch `max_tokens` for `max_completion_tokens`, so checking one
+ * model's parameters against another model's allowance invents disagreements.
+ */
+function paramsWeSend(providerId, model) {
+  const keys = new Set();
+  for (const variant of VARIANTS) {
+    let body;
+    try { body = buildBody(providerId, variant, model); } catch { continue; }
+    for (const k of Object.keys(body || {})) if (!STRUCTURAL.has(k)) keys.add(k);
+  }
+  return keys;
+}
+
+/** Ask LiteLLM, via its Python API, what each provider accepts. */
+async function crossCheckLiteLLM() {
+  const request = {};
+  for (const provider of Catalog.list()) {
+    const litellm = LITELLM_PROVIDERS[provider.id];
+    if (!litellm) continue;
+    const model = provider.defaultModel || provider.models?.[0]?.id;
+    if (model) request[provider.id] = { litellm, model };
+  }
+  if (!Object.keys(request).length) return;
+
+  const script = join(ROOT, 'scripts/litellm-params.py');
+  let raw;
+  try {
+    raw = await new Promise((resolve, reject) => {
+      const proc = spawn('python3', [script, JSON.stringify(request)], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      let out = '', err = '';
+      proc.stdout.on('data', d => { out += d; });
+      proc.stderr.on('data', d => { err += d; });
+      proc.on('error', reject);
+      proc.on('close', code => code === 0 ? resolve(out) : reject(new Error(err.trim() || `exit ${code}`)));
+    });
+  } catch (err) {
+    notes.push(`LiteLLM cross-check skipped (${err.message}). Install with: pip install litellm`);
+    return;
+  }
+
+  let data;
+  try { data = JSON.parse(raw); } catch { notes.push('LiteLLM cross-check: unparseable output.'); return; }
+  if (data.__unavailable__) {
+    notes.push(`LiteLLM cross-check skipped (${data.__unavailable__}). Install with: pip install litellm`);
+    return;
+  }
+
+  let agreed = 0;
+  for (const [providerId, result] of Object.entries(data)) {
+    if (result.error) { notes.push(`LiteLLM could not describe ${providerId}: ${result.error}`); continue; }
+    const known = new Set(result.params);
+    const unknown = [...paramsWeSend(providerId, result.model)].filter(p => !known.has(p));
+    if (!unknown.length) { agreed++; continue; }
+    crossFindings.push(
+      `${providerId}: LiteLLM does not list ${unknown.map(u => `"${u}"`).join(', ')} ` +
+      `(it knows ${known.size} parameters for ${result.model})`);
+  }
+  coverage.push(`  ${'LiteLLM'.padEnd(14)} cross-checked ${Object.keys(data).length} providers, ${agreed} in full agreement`);
+}
+
+/** OpenRouter publishes supported_parameters per model — check that path per model. */
+async function crossCheckOpenRouter() {
+  const provider = Catalog.get('openrouter');
+  if (!provider) return;
+  let models;
+  try {
+    models = (await fetchOpenRouter()).data || [];
+  } catch (err) {
+    notes.push(`OpenRouter cross-check skipped (${err.message}).`);
+    return;
+  }
+
+  const byId = new Map(models.map(m => [m.id, m.supported_parameters]).filter(([, p]) => Array.isArray(p)));
+  let checked = 0, clean = 0;
+
+  // Check every catalog model on this provider, not just the default — the
+  // whole point of OpenRouter is that one key reaches many different backends,
+  // and they do not all accept the same parameters.
+  for (const entry of provider.models || []) {
+    const supported = byId.get(entry.id);
+    if (!supported) continue;
+    checked++;
+    const unknown = [...paramsWeSend('openrouter', entry.id)].filter(p => !supported.includes(p));
+    if (!unknown.length) { clean++; continue; }
+    crossFindings.push(
+      `openrouter/${entry.id}: does not list ${unknown.map(u => `"${u}"`).join(', ')}`);
+  }
+  const missing = (provider.models || []).length - checked;
+  coverage.push(
+    `  ${'OpenRouter'.padEnd(14)} cross-checked ${checked} models against supported_parameters, ${clean} clean` +
+    (missing ? ` (${missing} not in their catalogue)` : ''));
+}
+
 async function main() {
   let baseline = null;
   const specChecked = new Set();
@@ -315,14 +472,29 @@ async function main() {
     checkAgainstBaseline(rest, baseline);
   }
 
+  // Tier 3 runs last and never blocks: both datasets are third-party opinions.
+  await Promise.all([crossCheckLiteLLM(), crossCheckOpenRouter()]);
+
   console.log('Coverage:');
   console.log(coverage.join('\n'));
   console.log('\nDocumented non-OpenAI parameters in use:');
   for (const [k, why] of Object.entries(DOCUMENTED_EXTENSIONS)) console.log(`  ${k.padEnd(22)} ${why}`);
 
+  if (crossFindings.length) {
+    console.log('\nDisagreements with LiteLLM / OpenRouter (informational):');
+    for (const c of crossFindings) console.log(`  - ${c}`);
+    console.log('  These datasets are third-party and incomplete. Check the provider\'s own');
+    console.log('  documentation before changing an adapter because of one.');
+  }
+
   if (notes.length) {
     console.log('\nNotes:');
     for (const n of notes) console.log(`  - ${n}`);
+  }
+
+  if (STRICT_CROSS && crossFindings.length) {
+    console.error('\n❌ --strict-cross-check: the datasets above disagree with us.');
+    process.exit(1);
   }
 
   if (findings.length) {

@@ -24,11 +24,12 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
+import { fetchModelsDev, fetchLiteLLM } from './lib/model-sources.mjs';
+
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { reasoningOffBody } = require('../lib/providers/reasoning.js');
 const DATA_FILE = join(ROOT, 'lib/providers/catalog-data.js');
-const SOURCE_URL = 'https://models.dev/api.json';
 
 // our catalog id → models.dev provider id
 const PROVIDER_SOURCES = {
@@ -124,8 +125,22 @@ function effortsOf(model) {
   return values.length ? { efforts: [...new Set(values)] } : {};
 }
 
-function isChatTextModel(model) {
+/**
+ * Is this something a chat-completions call can talk to?
+ *
+ * Three independent opinions, and a NO from any of them disqualifies. That
+ * asymmetry is deliberate: a wrongly-excluded model is merely absent from a
+ * dropdown (the live /models list and the free-text field still reach it),
+ * while a wrongly-included one is a broken choice we offered the user.
+ *
+ * `lite` is LiteLLM's view, or null when it doesn't list the model. It is the
+ * only source that states a purpose outright, but it covers ~79% of our
+ * catalog and mislabels the odd classifier as `chat`, so the name pattern
+ * stays as the fallback rather than being replaced by it.
+ */
+function isChatTextModel(model, lite) {
   if (model.id.startsWith(ALIAS_PREFIX)) return false;
+  if (lite && lite.mode && lite.mode !== 'chat' && lite.mode !== 'completion') return false;
   if (NON_CHAT.test(model.id) || NON_CHAT_ANY.test(model.id)) return false;
   const out = model.modalities?.output;
   const inp = model.modalities?.input;
@@ -190,7 +205,9 @@ function cleanLabel(model) {
   return name.replace(/^[\w .-]{2,20}:\s+/, '');   // "NVIDIA: Nemotron 3" -> "Nemotron 3"
 }
 
-function mergeProvider(existing, upstreamModels, { addNew = true } = {}) {
+function mergeProvider(existing, upstreamModels, { addNew = true, lite = null } = {}) {
+  const liteFor = id => (lite ? lite.get(id) : null);
+
   // Alias rows are not real model ids; drop any a previous run added.
   const kept = existing.filter(m => !m.id.startsWith(ALIAS_PREFIX));
   const prunedCount = existing.length - kept.length;
@@ -200,7 +217,7 @@ function mergeProvider(existing, upstreamModels, { addNew = true } = {}) {
 
   const candidates = addNew
     ? Object.values(upstreamModels)
-      .filter(isChatTextModel)
+      .filter(m => isChatTextModel(m, liteFor(m.id)))
       .filter(m => !RETIRED.has(m.id) && !seen.has(m.id))
       .sort((a, b) => String(b.release_date || '').localeCompare(String(a.release_date || '')))
     : [];
@@ -208,20 +225,33 @@ function mergeProvider(existing, upstreamModels, { addNew = true } = {}) {
   const added = candidates.slice(0, NEW_MODEL_CAP);
   for (const m of added) merged.push({ id: m.id, label: cleanLabel(m), ...effortsOf(m) });
 
-  // Refresh the accepted reasoning levels on models we already listed — this
-  // is what stops us sending a value the provider would reject.
+  // Refresh what each model says about reasoning. This is what stops us
+  // sending a value the provider would reject.
+  //
+  //   efforts   the levels the model accepts. models.dev is the primary source
+  //             because it is per-provider; LiteLLM fills in models it has no
+  //             opinion on.
+  //   alwaysOn  the model reasons no matter what, so an "off" value is an error
+  //             rather than a no-op. Hand-maintained as a regex before this.
+  let alwaysOnCount = 0;
   for (const entry of merged) {
     const info = upstreamModels[entry.id];
-    if (!info) continue;
-    const e = effortsOf(info);
-    if (e.efforts) entry.efforts = e.efforts;
+    const l = liteFor(entry.id);
+
+    const fromDev = info ? effortsOf(info).efforts : null;
+    const efforts = fromDev || (l && l.levels) || null;
+    if (efforts) entry.efforts = efforts;
     else delete entry.efforts;
+
+    if (l && l.alwaysOn) { entry.alwaysOn = true; alwaysOnCount++; }
+    else delete entry.alwaysOn;
   }
   return {
     merged,
     addedCount: added.length,
     skippedCount: candidates.length - added.length,
-    prunedCount
+    prunedCount,
+    alwaysOnCount
   };
 }
 
@@ -244,7 +274,8 @@ function serialize(catalogModels, sourceDate) {
     const rows = models
       .map(m => {
         const efforts = m.efforts ? `, efforts: ${JSON.stringify(m.efforts)}` : '';
-        return `      { id: ${pad(JSON.stringify(m.id) + ',', ID_COLUMN + 1)} label: ${JSON.stringify(m.label)}${efforts} }`;
+        const always = m.alwaysOn ? ', alwaysOn: true' : '';
+        return `      { id: ${pad(JSON.stringify(m.id) + ',', ID_COLUMN + 1)} label: ${JSON.stringify(m.label)}${efforts}${always} }`;
       })
       .join(',\n');
     return `    ${provider}: [\n${rows}\n    ]`;
@@ -284,17 +315,32 @@ ${body}
 
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
-  console.log(`Fetching ${SOURCE_URL} …`);
-  const resp = await fetch(SOURCE_URL);
-  if (!resp.ok) {
-    console.error(`models.dev returned HTTP ${resp.status} — leaving the catalog untouched.`);
+
+  console.log('Fetching models.dev …');
+  let upstream;
+  try {
+    upstream = await fetchModelsDev();
+  } catch (err) {
+    console.error(`${err.message} — leaving the catalog untouched.`);
     process.exit(1);
   }
-  const upstream = await resp.json();
+
+  // LiteLLM is a supplement, not a requirement: it tells us what a model is FOR
+  // and whether its reasoning can be switched off. If it is unreachable we
+  // still run, just with the name pattern doing the filtering on its own.
+  let lite = null;
+  try {
+    console.log('Fetching LiteLLM model metadata …');
+    lite = await fetchLiteLLM();
+    console.log(`  ${lite.size} models described`);
+  } catch (err) {
+    console.log(`  unavailable (${err.message}) — falling back to name matching alone`);
+  }
 
   const existing = loadExisting();
   const out = {};
   let totalAdded = 0;
+  let totalAlwaysOn = 0;
   const report = [];
 
   for (const [providerId, models] of Object.entries(existing)) {
@@ -306,10 +352,11 @@ async function main() {
       continue;
     }
     const isAggregator = AGGREGATORS.has(providerId);
-    const { merged, addedCount, skippedCount, prunedCount } =
-      mergeProvider(models, upstreamModels, { addNew: !isAggregator });
+    const { merged, addedCount, skippedCount, prunedCount, alwaysOnCount } =
+      mergeProvider(models, upstreamModels, { addNew: !isAggregator, lite });
     out[providerId] = merged;
     totalAdded += addedCount;
+    totalAlwaysOn += alwaysOnCount;
 
     const notes = [];
     if (isAggregator) {
@@ -325,6 +372,9 @@ async function main() {
   console.log('\nModel counts:');
   console.log(report.join('\n'));
   console.log(`\nTotal new models: ${totalAdded}`);
+  if (lite) {
+    console.log(`Models flagged as reasoning-always-on (no off switch): ${totalAlwaysOn}`);
+  }
 
   // Safety check on the reasoning table (see auditReasoning)
   const { problems, gaps } = auditReasoning(out, upstream);
