@@ -69,6 +69,28 @@ async function requireHostAccess(url, provider, model) {
   });
 }
 
+/**
+ * Fetch lecture data, turning a network failure into something explicable.
+ *
+ * requireHostAccess can only check the URL we ask for. ETH redirects
+ * dist.tobira.ethz.ch to a numbered node, so the request can still be refused
+ * after passing that check — the manifest grants *.tobira.ethz.ch for exactly
+ * this reason, and this wrapper explains it if a new host ever appears.
+ */
+async function fetchLectureData(url) {
+  try {
+    return await fetch(url, { signal: AbortSignal.timeout(45000) });
+  } catch (err) {
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') throw err;
+    throw apiError({
+      provider: 'transcript',
+      code: 'transcript_fetch_failed',
+      message: err?.message || 'Lecture data request failed',
+      raw: { url }
+    });
+  }
+}
+
 // ─── Abort registry (Bug A: Stop now really cancels the fetch) ───────────────
 
 const activeRequests = new Map(); // requestId → AbortController
@@ -469,14 +491,20 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
     // of letting it surface as a bare "Failed to fetch".
     case 'FETCH_VTT': {
       await requireHostAccess(msg.url, 'transcript', null);
-      const resp = await fetch(msg.url, { signal: AbortSignal.timeout(45000) });
+      // A redirect can land on a host we do not hold (ETH sends
+      // dist.tobira.ethz.ch to dist02.tobira.ethz.ch), and that surfaces as a
+      // bare CORS failure. Tag it so the error explains itself.
+      const resp = await fetchLectureData(msg.url);
       if (!resp.ok) throw apiError({ status: resp.status, message: `VTT fetch failed: ${resp.status}` });
       return resp.text();
     }
 
     case 'FETCH_JSON': {
       await requireHostAccess(msg.url, 'transcript', null);
-      const resp = await fetch(msg.url, { signal: AbortSignal.timeout(45000) });
+      // A redirect can land on a host we do not hold (ETH sends
+      // dist.tobira.ethz.ch to dist02.tobira.ethz.ch), and that surfaces as a
+      // bare CORS failure. Tag it so the error explains itself.
+      const resp = await fetchLectureData(msg.url);
       if (!resp.ok) throw apiError({ status: resp.status, message: `JSON fetch failed: ${resp.status}` });
       return resp.json();
     }
