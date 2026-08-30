@@ -92,6 +92,9 @@ function init() {
   providerSelect.addEventListener('change', () => {
     const p = providerSelect.value;
     const cfg = getConfig(p);
+    // Choosing a provider is a click, which is the only moment Chrome lets us
+    // ask for its host. Doing it here means the sidebar rarely has to.
+    askForProviderHost(p, cfg);
     // Restore saved base URL for this provider, or default
     chrome.storage.local.get(['localBases'], saved => {
       localBaseInput.value = saved.localBases?.[p] || (cfg?.kind === 'local' ? cfg.base : '') || '';
@@ -229,6 +232,19 @@ async function detectModels() {
   const base = localBaseInput.value.trim();
   if (!base) { showDetectError('Enter a server URL first.'); return; }
 
+  // Ask for the server's host before contacting it. Clicking Detect is the
+  // gesture Chrome requires, and this runs before any await so it still
+  // counts — the background cannot prompt, it can only report what's missing.
+  const access = await askForHostOf(base);
+  if (access === 'denied') {
+    showDetectError(`Access to ${hostOf(base)} was declined, so its models can't be listed. Click Detect again to allow it.`);
+    return;
+  }
+  if (access === 'undeclared') {
+    showDetectError(`${hostOf(base)} can't be requested. Use a localhost or https address, or type the model name manually.`);
+    return;
+  }
+
   detectBtn.disabled = true;
   detectBtn.textContent = 'Detecting…';
   detectError.style.display = 'none';
@@ -319,6 +335,11 @@ function save() {
   if (isLocal && !base)    { flash('error', 'Please enter a server URL.'); return; }
   if (!model)              { flash('error', 'Please select or detect a model.'); return; }
 
+  // Saving is the other reliable click: the provider may never have fired a
+  // change event (already selected on open), and a local or custom server's
+  // address is only known now, from the field the user just filled in.
+  askForHostOf(isLocal ? base : cfg?.base);
+
   // Save localBase per provider so switching back restores it
   const update = { provider, model };
   if (!isLocal) update.apiKey = apiKey;
@@ -349,6 +370,50 @@ function onSaved() {
 
 function getConfig(id) {
   return resolveProvider(id, providerStore);
+}
+
+/**
+ * Ask for the host a provider needs, if we don't already hold it.
+ *
+ * Called straight from the change handler on purpose: Chrome only allows a
+ * permission prompt while handling a user gesture, and it stops counting as
+ * one after an await. Declining is not an error here — the user may just be
+ * browsing the list, and the sidebar will offer again when a request needs it.
+ */
+function askForProviderHost(providerId, cfg) {
+  askForHostOf(cfg && cfg.base).then(result => {
+    if (result === 'granted') flash('ok', `Allowed ${hostOf(cfg.base)}`);
+    else if (result === 'denied') {
+      flash('warn', `Without access to ${hostOf(cfg.base)} this provider can't be reached.`);
+    }
+  });
+}
+
+function hostOf(url) {
+  const pattern = window.originPattern ? window.originPattern(url) : null;
+  return pattern ? window.hostLabel(pattern) : String(url || 'that server');
+}
+
+/**
+ * Ask for whatever origin a URL belongs to. Must run inside a click.
+ *
+ * Deliberately does NOT check hasPermission first: that is async, and a user
+ * gesture stops counting once you await. permissions.request resolves
+ * immediately and silently when the origin is already held, so asking
+ * unconditionally is both simpler and the only version that actually works.
+ *
+ * @returns 'granted' | 'denied' | 'undeclared' | 'skipped'
+ */
+function askForHostOf(url) {
+  if (!window.originPattern) return Promise.resolve('skipped');
+  const pattern = window.originPattern(url);
+  if (!pattern) return Promise.resolve('skipped');
+  return window.requestPermission(pattern).then(({ granted, reason }) => {
+    if (granted) return 'granted';
+    // Chrome rejects a pattern that optional_host_permissions doesn't cover;
+    // that is a manifest problem, not the user saying no.
+    return reason === 'denied' ? 'denied' : 'undeclared';
+  });
 }
 
 function flash(type, text) {

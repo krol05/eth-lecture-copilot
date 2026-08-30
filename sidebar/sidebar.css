@@ -1152,8 +1152,20 @@ body {
   flex: 0 0 auto;
   /* No CSS min-height — height is content-driven on first open.
      After the user drags the handle, panel.style.height is set explicitly.
-     max-height prevents overflow if content is unusually tall. */
-  max-height: 68%;
+
+     The cap is in vh, NOT %. A percentage max-height resolves against the
+     parent's height, and when that parent has no definite height CSS treats
+     it as `none` — so the panel grew to fit all its content, ran off the
+     bottom of the sidebar, and the body below never got the chance to
+     scroll. A flashcard's Study note and "Ask about this" were simply
+     unreachable. vh always resolves. */
+  /* A CONSTANT height, not content-driven. It used to size itself to whatever
+     card was showing, so paging through flashcards made the drawer grow and
+     shrink and the arrows jumped around under the cursor. Fixed height plus a
+     scrolling body keeps every control exactly where you left it. */
+  height: min(62vh, 620px);
+  max-height: 78vh;
+  min-height: 0;
   border-top: 2px solid var(--accent);
   background: var(--bg-1);
   overflow: hidden;
@@ -1203,9 +1215,11 @@ body {
 }
 
 .guide-inline-tool-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* Don't hand the scroll on to the guide behind once this reaches its end */
+  overscroll-behavior: contain;
   padding: 12px 14px 16px;
   display: flex;
   flex-direction: column;
@@ -1314,9 +1328,56 @@ body {
   cursor: help;
 }
 
-.qa-lecture-summary-panel-body .lecture-summary-view {
-  max-height: 280px;
+/* Both states are capped, not just the finished one. Only .lecture-summary-view
+   used to be limited, so while the summary streamed the panel grew without
+   bound and pushed the whole conversation off screen — the box only appeared
+   once generation ended, which is exactly when it was no longer needed. */
+.qa-lecture-summary-panel-body .lecture-summary-view,
+.qa-lecture-summary-panel-body .lecture-summary-stream {
+  /* Relative to the window as well as absolute, so a short viewport, a zoomed
+     page or a narrow phone-sized panel never hands the box more room than the
+     screen has. */
+  max-height: min(280px, 38vh);
   overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Popped out: still bounded, just much taller. */
+.qa-lecture-summary-panel.is-expanded .lecture-summary-view,
+.qa-lecture-summary-panel.is-expanded .lecture-summary-stream {
+  max-height: 70vh;
+}
+
+.qa-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.qa-summary-action {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.qa-summary-action:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.qa-summary-action:disabled { opacity: 0.5; cursor: default; }
+
+.qa-summary-settings {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
 }
 
 .lecture-summary-actions {
@@ -2422,7 +2483,16 @@ body {
  * spans, old text stays stable while only new content animates.
  */
 .qa-chunk {
-  animation: qa-chunk-in 0.28s ease forwards;
+  /* No `forwards`: the filled state keeps a finished animation alive, and a
+     long answer accumulates thousands of these spans. The compositor then
+     tracks every one of them for the rest of the message, which is what made
+     the browser crawl while an answer streamed. Ending naturally at the
+     element's own opacity costs nothing once the fade is done. */
+  animation: qa-chunk-in 0.28s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qa-chunk { animation: none; }
 }
 
 @keyframes qa-chunk-in {
@@ -5790,4 +5860,50 @@ body.tool-ask-open {
 .tool-ask-input-row textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+
+/* ── Flashcard results: fill the drawer, scroll the cards ─────────────────── */
+/* The pager must stay put while the card underneath it changes size. */
+
+#flashcards-results.tool-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+#flashcards-results .feature-result-header,
+#flashcards-results .flashcard-nav {
+  flex: 0 0 auto;
+}
+
+.flashcards-card-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+
+/* ── Keep scrolling inside the sidebar ───────────────────────────────────── */
+/* The sidebar is an iframe over the lecture page, so reaching the end of any
+   list here used to hand the scroll to the page behind it — and the page moved
+   even when there was nothing left to scroll. `contain` stops that chaining at
+   the sidebar boundary, so the wheel only ever affects what the cursor is over. */
+
+html, body {
+  overscroll-behavior: contain;
+}
+
+.qa-chat-col,
+.guide-body,
+.tool-panel,
+.history-list,
+#guide-content,
+.qa-messages,
+[class*="-scroll"],
+.cop-err-body,
+.cop-err-history {
+  overscroll-behavior: contain;
 }

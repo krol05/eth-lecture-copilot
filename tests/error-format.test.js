@@ -145,3 +145,45 @@ describe('vision errors point at a model that can actually read images', () => {
     expect(f.hint).toContain('vision-capable model');
   });
 });
+
+describe('a missing host grant is not an auth failure', () => {
+  // The auth branch matches code.includes('permission'), so without an earlier
+  // case "permission_missing" told users their API key was rejected and sent
+  // them to re-check a key that was never the problem.
+  const detail = {
+    status: null, provider: 'groq', model: 'llama-4',
+    code: 'permission_missing',
+    message: 'This extension does not have permission to contact api.groq.com yet.',
+    raw: { origin: 'https://api.groq.com/*', host: 'api.groq.com' },
+    timestamp: 0
+  };
+
+  test('is classified as an access problem', () => {
+    const out = formatError(detail);
+    expect(out.title).toMatch(/access/i);
+    expect(out.title).not.toMatch(/authentication/i);
+  });
+
+  test('names the host and does not blame the API key', () => {
+    const { hint } = formatError(detail);
+    expect(hint).toContain('api.groq.com');
+    expect(hint).not.toMatch(/api key/i);
+  });
+});
+
+describe('lecture data blocked after a redirect', () => {
+  // dist.tobira.ethz.ch 302s to dist02.tobira.ethz.ch. The permission check
+  // runs against the URL we request, so a redirect to an ungranted host slips
+  // past it and arrives as a bare CORS "Failed to fetch" with no clue.
+  test('points at the redirect rather than blaming the connection', () => {
+    const out = formatError({
+      status: null, provider: 'transcript', model: null,
+      code: 'transcript_fetch_failed',
+      message: 'Failed to fetch',
+      raw: { url: 'https://dist.tobira.ethz.ch/mh_default_org/engage-player/x/data.json' },
+      timestamp: 0
+    });
+    expect(out.hint).toMatch(/redirect/i);
+    expect(out.hint).not.toMatch(/check your connection/i);
+  });
+});

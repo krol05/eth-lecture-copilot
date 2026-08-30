@@ -23,7 +23,8 @@ importScripts(
   chrome.runtime.getURL('lib/providers/reasoning.js'),
   chrome.runtime.getURL('lib/providers/adapters.js'),
   chrome.runtime.getURL('lib/providers/overrides.js'),
-  chrome.runtime.getURL('lib/providers/adapter-spec.js')
+  chrome.runtime.getURL('lib/providers/adapter-spec.js'),
+  chrome.runtime.getURL('lib/permissions.js')
 );
 
 // ─── Structured errors ───────────────────────────────────────────────────────
@@ -42,6 +43,52 @@ function ensureDetails(err, provider, model) {
              : err?.name === 'AbortError'   ? 'aborted'
              : null;
   return apiError({ provider, model, code, message });
+}
+
+// ─── Host access (granted per provider, not up front) ───────────────────────
+
+/**
+ * Throw a typed error when we don't hold the origin this request needs.
+ *
+ * The error carries the exact match pattern so the sidebar can offer a button
+ * that asks for that one host. `chrome.permissions.request` cannot be called
+ * from here — it needs an extension page and a user gesture.
+ */
+async function requireHostAccess(url, provider, model) {
+  const pattern = globalThis.originPattern ? globalThis.originPattern(url) : null;
+  if (!pattern) return;
+  const held = await globalThis.hasPermission(pattern);
+  if (held) return;
+
+  const host = globalThis.hostLabel(pattern);
+  throw apiError({
+    provider, model,
+    code: 'permission_missing',
+    message: `This extension does not have permission to contact ${host} yet.`,
+    raw: { origin: pattern, host }
+  });
+}
+
+/**
+ * Fetch lecture data, turning a network failure into something explicable.
+ *
+ * requireHostAccess can only check the URL we ask for. ETH redirects
+ * dist.tobira.ethz.ch to a numbered node, so the request can still be refused
+ * after passing that check — the manifest grants *.tobira.ethz.ch for exactly
+ * this reason, and this wrapper explains it if a new host ever appears.
+ */
+async function fetchLectureData(url) {
+  try {
+    return await fetch(url, { signal: AbortSignal.timeout(45000) });
+  } catch (err) {
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') throw err;
+    throw apiError({
+      provider: 'transcript',
+      code: 'transcript_fetch_failed',
+      message: err?.message || 'Lecture data request failed',
+      raw: { url }
+    });
+  }
 }
 
 // ─── Abort registry (Bug A: Stop now really cancels the fetch) ───────────────
@@ -151,6 +198,11 @@ async function runModelRequest(cfg) {
 
   const base = p.kind === 'local' ? String(localBase || p.base).replace(/\/+$/, '') : p.base;
   if (!base) throw apiError({ provider, model, code: 'missing_base', message: 'Missing base URL for local provider' });
+
+  // Host access is granted per provider, on demand. A service worker cannot
+  // ask for it, so say precisely what is missing and let the UI prompt — a
+  // request without permission fails as an opaque network error otherwise.
+  await requireHostAccess(base, provider, model);
 
   const adapter = adapterFor(provider, p, store);
   // Custom endpoints may be authenticated anywhere (incl. localhost). Catalog
@@ -266,6 +318,7 @@ async function listModels({ provider, apiKey, localBase, force = false }) {
   if (!request) {
     throw apiError({ provider, code: 'no_models_endpoint', message: `${p.label || provider} has no model-list API — pick from the built-in list or type a model ID.` });
   }
+  await requireHostAccess(base, provider, null);
   const resp = await fetch(request.url, { headers: request.headers, signal: AbortSignal.timeout(10000) });
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -330,9 +383,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+/**
+ * Keyboard shortcut for attaching a video frame.
+ *
+ * The frame cannot be copied from the video — the canvas is tainted, Chrome
+ * confirms it with "Tainted canvases may not be exported" — so the only route
+ * left is a screenshot of the tab, and Chrome allows that ONLY with access to
+ * every website or with activeTab.
+ *
+ * Running a command grants activeTab for that tab, so this shortcut makes the
+ * screenshot legal without asking for anything broad. The grant is scoped to
+ * the one tab and lapses when it navigates.
+ */
+chrome.commands?.onCommand.addListener(async (command) => {
+  if (command !== 'attach-video-frame') return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+  try {
+    // Ask the page to hide the player chrome first, so the shortcut and the
+    // button produce the same picture — a slide, not a slide plus a seek bar.
+    await chrome.tabs.sendMessage(tab.id, { type: 'HIDE_PLAYER_CHROME' }).catch(() => {});
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    await chrome.tabs.sendMessage(tab.id, { type: 'FRAME_SHORTCUT_CAPTURED', dataUrl });
+  } catch (err) {
+    await chrome.tabs.sendMessage(tab.id, {
+      type: 'FRAME_SHORTCUT_CAPTURED',
+      error: err?.message || 'Screenshot failed'
+    }).catch(() => {});
+  }
+});
+
   if (message?.type === 'CAPTURE_VISIBLE_TAB') {
     const wid = sender?.tab?.windowId ?? null;
-    chrome.tabs.captureVisibleTab(wid, { format: 'jpeg', quality: 85 })
+    chrome.tabs.captureVisibleTab(wid, { format: 'png' })
       .then(dataUrl => sendResponse({ success: true, data: dataUrl }))
       .catch(err => sendResponse({ success: false, error: err.message, errorDetail: ensureDetails(err).details }));
     return true;
@@ -373,6 +456,7 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
       const base = String(msg.localBase || '').trim().replace(/\/+$/, '');
       if (!base) throw apiError({ provider, code: 'missing_base', message: 'localBase required for model discovery' });
       const req = Adapters.oai.buildModelsRequest({ base, apiKey: null });
+      await requireHostAccess(base, provider, null);
       const resp = await fetch(req.url, { headers: req.headers, signal: AbortSignal.timeout(4000) });
       if (!resp.ok) throw apiError({ status: resp.status, provider, message: `Server at ${base} returned ${resp.status}` });
       const ids = Adapters.oai.parseModelsResponse(await resp.json()).map(m => m.id);
@@ -432,14 +516,43 @@ async function handleMessage(msg, progress = () => {}, sender = null, requestId 
       return safeParseJson(raw, { type, requestId });
     }
 
+    // Lecture data. The URLs are discovered from the page, so a course can
+    // point at a media host we do not hold — say precisely which one instead
+    // of letting it surface as a bare "Failed to fetch".
+    // Follow a media redirect on the extension's behalf and report where it
+    // lands. ETH bounces dist.tobira.ethz.ch to a numbered node, and a browser
+    // sends Origin: null across that redirect — which no longer matches the
+    // fixed Access-Control-Allow-Origin the server returns, so the video
+    // becomes unreadable. Loading the FINAL url directly keeps the origin
+    // intact and the frame copyable. The service worker may follow it because
+    // *.tobira.ethz.ch is a granted host; a page may not.
+    case 'RESOLVE_MEDIA_URL': {
+      await requireHostAccess(msg.url, 'transcript', null);
+      const resp = await fetch(msg.url, {
+        method: 'GET',
+        headers: { Range: 'bytes=0-0' },     // one byte: we only want the address
+        redirect: 'follow',
+        signal: AbortSignal.timeout(10000)
+      });
+      return { url: resp.url || msg.url, redirected: resp.url !== msg.url };
+    }
+
     case 'FETCH_VTT': {
-      const resp = await fetch(msg.url, { signal: AbortSignal.timeout(45000) });
+      await requireHostAccess(msg.url, 'transcript', null);
+      // A redirect can land on a host we do not hold (ETH sends
+      // dist.tobira.ethz.ch to dist02.tobira.ethz.ch), and that surfaces as a
+      // bare CORS failure. Tag it so the error explains itself.
+      const resp = await fetchLectureData(msg.url);
       if (!resp.ok) throw apiError({ status: resp.status, message: `VTT fetch failed: ${resp.status}` });
       return resp.text();
     }
 
     case 'FETCH_JSON': {
-      const resp = await fetch(msg.url, { signal: AbortSignal.timeout(45000) });
+      await requireHostAccess(msg.url, 'transcript', null);
+      // A redirect can land on a host we do not hold (ETH sends
+      // dist.tobira.ethz.ch to dist02.tobira.ethz.ch), and that surfaces as a
+      // bare CORS failure. Tag it so the error explains itself.
+      const resp = await fetchLectureData(msg.url);
       if (!resp.ok) throw apiError({ status: resp.status, message: `JSON fetch failed: ${resp.status}` });
       return resp.json();
     }

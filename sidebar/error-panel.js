@@ -68,8 +68,11 @@
     const bodyEl = el('div', 'cop-err-body');
     const summary = el('div', 'cop-err-summary');
     const hint = el('div', 'cop-err-hint');
+    // Some failures are fixable right here. The only one so far is a missing
+    // host grant, which Chrome will only prompt for from a click like this.
+    const fix = el('button', 'cop-err-fix cop-err-hidden');
     const details = el('div', 'cop-err-details');
-    bodyEl.append(summary, hint, details);
+    bodyEl.append(summary, hint, fix, details);
 
     const footer = el('div', 'cop-err-footer');
     const btnHistory = el('button', 'cop-err-link', 'History');
@@ -83,7 +86,13 @@
     const badge = el('button', 'cop-err-badge cop-err-hidden');
     badge.title = 'Show last error';
 
-    document.body.append(panel, badge);
+    document.body.append(panel);
+    // In the layout, directly under the header, so it displaces content
+    // rather than covering a button. Falls back to the top if there is no
+    // header (print views reuse this stylesheet).
+    const pageHeader = document.querySelector('.sidebar-header');
+    if (pageHeader && pageHeader.parentNode === document.body) pageHeader.after(badge);
+    else document.body.prepend(badge);
 
     btnMin.addEventListener('click', () => { panel.classList.add('cop-err-hidden'); showBadge(); });
     badge.addEventListener('click', () => { badge.classList.add('cop-err-hidden'); panel.classList.remove('cop-err-hidden'); });
@@ -100,7 +109,7 @@
       historyList.classList.remove('cop-err-hidden');
     });
 
-    els = { panel, title, summary, hint, details, badge, historyList, btnHistory };
+    els = { panel, title, summary, hint, fix, details, badge, historyList, btnHistory };
   }
 
   function updateHistoryLabel(n) {
@@ -108,7 +117,12 @@
   }
 
   function showBadge() {
-    els.badge.textContent = sessionCount > 1 ? `⚠ ${sessionCount}` : '⚠';
+    // Say what it is, not just that something happened — a lone ⚠ told the
+    // reader nothing and gave no reason to click.
+    const n = sessionCount;
+    els.badge.textContent = n > 1
+      ? `⚠ ${n} errors — click for details`
+      : '⚠ Something went wrong — click for details';
     els.badge.classList.remove('cop-err-hidden');
   }
 
@@ -158,7 +172,7 @@
   }
 
   /** Show an error in the panel and record it in history. */
-  function report(detail) {
+  function report(detail, opts) {
     const normalized = normalizeDetail(detail);
     if (!normalized.timestamp) normalized.timestamp = Date.now();
     if (!els) buildDom();
@@ -169,6 +183,7 @@
     els.summary.textContent = formatted.summary;
     els.hint.textContent = formatted.hint;
     els.hint.classList.toggle('cop-err-hidden', !formatted.hint);
+    renderFixAction(normalized, opts && opts.onGranted);
     renderSections(els.details, formatted);
 
     els.historyList.classList.add('cop-err-hidden');
@@ -179,6 +194,58 @@
       const history = (await storageGet(HISTORY_KEY)) || [];
       updateHistoryLabel(history.length);
     });
+  }
+
+  /**
+   * Offer a one-click fix where one exists.
+   *
+   * Only case today: the extension has never been granted the provider's host.
+   * The prompt must come from this click — a service worker cannot ask, which
+   * is why the failure reached the user as an error in the first place.
+   */
+  function renderFixAction(detail, onGranted) {
+    const origin = detail.code === 'permission_missing' && detail.raw && detail.raw.origin;
+    els.fix.classList.toggle('cop-err-hidden', !origin);
+    if (!origin) return;
+
+    const host = detail.raw.host || origin;
+    // "<all_urls>" is not something to show a reader; the caller supplies a
+    // plain-language host, and the button says what will actually be granted.
+    els.fix.textContent = origin === '<all_urls>'
+      ? 'Allow screenshots on all sites'
+      : `Allow ${host}`;
+    els.fix.disabled = false;
+    els.fix.onclick = () => {
+      els.fix.disabled = true;
+      els.fix.textContent = 'Waiting for Chrome…';
+      // No await before the call: the gesture stops counting once we yield.
+      self.requestPermission(origin).then(({ granted, reason }) => {
+        if (granted) {
+          els.title.textContent = 'Access granted';
+          els.hint.classList.add('cop-err-hidden');
+          // Finish the job the user originally asked for, rather than making
+          // them find the button again.
+          if (typeof onGranted === 'function') {
+            els.fix.textContent = 'Retrying…';
+            els.summary.textContent = `${host} allowed. Running that request again…`;
+            Promise.resolve(onGranted()).then(
+              () => { els.panel.classList.add('cop-err-hidden'); },
+              () => { els.fix.textContent = `Allow ${host}`; els.fix.disabled = false; }
+            );
+            return;
+          }
+          els.fix.textContent = `${host} allowed — try again`;
+          els.summary.textContent = `The extension may now contact ${host}. Run that request again.`;
+          return;
+        }
+        els.fix.disabled = false;
+        els.fix.textContent = `Allow ${host}`;
+        els.hint.classList.remove('cop-err-hidden');
+        els.hint.textContent = reason === 'denied'
+          ? `Access to ${host} was declined, so this provider cannot be reached. Click again to reconsider, or pick a different provider.`
+          : `Chrome would not show the prompt from here. Open the extension popup and select this provider again to grant ${host}.`;
+      });
+    };
   }
 
   if (root) root.ErrorPanel = { report };
