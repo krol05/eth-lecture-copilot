@@ -10,10 +10,9 @@
 
   "permissions": ["storage", "unlimitedStorage", "activeTab", "alarms"],
 
-  "//host_permissions": "Only the pages the extension reads. Every AI provider, custom endpoint, local server and the embedding model download is requested per origin when first needed — see lib/permissions.js — so an install warns about ETH lecture pages and nothing else.",
   "host_permissions": [
     "https://video.ethz.ch/*",
-    "https://dist.tobira.ethz.ch/*"
+    "https://*.tobira.ethz.ch/*"
   ],
   "optional_host_permissions": [
     "https://*/*",
