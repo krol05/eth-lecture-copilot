@@ -1552,6 +1552,37 @@
     });
   }
 
+  /**
+   * Recover from "we were never granted this site".
+   *
+   * The extension asks for one host at a time instead of every site up front,
+   * so the first request to any new provider, local server or media host will
+   * be refused once. That must never be where things stop: ask, then repeat
+   * the request so the user's click does what they expected.
+   *
+   * If the prompt cannot be shown (Chrome's activation window has passed), the
+   * error panel takes over with an Allow button that retries the same way.
+   * Either path ends with the user answering once and the work continuing.
+   *
+   * @returns the retried response, or null if access was not obtained
+   */
+  async function recoverFromMissingHost(detail, payload) {
+    const origin = detail?.raw?.origin;
+    if (!origin || typeof self === 'undefined' || !self.requestPermission) return null;
+
+    const { granted } = await self.requestPermission(origin);
+    if (granted) return apiRequest({ ...payload, __permissionRetry: true });
+
+    // Could not ask, or was refused — hand it to the panel, which can prompt
+    // from its own button and will re-run this request if that succeeds.
+    try {
+      ErrorPanel.report(detail, {
+        onGranted: () => apiRequest({ ...payload, __permissionRetry: true })
+      });
+    } catch { /* panel is non-critical */ }
+    return null;
+  }
+
   function apiRequest(payload) {
     const id = makeRequestId();
     window.CopilotDebug?.log('sidebar.apiRequest.create', {
@@ -1624,6 +1655,20 @@
         });
         cleanup();
         if (isGuideRequest && activeGuideRequestId === id) activeGuideRequestId = null;
+
+        // Missing host access is never a dead end: ask for the one site, then
+        // run the same request again. The permission check costs no network
+        // call, so we are still inside the click's activation window and the
+        // prompt appears without the user having to start over.
+        if (data?.success === false
+            && data.errorDetail?.code === 'permission_missing'
+            && !payload.__permissionRetry) {
+          recoverFromMissingHost(data.errorDetail, payload)
+            .then(retried => originalResolve(retried || data))
+            .catch(() => originalResolve(data));
+          return;
+        }
+
         // Central error-panel wiring: every failed AI request pops the full
         // structured error (user-initiated aborts excluded — not errors).
         if (data && data.success === false && data.errorDetail && data.errorDetail.code !== 'aborted') {

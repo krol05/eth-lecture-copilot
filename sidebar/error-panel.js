@@ -161,7 +161,7 @@
   }
 
   /** Show an error in the panel and record it in history. */
-  function report(detail) {
+  function report(detail, opts) {
     const normalized = normalizeDetail(detail);
     if (!normalized.timestamp) normalized.timestamp = Date.now();
     if (!els) buildDom();
@@ -172,7 +172,7 @@
     els.summary.textContent = formatted.summary;
     els.hint.textContent = formatted.hint;
     els.hint.classList.toggle('cop-err-hidden', !formatted.hint);
-    renderFixAction(normalized);
+    renderFixAction(normalized, opts && opts.onGranted);
     renderSections(els.details, formatted);
 
     els.historyList.classList.add('cop-err-hidden');
@@ -192,7 +192,7 @@
    * The prompt must come from this click — a service worker cannot ask, which
    * is why the failure reached the user as an error in the first place.
    */
-  function renderFixAction(detail) {
+  function renderFixAction(detail, onGranted) {
     const origin = detail.code === 'permission_missing' && detail.raw && detail.raw.origin;
     els.fix.classList.toggle('cop-err-hidden', !origin);
     if (!origin) return;
@@ -206,10 +206,21 @@
       // No await before the call: the gesture stops counting once we yield.
       self.requestPermission(origin).then(({ granted, reason }) => {
         if (granted) {
-          els.fix.textContent = `${host} allowed — try again`;
           els.title.textContent = 'Access granted';
-          els.summary.textContent = `The extension may now contact ${host}. Run that request again.`;
           els.hint.classList.add('cop-err-hidden');
+          // Finish the job the user originally asked for, rather than making
+          // them find the button again.
+          if (typeof onGranted === 'function') {
+            els.fix.textContent = 'Retrying…';
+            els.summary.textContent = `${host} allowed. Running that request again…`;
+            Promise.resolve(onGranted()).then(
+              () => { els.panel.classList.add('cop-err-hidden'); },
+              () => { els.fix.textContent = `Allow ${host}`; els.fix.disabled = false; }
+            );
+            return;
+          }
+          els.fix.textContent = `${host} allowed — try again`;
+          els.summary.textContent = `The extension may now contact ${host}. Run that request again.`;
           return;
         }
         els.fix.disabled = false;
