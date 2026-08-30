@@ -9,7 +9,7 @@
  */
 const manifest = require('../manifest.json');
 const { Catalog } = require('../lib/providers/catalog.js');
-const { originPattern, EMBEDDING_ORIGINS } = require('../lib/permissions.js');
+const { originPattern, EMBEDDING_ORIGINS, SCREENSHOT_ORIGINS } = require('../lib/permissions.js');
 
 /** Does a Chrome match pattern cover a concrete origin pattern? */
 function covers(matchPattern, target) {
@@ -31,7 +31,9 @@ const optional = manifest.optional_host_permissions || [];
 const reachable = target => [...required, ...optional].some(p => covers(p, target));
 
 describe('the install prompt stays narrow', () => {
-  test('no <all_urls> anywhere in required permissions', () => {
+  test('no <all_urls> in the permissions granted at install', () => {
+    // It IS offered as optional — tab screenshots accept nothing narrower —
+    // but it is requested on first use, so an install never mentions it.
     expect(required).not.toContain('<all_urls>');
     expect(required.every(p => !p.includes('://*/'))).toBe(true);
   });
@@ -145,5 +147,19 @@ describe('any self-hosted server can be reached, on any address', () => {
   test('breadth here does not leak into the install warning', () => {
     expect(required).not.toContain('http://*/*');
     expect(required).not.toContain('https://*/*');
+  });
+});
+
+
+describe('attaching a video frame', () => {
+  test('the screenshot grant is offered, but only as an optional one', () => {
+    // Chrome refuses captureVisibleTab with host access to the lecture page:
+    // "Either the '<all_urls>' or 'activeTab' permission is required".
+    // activeTab never goes live for a sidebar injected into the page, so this
+    // feature genuinely needs the broad grant — asked for on the click.
+    for (const origin of SCREENSHOT_ORIGINS) {
+      expect(optional).toContain(origin);
+      expect(required).not.toContain(origin);
+    }
   });
 });
