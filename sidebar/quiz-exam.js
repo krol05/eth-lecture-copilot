@@ -652,7 +652,7 @@ async function generateCrossLecturePrediction() {
 
   try {
     const language = getToolLanguage('cross-exam-lang-select');
-    const systemPrompt = promptForCrossLecture(lectures, { difficulty, format, count, language });
+    const systemPrompt = buildCrossLecturePredictionPrompt(lectures, { difficulty, format, count, language });
     const payload = {
       ...buildApiPayloadBase(),
       type: 'CROSS_LECTURE_EXAM_REQUEST',

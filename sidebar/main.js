@@ -11,6 +11,10 @@
 function init() {
   installDebugActionLogging();
   postToContent({ type: 'GET_SETTINGS' });
+  // These belong to the user, not to a lecture. They used to load only inside
+  // tryRestoreFromCache, which needs a lecture URL and does not always run —
+  // so custom prompt additions were silently left out of the prompt.
+  loadStoredPreferences();
 
   // Tab switching
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -410,43 +414,28 @@ function normalizeLectureUrl(href) {
 }
 
 
-// ─── Prompt builders (loaded from lib/prompts.js) ─────────────────────────
-// These functions are loaded via <script src="../lib/prompts.js"> but prompts.js
-// uses module.exports when typeof module !== 'undefined' (Node/Jest context).
-// In the browser the globals are available directly. Provide thin wrappers so
-// sidebar.js code can call them without worrying about global vs module scope.
+// ─── Prompt builders ──────────────────────────────────────────────────────
+//
+// The prompts themselves live in lib/prompts.js. These wrappers exist for one
+// reason: to prepend whatever the user typed into the custom prompt boxes.
+// Tools with no custom-prompt box call lib/prompts.js directly.
+
+/** Put the user's own instructions for `tool` in front of a generated prompt. */
+function withPromptExtras(tool, base) {
+  const extra = customPromptExtras[tool]?.trim();
+  return extra ? extra + '\n\n' + base : base;
+}
 
 function promptForFlashcards(guide, opts) {
-  if (typeof window.buildFlashcardsPrompt === 'function') {
-    const base = window.buildFlashcardsPrompt(guide, opts);
-    const extra = customPromptExtras.flashcards?.trim();
-    return extra ? extra + '\n\n' + base : base;
-  }
-  throw new Error('buildFlashcardsPrompt not loaded');
+  return withPromptExtras('flashcards', buildFlashcardsPrompt(guide, opts));
 }
+
 function promptForQuiz(guide, opts) {
-  if (typeof window.buildQuizPrompt === 'function') {
-    const base = window.buildQuizPrompt(guide, opts);
-    const extra = customPromptExtras.quiz?.trim();
-    return extra ? extra + '\n\n' + base : base;
-  }
-  throw new Error('buildQuizPrompt not loaded');
+  return withPromptExtras('quiz', buildQuizPrompt(guide, opts));
 }
+
 function promptForExam(guide, blocks, opts) {
-  if (typeof window.buildExamQuestionsPrompt === 'function') {
-    const base = window.buildExamQuestionsPrompt(guide, blocks, opts);
-    const extra = customPromptExtras.exam?.trim();
-    return extra ? extra + '\n\n' + base : base;
-  }
-  throw new Error('buildExamQuestionsPrompt not loaded');
-}
-function promptForCrossLecture(lectures, opts) {
-  if (typeof window.buildCrossLecturePredictionPrompt === 'function') return window.buildCrossLecturePredictionPrompt(lectures, opts);
-  throw new Error('buildCrossLecturePredictionPrompt not loaded');
-}
-function promptForToolAsk(opts) {
-  if (typeof window.buildToolAskPrompt === 'function') return window.buildToolAskPrompt(opts);
-  throw new Error('buildToolAskPrompt not loaded');
+  return withPromptExtras('exam', buildExamQuestionsPrompt(guide, blocks, opts));
 }
 
 function getLocalBase() {
