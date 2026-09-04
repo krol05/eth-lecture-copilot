@@ -196,7 +196,7 @@ async function onGenerateClick() {
 
     clearStreamingBar();
     guide = response.data;
-    guide = sanitizeGuide(guide);
+    guide = sanitizeGuide(guide, transcript?.lectureTitle);
     guideLanguage = guideLang;
     guide._language = guideLang;
     guide._guide_mode = guideMode;
@@ -511,127 +511,9 @@ function buildStudyFlowGuidePrompt(detail, count, lang) {
   return base.replace(marker, `${insert}${marker}`);
 }
 
-function toSeconds(v) {
-  if (typeof v === 'number' && isFinite(v)) return v;
-
-  if (typeof v === 'string') {
-    const s = v.trim();
-    if (!s) return 0;
-
-    // HH:MM:SS(.ms)  (also supports comma decimals)
-    const hms = s.match(/^(\d+):(\d+):(\d+(?:[.,]\d+)?)$/);
-    if (hms) {
-      const h = +hms[1];
-      const m = +hms[2];
-      const sec = parseFloat(hms[3].replace(',', '.'));
-      if (isFinite(h) && isFinite(m) && isFinite(sec)) return h * 3600 + m * 60 + sec;
-    }
-
-    // MM:SS(.ms)
-    const ms = s.match(/^(\d+):(\d+(?:[.,]\d+)?)$/);
-    if (ms) {
-      const m = +ms[1];
-      const sec = parseFloat(ms[2].replace(',', '.'));
-      if (isFinite(m) && isFinite(sec)) return m * 60 + sec;
-    }
-
-    // Raw numeric string (including decimals)
-    const normalized = s.replace(',', '.');
-    const n = parseFloat(normalized);
-    if (isFinite(n)) return n;
-  }
-
-  return 0;
-}
-
-function sanitizeStudyFlow(block) {
-  if (!Array.isArray(block.study_flow)) return [];
-  const maxByType = {
-    concept: Array.isArray(block.key_concepts) ? block.key_concepts.length : 0,
-    formula: Array.isArray(block.formulas) ? block.formulas.length : 0,
-    definition: Array.isArray(block.definitions) ? block.definitions.length : 0,
-    note: String(block.notes || '').trim() ? 1 : 0
-  };
-
-  return block.study_flow
-    .map(item => {
-      if (!item || typeof item !== 'object') return null;
-      const type = String(item.type || '').trim().toLowerCase();
-      if (!['concept', 'formula', 'definition', 'note'].includes(type)) return null;
-      if (type === 'note') return maxByType.note ? { type: 'note' } : null;
-      const index = Number.isInteger(item.index) ? item.index : parseInt(item.index, 10);
-      if (!Number.isInteger(index) || index < 0 || index >= maxByType[type]) return null;
-      const label = typeof item.label === 'string' ? item.label.trim().slice(0, 24) : '';
-      return label ? { type, index, label } : { type, index };
-    })
-    .filter(Boolean);
-}
-
-function sanitizeKeyConcepts(concepts, labels = []) {
-  if (!Array.isArray(concepts)) return [];
-  return concepts.map((concept, index) => {
-    if (concept && typeof concept === 'object' && !Array.isArray(concept)) {
-      const label = String(concept.label || labels[index] || '').trim().slice(0, 24);
-      const lead = String(concept.lead || concept.title || '').trim();
-      const body = String(concept.body || concept.detail || concept.text || '').trim();
-      if (lead || body) return { label, lead: lead || body, body };
-    }
-    return String(concept || '').trim();
-  }).filter(c => typeof c === 'string' ? !!c : !!(c.lead || c.body));
-}
-
-function sanitizeGuide(g) {
-  if (!Array.isArray(g.guide)) return g;
-
-  // Coerce timestamps first
-  const blocks = g.guide.map(b => {
-    const block = {
-      start_time: toSeconds(b.start_time),
-      end_time: toSeconds(b.end_time),
-      title: b.title ?? 'Untitled Section',
-      key_concept_labels: Array.isArray(b.key_concept_labels)
-        ? b.key_concept_labels.map(v => String(v || '').trim().slice(0, 24))
-        : [],
-      formulas: Array.isArray(b.formulas) ? b.formulas : [],
-      definitions: Array.isArray(b.definitions) ? b.definitions : [],
-      notes: typeof b.notes === 'string' ? b.notes : ''
-    };
-    block.key_concepts = sanitizeKeyConcepts(b.key_concepts, block.key_concept_labels);
-    block.study_flow = sanitizeStudyFlow({ ...b, ...block });
-    return block;
-  });
-
-  // Sort by time (some models may output blocks slightly out of order)
-  blocks.sort((a, b) => (a.start_time - b.start_time));
-
-  // Ensure each block has a valid [start, end) range.
-  for (let i = 0; i < blocks.length; i++) {
-    const cur = blocks[i];
-    const next = blocks[i + 1];
-
-    // Clamp negatives
-    if (!isFinite(cur.start_time) || cur.start_time < 0) cur.start_time = 0;
-    if (!isFinite(cur.end_time) || cur.end_time < 0) cur.end_time = 0;
-
-    // Fix missing/invalid end_time by using next start_time (or +1s)
-    if (!isFinite(cur.end_time) || cur.end_time <= cur.start_time) {
-      cur.end_time = next ? next.start_time : (cur.start_time + 1);
-    }
-  }
-
-  g.guide = blocks;
-  g.guide_title = getGuideTitle(g);
-  return g;
-}
-
+/** Guide title, falling back to the lecture we are currently watching. */
 function getGuideTitle(guideObj = guide) {
-  const explicit = typeof guideObj?.guide_title === 'string' ? guideObj.guide_title.trim() : '';
-  if (explicit) return explicit.slice(0, 120);
-  const legacy = typeof guideObj?.guideTitle === 'string' ? guideObj.guideTitle.trim() : '';
-  if (legacy) return legacy.slice(0, 120);
-  const firstBlock = typeof guideObj?.guide?.[0]?.title === 'string' ? guideObj.guide[0].title.trim() : '';
-  const lecture = typeof guideObj?.lecture_title === 'string' ? guideObj.lecture_title.trim() : '';
-  return (firstBlock || lecture || transcript?.lectureTitle || 'Lecture').slice(0, 120);
+  return guideTitleFrom(guideObj, transcript?.lectureTitle);
 }
 
 function getHistoryDisplayTitle(entry) {

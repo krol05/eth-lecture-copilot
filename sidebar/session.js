@@ -316,7 +316,7 @@ function restoreToolOutputsForLecture(historyEntry, sessionFallbackSnapshot = nu
 
 function applyRestoredGuide(guideData, qaFromStorage, persistSession, qaChatsFromStorage) {
   guide = guideData;
-  sanitizeGuide(guide);
+  sanitizeGuide(guide, transcript?.lectureTitle);
   guideLanguage = guideData._language || '';
   _syncToolLanguageSelects();
   const restoredMsgs = Array.isArray(qaFromStorage) ? qaFromStorage : [];
@@ -361,20 +361,14 @@ function applyRestoredGuide(guideData, qaFromStorage, persistSession, qaChatsFro
   updateLectureSummaryBtn();
 }
 
-function tryRestoreFromCache(lectureUrl) {
-  window.CopilotDebug?.log('[ETH-DBG] tryRestoreFromCache called with:', lectureUrl);
-  if (!lectureUrl) { window.CopilotDebug?.warn('[ETH-DBG] tryRestoreFromCache: no lectureUrl'); return; }
-  const normNew = normalizeLectureUrl(lectureUrl);
-  const normPrev = currentLectureUrl ? normalizeLectureUrl(currentLectureUrl) : '';
-  // SPA navigation can fire EXTENSION_READY with a stale href; drop in-memory state
-  // immediately when the page URL changes so we never keep showing the last lecture.
-  if (guide?.guide?.length && normPrev && normPrev !== normNew) {
-    resetGuideUI();
-  }
-  currentLectureUrl = lectureUrl;
-  initScriptsForCourse(lectureUrl);
-
-  // Load custom prompt extras and per-tool thinking (non-blocking, best-effort)
+/**
+ * Load the settings that belong to the user rather than to a lecture: custom
+ * prompt additions, per-tool thinking levels, summary options.
+ *
+ * Non-blocking and best-effort — nothing here is needed before the first
+ * click, and the defaults in state.js are all usable on their own.
+ */
+function loadStoredPreferences() {
   chrome.storage?.local?.get(['customPromptExtras', TOOL_THINKING_KEY, SUMMARY_OPTS_KEY], (r) => {
     if (r.customPromptExtras && typeof r.customPromptExtras === 'object') {
       customPromptExtras = { ...customPromptExtras, ...r.customPromptExtras };
@@ -388,6 +382,22 @@ function tryRestoreFromCache(lectureUrl) {
       refreshInlineLectureSummaryIfOpen();
     }
   });
+}
+
+function tryRestoreFromCache(lectureUrl) {
+  window.CopilotDebug?.log('[ETH-DBG] tryRestoreFromCache called with:', lectureUrl);
+  if (!lectureUrl) { window.CopilotDebug?.warn('[ETH-DBG] tryRestoreFromCache: no lectureUrl'); return; }
+  const normNew = normalizeLectureUrl(lectureUrl);
+  const normPrev = currentLectureUrl ? normalizeLectureUrl(currentLectureUrl) : '';
+  // SPA navigation can fire EXTENSION_READY with a stale href; drop in-memory state
+  // immediately when the page URL changes so we never keep showing the last lecture.
+  if (guide?.guide?.length && normPrev && normPrev !== normNew) {
+    resetGuideUI();
+  }
+  currentLectureUrl = lectureUrl;
+  initScriptsForCourse(lectureUrl);
+
+  loadStoredPreferences();
 
   chrome.storage?.local?.get(
     ['currentGuide', 'currentTranscript', 'currentLectureUrl', 'currentGuideLectureUrl', 'currentQaMessages', 'currentQaChats', 'guideHistory', 'currentGuideToolOutputs', 'currentLectureSummary', 'currentToolAskSessions'],

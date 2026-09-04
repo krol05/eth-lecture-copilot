@@ -113,7 +113,7 @@ function buildToolAskResponseProfilePrompt(userQuery) {
 
 function buildToolAskSystemPrompt(userQuery, session) {
   const profile = buildToolAskResponseProfilePrompt(userQuery);
-  const base = promptForToolAsk({
+  const base = buildToolAskPrompt({
     sourceType: session.sourceType,
     itemPayload: session.itemPayload,
     lectureTitle: transcript?.lectureTitle || guide?.lecture_title || 'Lecture',
