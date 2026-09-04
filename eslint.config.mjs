@@ -1,5 +1,6 @@
 import js from '@eslint/js';
 import globals from 'globals';
+import { sidebarGlobalConfigs } from './scripts/sidebar-globals.mjs';
 
 // Globals each lib script exposes (IIFE + Object.assign(root, api) pattern),
 // consumed cross-file by the script-tag architecture. no-undef is the guard
@@ -19,6 +20,7 @@ const libGlobals = {
   findMatchingBrace: 'readonly',
   fixEscapes: 'readonly',
   salvageTruncated: 'readonly',
+  createGuideBlockScanner: 'readonly',
   // lib/concept-split.js
   splitConceptText: 'readonly',
   isAbbreviationDot: 'readonly',
@@ -96,12 +98,35 @@ export default [
     }
   },
   {
-    // Extension pages: sidebar, popup, options, print
-    files: ['sidebar/**/*.js', 'popup/**/*.js', 'ui/**/*.js'],
+    // Extension pages: popup, options, print
+    files: ['popup/**/*.js', 'ui/**/*.js'],
     languageOptions: {
       globals: { ...globals.browser, chrome: 'readonly', ...libGlobals }
     }
   },
+  {
+    // The sidebar's modules share one global scope (see scripts/sidebar-globals.mjs),
+    // so each file also sees every name the others declare.
+    files: ['sidebar/**/*.js'],
+    languageOptions: {
+      // Plain <script> tags, not modules — this is what puts each file's
+      // top-level declarations in the shared global scope.
+      sourceType: 'script',
+      globals: { ...globals.browser, chrome: 'readonly', ...libGlobals }
+    },
+    rules: {
+      // Every module leaves names behind for the others to call, which reads as
+      // unused inside its own file — so only locals are checked here. no-undef
+      // is what guards the cross-file calls.
+      'no-unused-vars': ['warn', {
+        vars: 'local',
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_'
+      }]
+    }
+  },
+  // Per-file: the names each sidebar module gets from its siblings.
+  ...sidebarGlobalConfigs(),
   {
     // Content script
     files: ['content/**/*.js'],
