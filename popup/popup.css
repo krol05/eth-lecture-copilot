@@ -1,7 +1,10 @@
 /* popup.css — ETH Lecture Copilot settings popup */
 
 /* ─── Variables — Light/Cream (default) ─────────────────────────────────── */
+/* The four themes match sidebar.css. The popup only uses a subset of its
+   tokens, so only that subset is redefined below. */
 :root {
+  color-scheme: light;
   --bg-0: #f5f0e8;
   --bg-1: #ede5d4;
   --bg-2: #e2d9c6;
@@ -20,6 +23,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg-0: #1c1a14;
   --bg-1: #242019;
   --bg-2: #2c281e;
@@ -30,6 +34,40 @@
   --text-muted: #7e6e5a;
   --accent: #c89060;
   --accent-hover: #d8a474;
+}
+
+/* ─── Theme 3: Dark Blue / Navy ──────────────────────────────────────────── */
+[data-theme="dark-blue"] {
+  color-scheme: dark;
+  --bg-0: #0d1422;
+  --bg-1: #131c32;
+  --bg-2: #1b2844;
+  --bg-3: #233258;
+  --border: rgba(100, 160, 255, 0.09);
+  --text-primary: #dce8f8;
+  --text-secondary: #7ea8d8;
+  --text-muted: #4a6898;
+  --accent: #5b9cf6;
+  --accent-hover: #80b4ff;
+  --success: #3d9e6b;
+  --error: #e05555;
+}
+
+/* ─── Theme 4: Bright White / Clean Light ───────────────────────────────── */
+[data-theme="light-white"] {
+  color-scheme: light;
+  --bg-0: #ffffff;
+  --bg-1: #f5f6fa;
+  --bg-2: #eceef5;
+  --bg-3: #e0e3ee;
+  --border: rgba(40, 50, 100, 0.08);
+  --text-primary: #141828;
+  --text-secondary: #424876;
+  --text-muted: #8890b4;
+  --accent: #3b66f5;
+  --accent-hover: #2450d8;
+  --success: #2a7d46;
+  --error: #c0302a;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -107,7 +145,8 @@ body {
   gap: 8px;
 }
 
-[data-theme="dark"] .onboarding-note {
+[data-theme="dark"] .onboarding-note,
+[data-theme="dark-blue"] .onboarding-note {
   border-color: rgba(200, 144, 96, 0.28);
   background: rgba(200, 144, 96, 0.08);
 }
@@ -197,8 +236,18 @@ body {
   cursor: pointer;
 }
 
+/* The chevron is a data URI, so its colour is baked in rather than tokenised —
+   one rule per theme, each using that theme's secondary text colour. */
 [data-theme="dark"] .field-select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23b5a188' stroke-width='1.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+[data-theme="dark-blue"] .field-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237ea8d8' stroke-width='1.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+[data-theme="light-white"] .field-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23424876' stroke-width='1.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
 .field-select:focus, .field-input:focus { border-color: var(--accent); }
@@ -273,8 +322,10 @@ body {
 .status-msg.success { background: rgba(82, 122, 69, 0.1); color: var(--success); }
 .status-msg.error   { background: rgba(154, 48, 48, 0.1); color: var(--error); }
 
-[data-theme="dark"] .status-msg.success { background: rgba(106, 170, 120, 0.1); }
-[data-theme="dark"] .status-msg.error   { background: rgba(196, 106, 106, 0.1); }
+[data-theme="dark"] .status-msg.success,
+[data-theme="dark-blue"] .status-msg.success { background: rgba(106, 170, 120, 0.1); }
+[data-theme="dark"] .status-msg.error,
+[data-theme="dark-blue"] .status-msg.error   { background: rgba(196, 106, 106, 0.1); }
 
 /* ─── Divider ─────────────────────────────────────────────────────────────── */
 .divider {
