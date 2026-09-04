@@ -24,6 +24,14 @@ const libGlobals = {
   fixEscapes: 'readonly',
   salvageTruncated: 'readonly',
   createGuideBlockScanner: 'readonly',
+  // lib/schema.js
+  toSeconds: 'readonly',
+  sanitizeGuide: 'readonly',
+  sanitizeStudyFlow: 'readonly',
+  sanitizeKeyConcepts: 'readonly',
+  guideTitleFrom: 'readonly',
+  // lib/block-index.js
+  findBlockIndexForTime: 'readonly',
   // lib/concept-split.js
   splitConceptText: 'readonly',
   isAbbreviationDot: 'readonly',
