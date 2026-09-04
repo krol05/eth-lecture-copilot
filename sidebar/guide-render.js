@@ -128,14 +128,14 @@ function handleTimestamp(currentTime) {
   }
 }
 
+/**
+ * Which block covers playback time `t`.
+ *
+ * The search itself lives in lib/block-index.js so the tests exercise the code
+ * that actually runs; this only supplies the current guide's blocks.
+ */
 function findBlockIndex(t) {
-  if (!guide?.guide?.length) return 0;
-  const blocks = guide.guide;
-  for (let i = 0; i < blocks.length; i++) {
-    if (t >= blocks[i].start_time && t < blocks[i].end_time) return i;
-  }
-  if (t >= blocks[blocks.length - 1].start_time) return blocks.length - 1;
-  return 0;
+  return findBlockIndexForTime(guide?.guide, t);
 }
 
 // splitConceptText / isAbbreviationDot live in lib/concept-split.js
