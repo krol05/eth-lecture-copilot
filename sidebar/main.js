@@ -246,6 +246,7 @@ function init() {
   scriptUploadBtn?.addEventListener('click', () => scriptFileInput?.click());
   scriptFileInput?.addEventListener('change', handleScriptUpload);
   scriptSearchMethod?.addEventListener('change', onSearchMethodChange);
+  restoreScriptSearchMethod();
   scriptEmbedBtn?.addEventListener('click', onEmbedExistingClick);
 
   latexModalClose?.addEventListener('click', closeLatexSelectModal);

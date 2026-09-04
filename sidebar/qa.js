@@ -1207,11 +1207,11 @@ async function buildQAPrompt(userQuery, options = {}) {
       : '';
     const searchQuery = (transcriptSnippet + ' ' + userQuery).trim();
 
-    if (method === 'semantic' && ScriptManager.hasEmbeddings(scriptRecord)) {
-      scriptContext = await ScriptManager.buildScriptContextSemantic(searchQuery, scriptRecord, strictness);
-    } else {
-      scriptContext = ScriptManager.buildScriptContext(searchQuery, scriptRecord, strictness);
-    }
+    // No branching here any more: retrieve() picks the method and falls back
+    // to fuzzy on its own when the course has no embedding index.
+    scriptContext = await ScriptManager.buildScriptContext(
+      searchQuery, scriptRecord, strictness, method
+    );
   }
 
   const hasScript = !!scriptContext;

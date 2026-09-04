@@ -84,6 +84,7 @@
         "lib/ui-settings.js",
         "lib/debug.js",
         "lib/fuzzy-retrieval.js",
+        "lib/retrieval-fusion.js",
         "lib/concept-split.js",
         "lib/render-inline.js",
         "lib/flashcards.js",
