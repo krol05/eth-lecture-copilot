@@ -34,7 +34,7 @@
   "content_scripts": [
     {
       "matches": ["https://video.ethz.ch/*"],
-      "js": ["lib/debug.js", "content/content.js"],
+      "js": ["lib/debug.js", "lib/transcript.js", "content/content.js"],
       "css": ["content/content.css"],
       "run_at": "document_idle"
     }
