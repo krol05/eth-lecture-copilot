@@ -13,6 +13,9 @@ const libGlobals = {
   UISettings: 'readonly',
   // lib/fuzzy-retrieval.js
   FuzzyRetrieval: 'readonly',
+  // lib/retrieval-fusion.js
+  RetrievalFusion: 'readonly',
+  fuseRankings: 'readonly',
   // lib/qa-stream-flush.js
   QaStreamFlush: 'readonly',
   // lib/guide-parse.js

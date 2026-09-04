@@ -22,24 +22,48 @@ async function initScriptsForCourse(lectureUrl) {
   renderScriptFileList();
 }
 
+const SEARCH_METHOD_KEY = 'eth-copilot-script-search-method';
+
 function getScriptSearchMethod() {
-  return scriptSearchMethod?.value || 'fuzzy';
+  const fallback = window.ScriptManager?.DEFAULT_METHOD || 'hybrid';
+  const value = scriptSearchMethod?.value || fallback;
+  return window.ScriptManager?.normalizeMethod?.(value) ?? value;
+}
+
+/** The choice used to reset on every sidebar load. */
+function restoreScriptSearchMethod() {
+  if (!scriptSearchMethod) return;
+  let saved = null;
+  try { saved = localStorage.getItem(SEARCH_METHOD_KEY); } catch { /* private mode */ }
+  if (saved && [...scriptSearchMethod.options].some(o => o.value === saved)) {
+    scriptSearchMethod.value = saved;
+  }
+  onSearchMethodChange();
 }
 
 function onSearchMethodChange() {
   const method = getScriptSearchMethod();
-  if (scriptSemanticInfo) scriptSemanticInfo.style.display = method === 'semantic' ? '' : 'none';
+  try { localStorage.setItem(SEARCH_METHOD_KEY, method); } catch { /* private mode */ }
+  // Hybrid needs the index just as much as semantic does, so both show the
+  // semantic notes and the build-index button.
+  const needsIndex = window.ScriptManager?.usesEmbeddings?.(method) ?? (method === 'semantic');
+  if (scriptSemanticInfo) scriptSemanticInfo.style.display = needsIndex ? '' : 'none';
   updateEmbedBtnVisibility();
 }
 
 function updateEmbedBtnVisibility() {
   if (!scriptEmbedBtn) return;
   const method = getScriptSearchMethod();
+  const needsIndex = window.ScriptManager?.usesEmbeddings?.(method) ?? (method === 'semantic');
   const hasChunks = scriptRecord?.chunks?.length > 0;
   const hasEmbeds = window.ScriptManager?.hasEmbeddings(scriptRecord);
-  scriptEmbedBtn.style.display = (method === 'semantic' && hasChunks && !hasEmbeds) ? '' : 'none';
-  if (scriptEmbedStatus && hasEmbeds && method === 'semantic') {
-    scriptEmbedStatus.textContent = 'Semantic index ready';
+  scriptEmbedBtn.style.display = (needsIndex && hasChunks && !hasEmbeds) ? '' : 'none';
+  if (scriptEmbedStatus && needsIndex) {
+    // Hybrid without an index still answers, just on keywords alone — say so
+    // rather than leaving the user thinking semantic search is running.
+    scriptEmbedStatus.textContent = hasEmbeds
+      ? 'Semantic index ready'
+      : (hasChunks ? 'No semantic index yet — using fuzzy search until you build one' : '');
   }
 }
 

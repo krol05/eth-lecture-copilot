@@ -262,7 +262,7 @@
   async function embedManyTexts(texts, onStatus) {
     const vecs = [];
     for (let i = 0; i < texts.length; i++) {
-      vecs.push(await embedSingleText(texts[i]));
+      vecs.push(await io.embedText(texts[i]));
       if (onStatus) onStatus(`Embedding chunks: ${i + 1} / ${texts.length}`);
       if (i % 3 === 0) await new Promise(r => setTimeout(r, 0));
     }
@@ -286,6 +286,21 @@
     return scored.slice(0, topK);
   }
 
+  // ─── Search methods ──────────────────────────────────────────────────────
+
+  /** What the Search method dropdown can be set to. */
+  const METHODS = ['fuzzy', 'semantic', 'hybrid'];
+  const DEFAULT_METHOD = 'hybrid';
+
+  function normalizeMethod(method) {
+    return METHODS.includes(method) ? method : DEFAULT_METHOD;
+  }
+
+  /** Does this method need the embedding index at all? */
+  function usesEmbeddings(method) {
+    return normalizeMethod(method) !== 'fuzzy';
+  }
+
   // ─── Strictness configuration ────────────────────────────────────────────
 
   const STRICTNESS_PROFILES = {
@@ -295,6 +310,21 @@
     strict: { topK: 20, promptPrefix: 'The following are extensive excerpts from the course script. You MUST base your answer primarily on the script content below. Only add information from the lecture transcript if the script does not cover the topic. Always cite page numbers.' }
   };
 
+  // ─── Browser seam ────────────────────────────────────────────────────────
+
+  /**
+   * Everything here talks to the browser: IndexedDB, pdf.js, the embedding
+   * model. Gathered into one object so the retrieval and bookkeeping logic can
+   * be exercised in Node with fakes — see tests/helpers/script-manager.js.
+   * Production code never reassigns these.
+   */
+  const io = {
+    dbGet, dbPut, dbDelete,
+    extractText: extractTextFromPdf,
+    ensureEmbedModel,
+    embedText: embedSingleText
+  };
+
   // ─── Public API ──────────────────────────────────────────────────────────
 
   window.ScriptManager = {
@@ -302,17 +332,35 @@
     extractCourseId,
     STRICTNESS_PROFILES,
 
-    async load(courseId) { return dbGet(courseId); },
+    /** Test-only: swap the browser seam for fakes. */
+    __setTestHooks(overrides) { Object.assign(io, overrides); },
 
-    /** Upload a PDF. If method === 'semantic', also computes embeddings. */
+    METHODS,
+    DEFAULT_METHOD,
+    normalizeMethod,
+    usesEmbeddings,
+
+    async load(courseId) { return io.dbGet(courseId); },
+
+    /**
+     * Upload a PDF and add its chunks to the course record.
+     *
+     * Embeddings are only ever added, never cleared. Adding a PDF while the
+     * search method was set to fuzzy used to null the whole course's
+     * embeddings — including the ones already computed for every PDF uploaded
+     * before it — which meant re-downloading the model and re-indexing
+     * everything to get semantic search back.
+     */
     async addPdf(courseId, file, onProgress, method) {
       const arrayBuffer = await file.arrayBuffer();
-      const { pages, totalPages } = await extractTextFromPdf(arrayBuffer, (page, total) => {
+      const { pages, totalPages } = await io.extractText(arrayBuffer, (page, total) => {
         if (onProgress) onProgress(`${file.name}: extracting page ${page}/${total}`);
       });
       const chunks = chunkPages(pages);
 
-      const existing = await dbGet(courseId) || { courseId, files: [], chunks: [], embeddings: null };
+      const existing = await io.dbGet(courseId) || { courseId, files: [], chunks: [], embeddings: null };
+      const hadEmbeddings = existing.embeddings?.length === existing.chunks?.length
+        && !!existing.embeddings?.length;
       const fileIndex = existing.files.length;
       existing.files.push({
         name: file.name, uploadDate: new Date().toISOString(),
@@ -322,34 +370,38 @@
       const taggedChunks = chunks.map(c => ({ ...c, fileIndex }));
       existing.chunks = existing.chunks.concat(taggedChunks);
 
-      if (method === 'semantic') {
-        await ensureEmbedModel(onProgress);
+      // Index the new chunks when the course is already indexed — otherwise
+      // this one file would be the only unsearchable part of it — or when the
+      // user explicitly chose semantic search. Hybrid alone does not trigger
+      // the ~25 MB model download: it falls back to fuzzy and offers the
+      // Build index button instead of surprising you mid-upload.
+      const alreadyIndexed = hadEmbeddings && existing.embeddingModel === EMBED_MODEL;
+      if (alreadyIndexed || normalizeMethod(method) === 'semantic') {
+        await io.ensureEmbedModel(onProgress);
         const newVecs = await embedManyTexts(
           taggedChunks.map(c => c.text),
           onProgress
         );
         existing.embeddings = (existing.embeddings || []).concat(newVecs);
         existing.embeddingModel = EMBED_MODEL;
-      } else {
-        existing.embeddings = null;
       }
 
-      await dbPut(existing);
+      await io.dbPut(existing);
       return existing;
     },
 
     /** Compute embeddings for an existing record that doesn't have them yet. */
     async computeEmbeddings(courseId, onStatus) {
-      const record = await dbGet(courseId);
+      const record = await io.dbGet(courseId);
       if (!record?.chunks?.length) return record;
 
-      await ensureEmbedModel(onStatus);
+      await io.ensureEmbedModel(onStatus);
       record.embeddings = await embedManyTexts(
         record.chunks.map(c => c.text),
         onStatus
       );
       record.embeddingModel = EMBED_MODEL;
-      await dbPut(record);
+      await io.dbPut(record);
       return record;
     },
 
@@ -360,7 +412,7 @@
     isModelLoaded() { return !!embedPipeline; },
 
     async removeFile(courseId, fileIndex) {
-      const record = await dbGet(courseId);
+      const record = await io.dbGet(courseId);
       if (!record) return null;
       record.files.splice(fileIndex, 1);
       const removedIndices = new Set();
@@ -372,45 +424,70 @@
       record.chunks = record.chunks.map(c => ({
         ...c, fileIndex: c.fileIndex > fileIndex ? c.fileIndex - 1 : c.fileIndex
       }));
-      if (record.files.length === 0) { await dbDelete(courseId); return null; }
+      if (record.files.length === 0) { await io.dbDelete(courseId); return null; }
       if (record.embeddings?.length && record.embeddings.length !== record.chunks.length) {
         record.embeddings = null;
         record.embeddingModel = null;
       }
-      await dbPut(record);
+      await io.dbPut(record);
       return record;
     },
 
-    async removeAll(courseId) { await dbDelete(courseId); },
+    async removeAll(courseId) { await io.dbDelete(courseId); },
 
-    /** Unified retrieval: picks fuzzy or semantic based on method + data availability. */
-    retrieve(query, record, strictness, method) {
-      if (!record?.chunks?.length) return { promptPrefix: '', chunks: [] };
+    /**
+     * Retrieve the most relevant chunks for a query.
+     *
+     * Honours `method`, which the previous version accepted and then ignored —
+     * it always ran fuzzy, so asking for semantic here quietly gave you
+     * keyword matching. Falls back to fuzzy whenever the embedding index is
+     * missing or stale, so a query never fails just because a PDF was added
+     * without being indexed.
+     */
+    async retrieve(query, record, strictness, method) {
+      if (!record?.chunks?.length) return { promptPrefix: '', chunks: [], method: 'none' };
       const profile = STRICTNESS_PROFILES[strictness] || STRICTNESS_PROFILES.medium;
-      const results = retrieveChunksFuzzy(query, record.chunks, profile.topK);
-      return { promptPrefix: profile.promptPrefix, chunks: results };
-    },
+      const wanted = normalizeMethod(method);
+      const canEmbed = usesEmbeddings(wanted) && this.hasEmbeddings(record);
 
-    /** Async semantic retrieve (needs to embed the query). */
-    async retrieveSemantic(query, record, strictness) {
-      if (!record?.chunks?.length || !this.hasEmbeddings(record)) {
-        return { promptPrefix: '', chunks: [] };
+      const fuzzy = () => retrieveChunksFuzzy(query, record.chunks, profile.topK);
+
+      // No index, or none wanted: keyword matching only.
+      if (!canEmbed) {
+        return { promptPrefix: profile.promptPrefix, chunks: fuzzy(), method: 'fuzzy' };
       }
-      await ensureEmbedModel();
-      const profile = STRICTNESS_PROFILES[strictness] || STRICTNESS_PROFILES.medium;
-      const queryVec = await embedSingleText(query);
-      const results = retrieveChunksSemantic(queryVec, record.chunks, record.embeddings, profile.topK);
-      return { promptPrefix: profile.promptPrefix, chunks: results };
+
+      await io.ensureEmbedModel();
+      const queryVec = await io.embedText(query);
+      const semantic = retrieveChunksSemantic(
+        queryVec, record.chunks, record.embeddings, profile.topK
+      );
+
+      if (wanted === 'semantic') {
+        return { promptPrefix: profile.promptPrefix, chunks: semantic, method: 'semantic' };
+      }
+
+      // Hybrid: rank with both and fuse the positions. Each list is drawn a
+      // little deeper than topK so a chunk both methods rate can climb even
+      // if neither put it in its own top slots.
+      const depth = profile.topK * 2;
+      const fusion = (typeof self !== 'undefined' && self.RetrievalFusion) || null;
+      if (!fusion) {
+        return { promptPrefix: profile.promptPrefix, chunks: semantic, method: 'semantic' };
+      }
+      const chunks = fusion.fuseRankings(
+        [
+          retrieveChunksFuzzy(query, record.chunks, depth),
+          retrieveChunksSemantic(queryVec, record.chunks, record.embeddings, depth)
+        ],
+        { topK: profile.topK }
+      );
+      return { promptPrefix: profile.promptPrefix, chunks, method: 'hybrid' };
     },
 
-    /** Build context string. method = 'fuzzy' | 'semantic'. Semantic path is async. */
-    buildScriptContext(query, record, strictness, method) {
-      const { promptPrefix, chunks } = this.retrieve(query, record, strictness, method);
-      return formatContext(promptPrefix, chunks, record);
-    },
-
-    async buildScriptContextSemantic(query, record, strictness) {
-      const { promptPrefix, chunks } = await this.retrieveSemantic(query, record, strictness);
+    /** Build the script context block for a prompt. */
+    async buildScriptContext(query, record, strictness, method) {
+      const { promptPrefix, chunks } = await this.retrieve(query, record, strictness, method);
       return formatContext(promptPrefix, chunks, record);
     },
 
