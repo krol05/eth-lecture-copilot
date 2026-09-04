@@ -142,7 +142,15 @@ export default [
     // Content script
     files: ['content/**/*.js'],
     languageOptions: {
-      globals: { ...globals.browser, chrome: 'readonly', CopilotDebug: 'readonly' }
+      globals: {
+        ...globals.browser, chrome: 'readonly', CopilotDebug: 'readonly',
+        // lib/transcript.js, loaded alongside the content script
+        parseVtt: 'readonly',
+        parseTimestamp: 'readonly',
+        formatTranscriptForAI: 'readonly',
+        formatSeconds: 'readonly',
+        decodeVttEntities: 'readonly'
+      }
     }
   },
   {
