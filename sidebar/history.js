@@ -487,7 +487,7 @@ function loadHistoryEntry(entry) {
   // Loading a saved lecture supersedes anything Regenerate was holding on to.
   discardedByRegenerate = null;
 
-  guide = sanitizeGuide(entry.guide || { guide: [] });
+  guide = sanitizeGuide(entry.guide || { guide: [] }, entry.lectureTitle);
   const restoredMsgs = Array.isArray(entry.qaMessages) ? entry.qaMessages : [];
   if (Array.isArray(entry.qaChatsData) && entry.qaChatsData.length > 0) {
     qaChats = entry.qaChatsData.map(c => ({
