@@ -85,6 +85,8 @@
         "lib/debug.js",
         "lib/fuzzy-retrieval.js",
         "lib/retrieval-fusion.js",
+        "lib/schema.js",
+        "lib/block-index.js",
         "lib/concept-split.js",
         "lib/render-inline.js",
         "lib/flashcards.js",
