@@ -194,10 +194,25 @@ export default [
     }
   },
   {
+    // Tests that run against a real DOM (@jest-environment jsdom)
+    files: ['tests/error-panel.test.js'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.jest, ...globals.browser }
+    }
+  },
+  {
     // Node scripts (CI helpers)
     files: ['scripts/**/*.mjs', 'eslint.config.mjs'],
     languageOptions: {
       globals: { ...globals.node }
+    }
+  },
+  {
+    // Playwright: CommonJS on Node, but page.evaluate bodies run in the browser
+    files: ['playwright.config.js', 'tests/e2e/**/*.js'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { ...globals.node, ...globals.browser }
     }
   }
 ];

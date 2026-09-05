@@ -7,7 +7,12 @@
     "test:watch": "jest --watch",
     "lint": "eslint .",
     "check:api": "node scripts/check-api-params.mjs",
-    "update:catalog": "node scripts/update-catalog.mjs"
+    "update:catalog": "node scripts/update-catalog.mjs",
+    "test:coverage": "jest --coverage",
+    "validate:manifest": "node scripts/validate-manifest.mjs",
+    "typecheck": "tsc -p jsconfig.json --noEmit",
+    "check": "npm run lint && npm run typecheck && npm run validate:manifest && npm test",
+    "test:e2e": "playwright test"
   },
   "jest": {
     "testEnvironment": "node",
@@ -22,14 +27,30 @@
       "/lib/transformers/",
       "/lib/katex/",
       "/lib/pdfjs/"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "statements": 85,
+        "branches": 75,
+        "functions": 84,
+        "lines": 87
+      }
+    },
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/tests/e2e/"
     ]
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "@types/chrome": "^0.2.8",
     "acorn": "^8.15.0",
     "eslint": "^10.9.0",
     "globals": "^17.11.0",
     "jest": "^29.7.0",
+    "jest-environment-jsdom": "^30.5.1",
+    "typescript": "^7.0.2",
     "yaml": "^2.9.0"
   }
 }
