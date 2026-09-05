@@ -11,3 +11,7 @@ coverage/
 __pycache__/
 test-results/
 playwright-report/
+
+# Agent-facing notes — kept local, like docs/refactor-plan.md
+AGENTS.md
+docs/testing.md
