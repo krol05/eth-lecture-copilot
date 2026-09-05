@@ -168,6 +168,56 @@ function reportSidebarError(err, { operation = 'Sidebar' } = {}) {
   setStatus('error', detail.message);
 }
 
+
+// ─── Live counts while a study tool generates ─────────────────────────────
+//
+// The background already streams these responses — it has since the tools got
+// the same patience as the guide — but the sidebar dropped every chunk on the
+// floor and showed a bare spinner. On a reasoning model that is several
+// minutes with no sign of life, which is indistinguishable from a hang.
+//
+// Nothing here parses the result: the non-streamed text is still the
+// authority, and the scanner is only counting finished objects so the button
+// can say how far along it is.
+
+const toolProgressStreams = new Map(); // requestId → { scanner, button, noun, baseLabel }
+
+/** What each tool's results arrive under, and what to call one of them. */
+const TOOL_STREAM_SHAPES = {
+  FLASHCARDS_REQUEST: { arrayKey: 'flashcards', noun: 'card' },
+  QUIZ_REQUEST: { arrayKey: 'questions', noun: 'question' },
+  EXAM_QUESTIONS_REQUEST: { arrayKey: 'questions', noun: 'question' },
+  CROSS_LECTURE_EXAM_REQUEST: { arrayKey: 'questions', noun: 'question' }
+};
+
+function trackToolProgress(requestId, type, button) {
+  const shape = TOOL_STREAM_SHAPES[type];
+  if (!shape || !button) return;
+  const label = button.querySelector('.btn-text');
+  toolProgressStreams.set(requestId, {
+    scanner: createJsonArrayScanner(shape.arrayKey),
+    label,
+    noun: shape.noun,
+    baseText: label?.textContent || 'Generating…'
+  });
+}
+
+/** Put the button's own wording back; the count was only for the wait. */
+function untrackToolProgress(requestId) {
+  const state = toolProgressStreams.get(requestId);
+  if (state?.label) state.label.textContent = state.baseText;
+  toolProgressStreams.delete(requestId);
+}
+
+function handleToolProgressChunk(msg, state) {
+  state.scanner.push(msg.text || '');
+  if (!state.label) return;
+  const n = state.scanner.count;
+  state.label.textContent = n
+    ? `Generating… ${n} ${state.noun}${n === 1 ? '' : 's'}`
+    : state.baseText;
+}
+
 // ── Central registry of in-flight generations ─────────────────────────────
 // Every provider request registers here, so anything the user starts can be
 // stopped from the generation bar — including generators with no Stop button
@@ -462,6 +512,13 @@ function handleStreamChunk(msg) {
     text: msg.text,
     length: typeof msg.text === 'string' ? msg.text.length : null
   });
+
+  // Study-tool generations: count finished items so the button can show them.
+  const toolProgress = toolProgressStreams.get(reqId);
+  if (toolProgress) {
+    handleToolProgressChunk(msg, toolProgress);
+    return;
+  }
 
   // Route tool-ask streams (isolated from main Q&A)
   if (toolAskActiveStreams.has(reqId)) {
