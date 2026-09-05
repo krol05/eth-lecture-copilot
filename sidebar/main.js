@@ -77,10 +77,6 @@ function init() {
   updateCustomTokenVisibility();
   updateTokenHint();
 
-  function updateSliderFill(slider) {
-    const pct = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
-    slider.style.setProperty('--pct', `${pct}%`);
-  }
   genTempSlider?.addEventListener('input', () => {
     genTempValue.textContent = (genTempSlider.value / 100).toFixed(2);
     updateSliderFill(genTempSlider);
@@ -318,6 +314,7 @@ function init() {
   document.getElementById('exam-back-btn')?.addEventListener('click', () => showExamPanel('settings'));
   initPillGroup('exam-scope-pills', onExamScopeChange);
   initPillGroup('exam-difficulty-pills');
+  initPillGroup('exam-depth-pills');
   initPillGroup('exam-format-pills');
   initPillGroup('exam-answer-pills');
   initPillGroup('exam-count-pills');
@@ -419,16 +416,27 @@ function normalizeLectureUrl(href) {
 }
 
 
+/** Paint a range input's filled portion, which CSS reads from --pct. */
+function updateSliderFill(slider) {
+  const pct = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
+  slider.style.setProperty('--pct', `${pct}%`);
+}
+
 // ─── Prompt builders ──────────────────────────────────────────────────────
 //
 // The prompts themselves live in lib/prompts.js. These wrappers exist for one
 // reason: to prepend whatever the user typed into the custom prompt boxes.
 // Tools with no custom-prompt box call lib/prompts.js directly.
 
-/** Put the user's own instructions for `tool` in front of a generated prompt. */
+/**
+ * Add the user's own instructions for `tool` to a generated prompt.
+ *
+ * lib/prompts.js decides where they land: last, but ahead of the line that
+ * hands the model the transcript or guide. They used to go in front of
+ * everything, which buried them under the whole rule set and output schema.
+ */
 function withPromptExtras(tool, base) {
-  const extra = customPromptExtras[tool]?.trim();
-  return extra ? extra + '\n\n' + base : base;
+  return appendPromptExtras(base, customPromptExtras[tool]);
 }
 
 function promptForFlashcards(guide, opts) {
@@ -441,6 +449,12 @@ function promptForQuiz(guide, opts) {
 
 function promptForExam(guide, blocks, opts) {
   return withPromptExtras('exam', buildExamQuestionsPrompt(guide, blocks, opts));
+}
+
+// Cross-lecture prediction is an exam generator over saved guides, so it reads
+// the same custom instructions the exam tool does. It used to read none.
+function promptForCrossLectureExam(lectures, opts) {
+  return withPromptExtras('exam', buildCrossLecturePredictionPrompt(lectures, opts));
 }
 
 function getLocalBase() {
