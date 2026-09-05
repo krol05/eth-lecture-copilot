@@ -119,19 +119,26 @@ async function runToolGeneration({ type, thinkingKey, buttonId, errorId, buildPr
 
   setFeatureBtnLoading(btn, true);
   if (errEl) errEl.style.display = 'none';
+  let req = null;
   try {
-    const resp = await apiRequest({
+    req = apiRequest({
       ...buildApiPayloadBase(),
       type,
       toolThinking: getToolThinking(thinkingKey),
       guideJson: guide,
       systemPrompt: buildPrompt()
     });
+    // These responses already stream; until now the sidebar threw the chunks
+    // away and showed a spinner, so a three-minute generation looked identical
+    // to a hang. Counting finished items costs nothing and says it is alive.
+    trackToolProgress(req._requestId, type, btn);
+    const resp = await req;
     if (!resp.success) throw new Error(resp.error);
     onSuccess(resp.data);
   } catch (err) {
     showError(err.message);
   } finally {
+    if (req?._requestId) untrackToolProgress(req._requestId);
     setFeatureBtnLoading(btn, false);
   }
 }
@@ -171,6 +178,9 @@ function readExamOptions(ids) {
   const customRaw = parseInt(document.getElementById(ids.custom)?.value?.trim() || '', 10);
   return {
     difficulty: getActivePillValue(ids.difficulty) || 'mixed',
+    // Depth was fully written into the exam prompt (surface / deep / research)
+    // and read from nowhere, so it sat pinned at 'deep' whatever the user did.
+    depth: getActivePillValue(ids.depth) || 'deep',
     format: getActivePillValue(ids.format) || 'open',
     answerLength: getActivePillValue(ids.answer) || 'medium',
     questionsPerBlock: perBlock,
@@ -188,8 +198,9 @@ const TAB_TOOL_IDS = {
   quiz: { count: 'quiz-count-pills', custom: 'quiz-custom-count',
     type: 'quiz-type-pills', lang: 'quiz-lang-select' },
   exam: { count: 'exam-count-pills', custom: 'exam-custom-count',
-    difficulty: 'exam-difficulty-pills', format: 'exam-format-pills',
-    answer: 'exam-answer-pills', lang: 'exam-lang-select' }
+    difficulty: 'exam-difficulty-pills', depth: 'exam-depth-pills',
+    format: 'exam-format-pills', answer: 'exam-answer-pills',
+    lang: 'exam-lang-select' }
 };
 
 /** Control ids for the inline-panel copy of each generator. */
@@ -200,8 +211,9 @@ const INLINE_TOOL_IDS = {
   quiz: { count: 'it-quiz-count-pills', custom: 'it-quiz-custom-count',
     type: 'it-quiz-type-pills', lang: 'it-quiz-lang-select' },
   exam: { count: 'it-exam-count-pills', custom: 'it-exam-custom-count',
-    difficulty: 'it-exam-difficulty-pills', format: 'it-exam-format-pills',
-    answer: 'it-exam-answer-pills', lang: 'it-exam-lang-select' }
+    difficulty: 'it-exam-difficulty-pills', depth: 'it-exam-depth-pills',
+    format: 'it-exam-format-pills', answer: 'it-exam-answer-pills',
+    lang: 'it-exam-lang-select' }
 };
 
 /** Store a freshly generated flashcard deck. Both copies land here. */
@@ -264,6 +276,12 @@ function openInlineToolPanel(toolKey, titleText, buildFn) {
   nameEl.textContent = titleText;
   bodyEl.innerHTML   = '';
   buildFn(bodyEl);
+
+  // The inline panel is rebuilt from scratch every time it opens, so its
+  // controls start at the markup's defaults. Hydrating here is what makes the
+  // inline copy and the Tools-tab copy show the same thing — they share one
+  // stored key per control.
+  setUpRememberedControls();
 
   // Clear any height left from a previous resize — let content drive the size.
   // The panel will be exactly as tall as its content (the settings form / results).
@@ -692,6 +710,7 @@ function _buildInlineExam(body) {
     return;
   }
   const scopeVal  = getActivePillValue('exam-scope-pills') || 'whole';
+  const depthVal  = getActivePillValue('exam-depth-pills') || 'deep';
   const diffVal   = getActivePillValue('exam-difficulty-pills') || 'mixed';
   const fmtVal    = getActivePillValue('exam-format-pills') || 'open';
   const ansVal    = getActivePillValue('exam-answer-pills') || 'medium';
@@ -721,6 +740,14 @@ function _buildInlineExam(body) {
           <button class="pill${fmtVal==='mc'?' pill-active':''}" data-value="mc" type="button">MC</button>
           <button class="pill${fmtVal==='proof'?' pill-active':''}" data-value="proof" type="button">Proof</button>
           <button class="pill${fmtVal==='mixed'?' pill-active':''}" data-value="mixed" type="button">Mixed</button>
+        </div>
+      </div>
+      <div class="inline-tool-row">
+        <span class="inline-tool-label">Depth</span>
+        <div class="pill-group" id="it-exam-depth-pills">
+          <button class="pill${depthVal==='surface'?' pill-active':''}" data-value="surface" type="button">Surface</button>
+          <button class="pill${depthVal==='deep'?' pill-active':''}" data-value="deep" type="button">Deep</button>
+          <button class="pill${depthVal==='research'?' pill-active':''}" data-value="research" type="button">Research</button>
         </div>
       </div>
       <div class="inline-tool-row">
@@ -756,6 +783,7 @@ function _buildInlineExam(body) {
     `;
   initPillGroup('it-exam-scope-pills');
   initPillGroup('it-exam-difficulty-pills');
+  initPillGroup('it-exam-depth-pills');
   initPillGroup('it-exam-format-pills');
   initPillGroup('it-exam-answer-pills');
   initPillGroup('it-exam-count-pills');
