@@ -205,3 +205,107 @@ describe('createGuideBlockScanner', () => {
     }
   });
 });
+
+describe('recovering a guide the model did not finish', () => {
+  test('reads a guide wrapped in a code fence', () => {
+    const raw = '```json\n{"lecture_title":"T","guide":[]}\n```';
+    expect(parseGuideResponse(raw).lecture_title).toBe('T');
+  });
+
+  test('ignores chatter before and after the JSON', () => {
+    const raw = 'Sure! Here is your guide:\n{"lecture_title":"T","guide":[]}\nHope that helps.';
+    expect(parseGuideResponse(raw).lecture_title).toBe('T');
+  });
+
+  test('strips control characters that make JSON.parse refuse the whole thing', () => {
+    const raw = '{"lecture_title":"AB","guide":[]}';
+    expect(parseGuideResponse(raw).lecture_title).toBe('AB');
+  });
+
+  test('drops a trailing comma rather than losing the guide', () => {
+    const raw = '{"lecture_title":"T","guide":[{"title":"A"},]}';
+    expect(parseGuideResponse(raw).guide).toHaveLength(1);
+  });
+
+  test('rescues a guide cut off mid-string', () => {
+    // What a token limit actually looks like: the response just stops.
+    const raw = '{"lecture_title":"T","guide":[{"title":"Block one","notes":"still writ';
+    const out = parseGuideResponse(raw);
+    expect(out.lecture_title).toBe('T');
+    expect(out.guide[0].title).toBe('Block one');
+  });
+
+  test('rescues a guide cut off between blocks', () => {
+    const raw = '{"lecture_title":"T","guide":[{"title":"A"},{"title":"B"},';
+    const out = parseGuideResponse(raw);
+    expect(out.guide.map(b => b.title)).toEqual(['A', 'B']);
+  });
+
+  test('gives up with advice rather than a bare failure', () => {
+    expect(() => parseGuideResponse('no json here at all')).toThrow(/No JSON object found/);
+    expect(() => parseGuideResponse('')).toThrow(/No JSON object found/);
+  });
+});
+
+describe('fixEscapes', () => {
+  const { fixEscapes } = require('../lib/guide-parse.js');
+
+  test('escapes a raw newline inside a string', () => {
+    // Models emit real newlines inside JSON strings, which is invalid JSON.
+    expect(JSON.parse(fixEscapes('{"a":"one\ntwo"}')).a).toBe('one\ntwo');
+  });
+
+  test('escapes a raw tab and drops carriage returns', () => {
+    expect(JSON.parse(fixEscapes('{"a":"one\ttwo"}')).a).toBe('one\ttwo');
+    expect(JSON.parse(fixEscapes('{"a":"one\r\ntwo"}')).a).toBe('one\ntwo');
+  });
+
+  test('repairs the stray backslashes LaTeX produces constantly', () => {
+    // None of these is valid JSON, so without repair the whole guide is lost.
+    const raw = String.raw`{"a":"\alpha","b":"\frac{1}{2}","c":"\beta","d":"\underline{x}"}`;
+    const out = JSON.parse(fixEscapes(raw));
+    expect(out.a).toBe(String.raw`\alpha`);
+    // These three collide with JSON's own \f, \b and \u escapes. Reading them
+    // as escapes turned \frac into a form feed followed by "rac".
+    expect(out.b).toBe(String.raw`\frac{1}{2}`);
+    expect(out.c).toBe(String.raw`\beta`);
+    expect(out.d).toBe(String.raw`\underline{x}`);
+  });
+
+  test('a real unicode escape is still an escape', () => {
+    // \u only counts when four hex digits follow, which is what separates it
+    // from \underline.
+    expect(JSON.parse(fixEscapes(String.raw`{"a":"caf\u00e9"}`)).a).toBe('café');
+  });
+
+  test('line breaks and tabs in notes still mean what they say', () => {
+    // Unlike \f and \b, these are things a model genuinely writes, so they
+    // stay escapes — which does leave \nabla and \theta ambiguous.
+    expect(JSON.parse(fixEscapes(String.raw`{"a":"one\ntwo"}`)).a).toBe('one\ntwo');
+  });
+
+  test('leaves valid escapes alone', () => {
+    expect(JSON.parse(fixEscapes('{"a":"quote \\" and slash \\\\"}')).a).toBe('quote " and slash \\');
+  });
+
+  test('handles a backslash at the very end', () => {
+    expect(() => fixEscapes('{"a":"trailing\\')).not.toThrow();
+  });
+});
+
+describe('salvageTruncated', () => {
+  const { salvageTruncated } = require('../lib/guide-parse.js');
+
+  test('closes whatever the model left open', () => {
+    expect(salvageTruncated('{"a":[1,2')).toEqual({ a: [1, 2] });
+    expect(salvageTruncated('{"a":{"b":1')).toEqual({ a: { b: 1 } });
+  });
+
+  test('closes an unterminated string', () => {
+    expect(salvageTruncated('{"a":"half')).toEqual({ a: 'half' });
+  });
+
+  test('returns null when there is nothing to salvage', () => {
+    expect(salvageTruncated('completely broken {{{')).toBeNull();
+  });
+});
