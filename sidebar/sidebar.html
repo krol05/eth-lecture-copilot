@@ -889,6 +889,14 @@
             </div>
           </div>
           <div class="gen-setting-row">
+            <label class="gen-setting-label">Depth</label>
+            <div class="pill-group" id="exam-depth-pills">
+              <button class="pill" data-value="surface" type="button" title="Recall and direct application">Surface</button>
+              <button class="pill pill-active" data-value="deep" type="button" title="Formal justification and genuine understanding">Deep</button>
+              <button class="pill" data-value="research" type="button" title="Critical analysis and extension beyond the lecture">Research</button>
+            </div>
+          </div>
+          <div class="gen-setting-row">
             <label class="gen-setting-label">Answer length</label>
             <div class="pill-group" id="exam-answer-pills">
               <button class="pill" data-value="short" type="button">Short</button>
@@ -1194,6 +1202,7 @@
   <script src="../lib/prompts.js"></script>
   <script src="../lib/permissions.js"></script>
   <script src="../lib/error-format.js"></script>
+  <script src="../lib/control-prefs.js"></script>
   <script src="error-panel.js"></script>
   <script src="generation-bar.js"></script>
   <script src="scripts.js"></script>
