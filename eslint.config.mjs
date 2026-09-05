@@ -24,6 +24,10 @@ const libGlobals = {
   fixEscapes: 'readonly',
   salvageTruncated: 'readonly',
   createGuideBlockScanner: 'readonly',
+  // lib/history-io.js
+  HistoryIO: 'readonly',
+  // lib/obsidian.js
+  Obsidian: 'readonly',
   // lib/schema.js
   toSeconds: 'readonly',
   sanitizeGuide: 'readonly',
@@ -142,7 +146,15 @@ export default [
     // Content script
     files: ['content/**/*.js'],
     languageOptions: {
-      globals: { ...globals.browser, chrome: 'readonly', CopilotDebug: 'readonly' }
+      globals: {
+        ...globals.browser, chrome: 'readonly', CopilotDebug: 'readonly',
+        // lib/transcript.js, loaded alongside the content script
+        parseVtt: 'readonly',
+        parseTimestamp: 'readonly',
+        formatTranscriptForAI: 'readonly',
+        formatSeconds: 'readonly',
+        decodeVttEntities: 'readonly'
+      }
     }
   },
   {
@@ -159,6 +171,7 @@ export default [
         resolveProvider: 'readonly',
         validateSpec: 'readonly',
         adapterFromSpec: 'readonly',
+        SettingsStore: 'readonly',
         parseGuideResponse: 'readonly',
         findMatchingBrace: 'readonly',
         fixEscapes: 'readonly',

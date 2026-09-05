@@ -590,6 +590,25 @@
     <div id="history-list" class="history-list">
       <p style="color:var(--text-muted);font-size:12px;padding:14px;">No previous guides yet.</p>
     </div>
+
+    <div class="history-backup">
+      <div class="history-backup-row">
+        <button id="history-export-btn" class="history-backup-btn" type="button" title="Save every saved lecture to a file">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Export all
+        </button>
+        <button id="history-import-btn" class="history-backup-btn" type="button" title="Merge a saved file back in">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          Import
+        </button>
+        <input type="file" id="history-import-input" accept="application/json,.json" hidden>
+      </div>
+      <p id="history-backup-status" class="history-backup-status"></p>
+    </div>
   </div>
 
   <!-- ── TOOLS TAB ── -->
@@ -1166,6 +1185,8 @@
   <script src="../lib/qa-stream-flush.js"></script>
   <script src="../lib/flashcards.js"></script>
   <script src="../lib/schema.js"></script>
+  <script src="../lib/history-io.js"></script>
+  <script src="../lib/obsidian.js"></script>
   <script src="../lib/block-index.js"></script>
   <script src="../lib/concept-split.js"></script>
   <script src="../lib/render-inline.js"></script>

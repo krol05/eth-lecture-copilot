@@ -271,6 +271,7 @@ function exportGuideAsMarkdown() {
       URL.revokeObjectURL(url);
     }, 5000);
     setStatus('ready', 'Markdown exported');
+    offerObsidianHandoff(filename, md);
   } catch (err) {
     reportSidebarError(err, { operation: 'Export guide as Markdown' });
     return;
@@ -278,32 +279,64 @@ function exportGuideAsMarkdown() {
 }
 
 /**
- * Try to open the exported markdown in Obsidian via the obsidian:// URI scheme.
- * Shows a brief toast with an "Open in Obsidian" link.
+ * Offer to open the exported Markdown in Obsidian.
+ *
+ * ALPHA — the link format follows Obsidian's documented URI scheme but has not
+ * been checked against a real install yet. Nothing here can lose your work:
+ * the .md file is already downloaded by the time this runs, so the worst case
+ * is a link that does nothing.
+ *
+ * A whole guide does not fit in a URI, so the usual path is to put the
+ * Markdown on the clipboard and let Obsidian read it from there. Both the
+ * copy and the link happen on the button press, which is the only moment the
+ * browser allows either.
  */
-function openObsidianIfPossible(filename, content) {
-  // obsidian://new?name=...&content=... (URL-encoded)
-  // Works if Obsidian is installed and the user has it as default handler for obsidian://
-  const obsidianUri = `obsidian://new?name=${encodeURIComponent(filename.replace(/\.md$/, ''))}&content=${encodeURIComponent(content)}`;
+function offerObsidianHandoff(filename, content) {
+  chrome.storage?.local?.get(['obsidianVault', 'obsidianFolder'], (saved) => {
+    let link;
+    try {
+      link = Obsidian.buildObsidianUri({
+        vault: saved?.obsidianVault,
+        folder: saved?.obsidianFolder,
+        filename,
+        content
+      });
+    } catch (err) {
+      // Never let the hand-off break an export that already succeeded.
+      window.CopilotDebug?.warn('sidebar.obsidian.buildFailed', { error: err?.message });
+      return;
+    }
 
-  // Show a small toast below the status bar
-  const existing = document.getElementById('obsidian-toast');
-  if (existing) existing.remove();
-  const toast = document.createElement('div');
-  toast.id = 'obsidian-toast';
-  toast.style.cssText = `
-      position:fixed;bottom:56px;left:50%;transform:translateX(-50%);
-      background:var(--surface-1);border:1px solid var(--border);border-radius:8px;
-      padding:8px 14px;font-size:12px;color:var(--text-primary);
-      box-shadow:0 4px 16px rgba(0,0,0,0.2);z-index:9500;
-      display:flex;align-items:center;gap:10px;white-space:nowrap;
+    document.getElementById('obsidian-toast')?.remove();
+    const toast = document.createElement('div');
+    toast.id = 'obsidian-toast';
+    toast.className = 'obsidian-toast';
+    toast.setAttribute('role', 'status');
+    toast.innerHTML = `
+      <div class="obsidian-toast-text">
+        <strong>Markdown downloaded.</strong>
+        <span>${link.usesClipboard
+          ? 'Too long for a link, so it will be copied and pasted in.'
+          : 'Ready to open directly.'}</span>
+      </div>
+      <a class="obsidian-toast-open" href="${escAttr(link.uri)}">Open in Obsidian</a>
+      <button class="obsidian-toast-dismiss" type="button" title="Dismiss">&times;</button>
     `;
-  toast.innerHTML = `
-      <span>Markdown downloaded.</span>
-      <a href="${obsidianUri}" style="color:var(--accent);text-decoration:none;font-weight:600">Open in Obsidian</a>
-      <button id="obsidian-toast-dismiss" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:14px;padding:0;margin-left:2px">×</button>
-    `;
-  document.body.appendChild(toast);
-  toast.querySelector('#obsidian-toast-dismiss')?.addEventListener('click', () => toast.remove());
-  setTimeout(() => { if (toast.isConnected) toast.remove(); }, 8000);
+    document.body.appendChild(toast);
+
+    const open = toast.querySelector('.obsidian-toast-open');
+    open?.addEventListener('click', () => {
+      if (link.usesClipboard) {
+        // Not awaited: the link must be followed by this same click, and the
+        // copy finishes long before Obsidian has finished launching.
+        navigator.clipboard?.writeText(content).catch(err => {
+          setStatus('error', `Could not copy the guide for Obsidian: ${err.message}`);
+        });
+      }
+      setStatus('ready', `Sent “${link.path}” to Obsidian`);
+      setTimeout(() => toast.remove(), 400);
+    });
+    toast.querySelector('.obsidian-toast-dismiss')?.addEventListener('click', () => toast.remove());
+    setTimeout(() => { if (toast.isConnected) toast.remove(); }, 12000);
+  });
 }

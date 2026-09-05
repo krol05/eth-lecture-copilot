@@ -215,10 +215,24 @@
     setStatus('All UI settings restored to defaults');
   });
 
+  // Obsidian — where an exported guide should land. Plain strings, so they
+  // are read and written directly rather than going through UISettings.
+  const obsidianVaultInput = document.getElementById('obsidian-vault');
+  const obsidianFolderInput = document.getElementById('obsidian-folder');
+
+  chrome.storage.local.get(['obsidianVault', 'obsidianFolder'], (saved) => {
+    if (obsidianVaultInput) obsidianVaultInput.value = saved.obsidianVault || '';
+    if (obsidianFolderInput) obsidianFolderInput.value = saved.obsidianFolder || '';
+  });
+
   saveBtn.addEventListener('click', async () => {
     collectPrompts();
     working = await UISettings.save(working);
-    await new Promise((resolve) => chrome.storage.local.set({ [PROMPT_EXTRAS_KEY]: workingPrompts }, resolve));
+    await new Promise((resolve) => chrome.storage.local.set({
+      [PROMPT_EXTRAS_KEY]: workingPrompts,
+      obsidianVault: obsidianVaultInput?.value.trim() || '',
+      obsidianFolder: obsidianFolderInput?.value.trim() || ''
+    }, resolve));
     setStatus('Saved. Reopen sidebar to confirm changes.');
   });
 

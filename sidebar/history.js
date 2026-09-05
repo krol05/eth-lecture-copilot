@@ -665,3 +665,147 @@ function onHistorySearch() {
     else { delete year.dataset.hidden; year.open = true; }
   });
 }
+
+// ─── Backup: writing the history out and reading it back ──────────────────
+//
+// The merge rules live in lib/history-io.js so they can be tested; this half
+// is the file handling and the messages the user sees.
+
+/** Roughly how large the export will be, before building the whole string. */
+const HISTORY_EXPORT_IMAGE_LIMIT = 40 * 1024 * 1024;   // 40 MB
+
+function setBackupStatus(text, tone = '') {
+  const el = document.getElementById('history-backup-status');
+  if (!el) return;
+  el.textContent = text;
+  if (tone) el.dataset.tone = tone; else delete el.dataset.tone;
+}
+
+/** Human-readable byte size for the status line. */
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function exportHistoryToFile() {
+  const btn = document.getElementById('history-export-btn');
+  if (btn) btn.disabled = true;
+  setBackupStatus('Collecting saved lectures…');
+
+  chrome.storage?.local?.get(['guideHistory', 'lectureIdMap'], saved => {
+    try {
+      const history = Array.isArray(saved.guideHistory) ? saved.guideHistory : [];
+      if (!history.length) {
+        setBackupStatus('There are no saved lectures to export yet.', 'error');
+        return;
+      }
+
+      const version = chrome.runtime?.getManifest?.().version || null;
+      let envelope = HistoryIO.buildExportEnvelope(history, saved.lectureIdMap, {
+        extensionVersion: version
+      });
+      let json = JSON.stringify(envelope, null, 2);
+      let droppedImages = false;
+
+      // A term of lectures with pasted frames runs to hundreds of megabytes of
+      // base64. Past a point the browser cannot hold the string at all, so the
+      // frames come out rather than the export failing.
+      if (json.length > HISTORY_EXPORT_IMAGE_LIMIT) {
+        envelope = HistoryIO.buildExportEnvelope(history, saved.lectureIdMap, {
+          extensionVersion: version,
+          includeImages: false
+        });
+        json = JSON.stringify(envelope, null, 2);
+        droppedImages = true;
+      }
+
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = HistoryIO.exportFilename();
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      // Must be in the document: a detached click is ignored in this iframe.
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 5000);
+
+      setBackupStatus(
+        `Exported ${history.length} lecture${history.length === 1 ? '' : 's'} (${formatBytes(blob.size)})` +
+        (droppedImages ? ' — attached frames left out to keep the file openable.' : '.'),
+        'ok'
+      );
+    } catch (err) {
+      reportSidebarError(err, { operation: 'Export history' });
+      setBackupStatus(`Export failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+}
+
+function onHistoryImportFile(event) {
+  const file = event.target?.files?.[0];
+  // Clear it now so choosing the same file twice still fires a change event.
+  if (event.target) event.target.value = '';
+  if (!file) return;
+
+  const btn = document.getElementById('history-import-btn');
+  if (btn) btn.disabled = true;
+  setBackupStatus(`Reading ${file.name}…`);
+
+  const reader = new FileReader();
+  reader.onerror = () => {
+    setBackupStatus(`Could not read ${file.name}: ${reader.error?.message || 'unknown error'}`, 'error');
+    if (btn) btn.disabled = false;
+  };
+  reader.onload = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(reader.result));
+    } catch (err) {
+      setBackupStatus(`${file.name} is not valid JSON: ${err.message}`, 'error');
+      if (btn) btn.disabled = false;
+      return;
+    }
+
+    const check = HistoryIO.validateImport(parsed);
+    if (!check.ok) {
+      setBackupStatus(check.error, 'error');
+      if (btn) btn.disabled = false;
+      return;
+    }
+
+    chrome.storage?.local?.get(['guideHistory', 'lectureIdMap'], saved => {
+      try {
+        const result = HistoryIO.mergeHistory(
+          Array.isArray(saved.guideHistory) ? saved.guideHistory : [],
+          check.entries,
+          { normalizeUrl: normalizeLectureUrl }
+        );
+        const idMap = HistoryIO.mergeLectureIdMap(saved.lectureIdMap, check.lectureIdMap);
+
+        storageSet({ guideHistory: result.history, lectureIdMap: idMap }, () => {
+          loadHistory();
+          const parts = [];
+          if (result.added) parts.push(`${result.added} added`);
+          if (result.updated) parts.push(`${result.updated} updated`);
+          if (result.keptExisting) parts.push(`${result.keptExisting} already newer here`);
+          if (check.rejected.length) parts.push(`${check.rejected.length} unreadable`);
+          setBackupStatus(
+            parts.length ? `Imported: ${parts.join(', ')}.` : 'Nothing new to import.',
+            'ok'
+          );
+        });
+      } catch (err) {
+        reportSidebarError(err, { operation: 'Import history' });
+        setBackupStatus(`Import failed: ${err.message}`, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+  };
+  reader.readAsText(file);
+}

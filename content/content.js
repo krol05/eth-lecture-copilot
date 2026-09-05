@@ -548,7 +548,7 @@
         return;
       }
 
-      const transcriptText = formatTranscript(cues);
+      const transcriptText = formatTranscriptForAI(cues);
       const lectureTitle = document.querySelector('h1')?.textContent?.trim() || 'Lecture';
       const courseKey   = extractCourseKeyFromUrl(location.href);
       const courseName  = extractCourseName(lectureTitle);
@@ -920,40 +920,9 @@
     return null;
   }
 
-  function parseVtt(vttText) {
-    const cues = [];
-    const blocks = vttText.replace(/\r\n/g, '\n').split(/\n\n+/);
-    for (const block of blocks) {
-      const lines = block.trim().split('\n');
-      let timeLine = -1;
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes('-->')) { timeLine = i; break; }
-      }
-      if (timeLine === -1) continue;
-      const [startStr, endStr] = lines[timeLine].split('-->').map(s => s.trim().split(' ')[0]);
-      const start = parseTs(startStr), end = parseTs(endStr);
-      if (isNaN(start) || isNaN(end)) continue;
-      const text = lines.slice(timeLine + 1).join(' ').replace(/<[^>]+>/g, '').trim();
-      if (text) cues.push({ start_time: start, end_time: end, text });
-    }
-    return cues;
-  }
-
-  function parseTs(ts) {
-    const p = ts.split(':').map(Number);
-    if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2];
-    if (p.length === 2) return p[0] * 60 + p[1];
-    return NaN;
-  }
-
-  function formatTranscript(cues) {
-    return cues.map(c => `[${fmtSec(c.start_time)}] ${c.text}`).join('\n');
-  }
-
-  function fmtSec(s) {
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
-    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
-  }
+  // parseVtt / parseTimestamp / formatTranscriptForAI / formatSeconds live in
+  // lib/transcript.js, loaded as a content script just before this file, so
+  // the tests exercise the same parser the extension runs.
 
   // ─── Keyboard Shortcuts ──────────────────────────────────────────────────────
 
