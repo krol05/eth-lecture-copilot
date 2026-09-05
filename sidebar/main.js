@@ -250,6 +250,11 @@ function init() {
   scriptUploadBtn?.addEventListener('click', () => scriptFileInput?.click());
   scriptFileInput?.addEventListener('change', handleScriptUpload);
   scriptSearchMethod?.addEventListener('change', onSearchMethodChange);
+  document.getElementById('history-export-btn')?.addEventListener('click', exportHistoryToFile);
+  document.getElementById('history-import-btn')?.addEventListener('click', () => {
+    document.getElementById('history-import-input')?.click();
+  });
+  document.getElementById('history-import-input')?.addEventListener('change', onHistoryImportFile);
   restoreScriptSearchMethod();
   scriptEmbedBtn?.addEventListener('click', onEmbedExistingClick);
 
