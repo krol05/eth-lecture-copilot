@@ -652,7 +652,7 @@ async function generateCrossLecturePrediction() {
 
   try {
     const language = getToolLanguage('cross-exam-lang-select');
-    const systemPrompt = buildCrossLecturePredictionPrompt(lectures, { difficulty, format, count, language });
+    const systemPrompt = promptForCrossLectureExam(lectures, { difficulty, format, count, language });
     const payload = {
       ...buildApiPayloadBase(),
       type: 'CROSS_LECTURE_EXAM_REQUEST',
@@ -660,7 +660,14 @@ async function generateCrossLecturePrediction() {
       guidesJson: lectures,
       systemPrompt
     };
-    const resp = await apiRequest(payload);
+    const req = apiRequest(payload);
+    trackToolProgress(req._requestId, payload.type, btn);
+    let resp;
+    try {
+      resp = await req;
+    } finally {
+      untrackToolProgress(req._requestId);
+    }
     if (!resp.success) throw new Error(resp.error);
     const data = resp.data || {};
 
