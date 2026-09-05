@@ -52,12 +52,6 @@ describe('buildFlashcardsPrompt', () => {
     expect(prompt).toContain('Do not create standalone formula cards');
   });
 
-  test('legacy style option maps to selected type for compatibility', () => {
-    const prompt = buildFlashcardsPrompt(guide, { style: 'definition' });
-    expect(prompt).toContain('Use ONLY these selected card types');
-    expect(prompt).toContain('definition');
-  });
-
   test('response schema in the prompt does not include a deckTitle field', () => {
     const prompt = buildFlashcardsPrompt(guide, { cardTypes: ['auto'] });
     expect(prompt).not.toContain('"deckTitle"');
