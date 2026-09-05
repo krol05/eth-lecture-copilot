@@ -86,6 +86,8 @@
         "lib/fuzzy-retrieval.js",
         "lib/retrieval-fusion.js",
         "lib/schema.js",
+        "lib/history-io.js",
+        "lib/obsidian.js",
         "lib/block-index.js",
         "lib/concept-split.js",
         "lib/render-inline.js",
