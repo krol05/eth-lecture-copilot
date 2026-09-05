@@ -84,6 +84,7 @@
         "lib/ui-settings.js",
         "lib/debug.js",
         "lib/fuzzy-retrieval.js",
+        "lib/qa-stream-flush.js",
         "lib/retrieval-fusion.js",
         "lib/schema.js",
         "lib/history-io.js",
