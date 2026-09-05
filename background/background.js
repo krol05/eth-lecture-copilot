@@ -24,7 +24,8 @@ importScripts(
   chrome.runtime.getURL('lib/providers/adapters.js'),
   chrome.runtime.getURL('lib/providers/overrides.js'),
   chrome.runtime.getURL('lib/providers/adapter-spec.js'),
-  chrome.runtime.getURL('lib/permissions.js')
+  chrome.runtime.getURL('lib/permissions.js'),
+  chrome.runtime.getURL('lib/settings-store.js')
 );
 
 // ─── Structured errors ───────────────────────────────────────────────────────
@@ -347,6 +348,88 @@ chrome.alarms?.onAlarm.addListener(async alarm => {
     force: true
   }).catch(() => {}); // silent — the static catalog is always the fallback
 });
+
+// ─── Settings roaming ────────────────────────────────────────────────────────
+//
+// Preferences follow you to another computer through chrome.storage.sync; API
+// keys and anything that could carry one never leave this machine. Which is
+// which is decided in lib/settings-store.js, not here.
+//
+// This lives in the worker so it works whichever page happens to be open, and
+// it mirrors in both directions: a change made here goes up, a change made on
+// another machine comes down.
+
+/** Guard against a change echoing back and forth between the two areas. */
+async function mirrorIfDifferent(area, writes) {
+  const keys = Object.keys(writes);
+  if (!keys.length) return;
+  const current = await new Promise(resolve => chrome.storage[area].get(keys, resolve));
+  const changed = {};
+  for (const [key, value] of Object.entries(writes)) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(value)) changed[key] = value;
+  }
+  if (!Object.keys(changed).length) return;
+  chrome.storage[area].set(changed, () => {
+    if (chrome.runtime.lastError) {
+      globalThis.CopilotDebug?.warn('background.settingsSync.writeFailed', {
+        area, keys: Object.keys(changed), error: chrome.runtime.lastError.message
+      });
+    }
+  });
+}
+
+/** Copy this machine's existing preferences up, once, the first time. */
+async function migrateSettingsToSync() {
+  if (!chrome.storage?.sync) return;   // sync is unavailable when signed out
+  try {
+    const local = await new Promise(r => chrome.storage.local.get(SettingsStore.ROAMING_KEYS, r));
+    const synced = await new Promise(r => chrome.storage.sync.get([SettingsStore.MIGRATION_FLAG], r));
+    const plan = SettingsStore.planMigration(local, synced);
+    if (plan.tooLarge?.length) {
+      globalThis.CopilotDebug?.warn('background.settingsSync.tooLarge', { tooLarge: plan.tooLarge });
+    }
+    if (!plan.migrate) return;
+    await mirrorIfDifferent('sync', plan.writes);
+    globalThis.CopilotDebug?.log('background.settingsSync.migrated', { keys: Object.keys(plan.writes) });
+  } catch (err) {
+    globalThis.CopilotDebug?.warn('background.settingsSync.migrateFailed', { error: err?.message });
+  }
+}
+
+/** Bring down whatever another machine has already set. */
+async function pullSyncedSettings() {
+  if (!chrome.storage?.sync) return;
+  try {
+    const synced = await new Promise(r => chrome.storage.sync.get(SettingsStore.ROAMING_KEYS, r));
+    const writes = {};
+    for (const key of SettingsStore.ROAMING_KEYS) {
+      if (synced[key] !== undefined) writes[key] = synced[key];
+    }
+    await mirrorIfDifferent('local', writes);
+  } catch (err) {
+    globalThis.CopilotDebug?.warn('background.settingsSync.pullFailed', { error: err?.message });
+  }
+}
+
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (!chrome.storage?.sync) return;
+  const moved = {};
+  for (const [key, { newValue }] of Object.entries(changes)) {
+    if (!SettingsStore.ROAMING_KEYS.includes(key)) continue;
+    if (newValue === undefined) continue;
+    // Oversized values are refused by Chrome outright, so they stay put.
+    if (area === 'local' && !SettingsStore.fitsInSync(key, newValue)) {
+      globalThis.CopilotDebug?.warn('background.settingsSync.skippedTooLarge', { key });
+      continue;
+    }
+    moved[key] = newValue;
+  }
+  if (!Object.keys(moved).length) return;
+  if (area === 'local') mirrorIfDifferent('sync', moved);
+  else if (area === 'sync') mirrorIfDifferent('local', moved);
+});
+
+migrateSettingsToSync().then(pullSyncedSettings);
 
 // ─── JSON salvage for tool responses (guide uses parseGuideResponse) ─────────
 

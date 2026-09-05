@@ -24,6 +24,10 @@ const libGlobals = {
   fixEscapes: 'readonly',
   salvageTruncated: 'readonly',
   createGuideBlockScanner: 'readonly',
+  // lib/history-io.js
+  HistoryIO: 'readonly',
+  // lib/obsidian.js
+  Obsidian: 'readonly',
   // lib/schema.js
   toSeconds: 'readonly',
   sanitizeGuide: 'readonly',
@@ -167,6 +171,7 @@ export default [
         resolveProvider: 'readonly',
         validateSpec: 'readonly',
         adapterFromSpec: 'readonly',
+        SettingsStore: 'readonly',
         parseGuideResponse: 'readonly',
         findMatchingBrace: 'readonly',
         fixEscapes: 'readonly',
