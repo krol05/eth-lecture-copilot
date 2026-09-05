@@ -309,3 +309,95 @@ describe('salvageTruncated', () => {
     expect(salvageTruncated('completely broken {{{')).toBeNull();
   });
 });
+
+describe('createJsonArrayScanner', () => {
+  const { createJsonArrayScanner, createGuideBlockScanner } = require('../lib/guide-parse.js');
+
+  /** Feed a string through a scanner in fixed-size pieces. */
+  function feed(scanner, text, chunkSize) {
+    for (let i = 0; i < text.length; i += chunkSize) scanner.push(text.slice(i, i + chunkSize));
+    return scanner;
+  }
+
+  // The study tools reuse the guide's streaming parser so the user can watch
+  // cards and questions arrive instead of staring at a spinner. Each tool
+  // wraps its results in a different key, which is the whole reason the
+  // scanner stopped being hard-wired to "guide".
+  test.each([
+    ['flashcards', '{"flashcards":[{"front":"a","back":"b"},{"front":"c","back":"d"}]}', 2],
+    ['questions', '{"questions":[{"type":"mc","question":"q","correct":0}]}', 1],
+    ['exam_topics', '{"exam_topics":[{"topic":"t"}],"questions":[{"question":"q"}]}', 1]
+  ])('scans the array under %s', (key, json, expected) => {
+    const scanner = feed(createJsonArrayScanner(key), json, 3);
+    expect(scanner.items).toHaveLength(expected);
+    expect(scanner.done).toBe(true);
+  });
+
+  test('a longer key that merely starts with the wanted one is not mistaken for it', () => {
+    // Both keys hold an array, and the decoy comes first — so a scanner that
+    // matched on a prefix would lock onto the decoy and never see the real
+    // results. Only the closing quote in the opener separates them.
+    const scanner = createJsonArrayScanner('questions');
+    scanner.push('{"questions_by_block":[{"decoy":true}],"questions":[{"question":"real"}]}');
+    expect(scanner.items).toEqual([{ question: 'real' }]);
+  });
+
+  test('a key with regex metacharacters matches only itself', () => {
+    // The key goes into a RegExp. Unescaped, "." would match any character,
+    // so a neighbouring key one letter different would open the scanner.
+    const scanner = createJsonArrayScanner('cards.v2');
+    scanner.push('{"cardsXv2":[{"wrong":true}],"cards.v2":[{"right":true}]}');
+    expect(scanner.items).toEqual([{ right: true }]);
+  });
+
+  test('count and items agree as the stream arrives', () => {
+    // The tool panels render `count` while streaming; it must never run ahead
+    // of the items actually parsed.
+    const scanner = createJsonArrayScanner('flashcards');
+    expect(scanner.count).toBe(0);
+    scanner.push('{"flashcards":[{"front":"a","back":"b"}');
+    expect(scanner.count).toBe(1);
+    scanner.push(',{"front":"c","back":"un');          // second card still open
+    expect(scanner.count).toBe(1);
+    scanner.push('finished"}]}');
+    expect(scanner.count).toBe(2);
+    expect(scanner.items).toHaveLength(scanner.count);
+  });
+
+  test('items and blocks are the same list, so the guide path is unaffected', () => {
+    const scanner = createJsonArrayScanner('guide');
+    scanner.push('{"guide":[{"title":"A"}]}');
+    expect(scanner.blocks).toBe(scanner.items);
+  });
+
+  test('the guide scanner is this scanner pointed at "guide"', () => {
+    const json = '{"lecture_title":"T","guide":[{"title":"A"},{"title":"B"}]}';
+    const viaGuide = feed(createGuideBlockScanner(), json, 5);
+    const viaGeneric = feed(createJsonArrayScanner('guide'), json, 5);
+    expect(viaGuide.blocks).toEqual(viaGeneric.items);
+    expect(viaGuide.done).toBe(viaGeneric.done);
+  });
+
+  test('each item is parsed once however many chunks arrive', () => {
+    // Same quadratic-streaming guard as the guide, now for the tools: a
+    // hundred-card deck must not re-parse the whole buffer on every chunk.
+    const cards = Array.from({ length: 40 }, (_, i) => `{"front":"q${i}","back":"a${i}"}`);
+    const json = `{"flashcards":[${cards.join(',')}]}`;
+    const spy = jest.spyOn(JSON, 'parse');
+    try {
+      spy.mockClear();
+      feed(createJsonArrayScanner('flashcards'), json, 4);
+      expect(spy).toHaveBeenCalledTimes(40);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('a deck the model never finished yields only the complete cards', () => {
+    // Token limits cut tool responses off mid-object exactly like guides.
+    const scanner = createJsonArrayScanner('flashcards');
+    scanner.push('{"flashcards":[{"front":"a","back":"b"},{"front":"c","back":"cut off her');
+    expect(scanner.items).toEqual([{ front: 'a', back: 'b' }]);
+    expect(scanner.done).toBe(false);
+  });
+});
