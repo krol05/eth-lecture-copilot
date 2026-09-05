@@ -24,6 +24,9 @@ const libGlobals = {
   fixEscapes: 'readonly',
   salvageTruncated: 'readonly',
   createGuideBlockScanner: 'readonly',
+  createJsonArrayScanner: 'readonly',
+  // lib/control-prefs.js
+  ControlPrefs: 'readonly',
   // lib/history-io.js
   HistoryIO: 'readonly',
   // lib/obsidian.js
@@ -60,6 +63,12 @@ const libGlobals = {
   sanitizeTag: 'readonly',
   // lib/prompts.js (plain top-level script — global lexical scope)
   GUIDE_SYSTEM_PROMPT: 'readonly',
+  promptExtrasBlock: 'readonly',
+  appendPromptExtras: 'readonly',
+  GUIDE_DETAIL_PROFILES: 'readonly',
+  GUIDE_COUNT_PROFILES: 'readonly',
+  buildGuidePrompt: 'readonly',
+  buildStudyFlowGuidePrompt: 'readonly',
   buildQASystemPrompt: 'readonly',
   buildFlashcardsPrompt: 'readonly',
   normalizeFlashcardTypeSelection: 'readonly',
@@ -195,7 +204,7 @@ export default [
   },
   {
     // Tests that run against a real DOM (@jest-environment jsdom)
-    files: ['tests/error-panel.test.js'],
+    files: ['tests/error-panel.test.js', 'tests/control-prefs.test.js'],
     languageOptions: {
       globals: { ...globals.node, ...globals.jest, ...globals.browser }
     }
@@ -212,7 +221,8 @@ export default [
     files: ['playwright.config.js', 'tests/e2e/**/*.js'],
     languageOptions: {
       sourceType: 'commonjs',
-      globals: { ...globals.node, ...globals.browser }
+      // page.evaluate bodies run inside the extension page, where `chrome` exists.
+      globals: { ...globals.node, ...globals.browser, chrome: 'readonly' }
     }
   }
 ];
