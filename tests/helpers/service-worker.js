@@ -17,15 +17,42 @@ const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..', '..');
 
-function loadServiceWorker({ storage = {}, fetchImpl, grantedOrigins = null } = {}) {
+function loadServiceWorker({ storage = {}, syncStorage = null, fetchImpl, grantedOrigins = null } = {}) {
   const sentMessages = [];   // chrome.tabs.sendMessage calls (progress/stream)
   const alarms = [];
   const store = { ...storage };
+  // null means the sync area is unavailable, which is what Chrome looks like
+  // when the user is signed out.
+  const syncStore = syncStorage ? { ...syncStorage } : null;
+  const changeListeners = [];
   const fetchCalls = [];
   // null means "every origin granted", which is the state after a user has
   // approved a provider and the case most tests care about. Pass an array to
   // exercise the permission-missing path.
   const permissionAsks = [];
+
+  /** One storage area, firing onChanged the way Chrome does. */
+  function makeArea(getStore, areaName) {
+    return {
+      get(keys, cb) {
+        const s = getStore();
+        const list = keys == null ? Object.keys(s) : (Array.isArray(keys) ? keys : [keys]);
+        const out = {};
+        for (const k of list) if (s && k in s) out[k] = s[k];
+        cb(out);
+      },
+      set(obj, cb) {
+        const s = getStore();
+        const changes = {};
+        for (const [k, v] of Object.entries(obj)) {
+          changes[k] = { oldValue: s[k], newValue: v };
+          s[k] = v;
+        }
+        if (cb) cb();
+        for (const fn of changeListeners) fn(changes, areaName);
+      }
+    };
+  }
 
   const chrome = {
     runtime: {
@@ -35,15 +62,8 @@ function loadServiceWorker({ storage = {}, fetchImpl, grantedOrigins = null } = 
       openOptionsPage() {}
     },
     storage: {
-      local: {
-        get(keys, cb) {
-          const list = Array.isArray(keys) ? keys : [keys];
-          const out = {};
-          for (const k of list) if (k in store) out[k] = store[k];
-          cb(out);
-        },
-        set(obj, cb) { Object.assign(store, obj); if (cb) cb(); }
-      }
+      local: makeArea(() => store, 'local'),
+      onChanged: { addListener(fn) { changeListeners.push(fn); } }
     },
     tabs: {
       sendMessage(tabId, msg) { sentMessages.push({ tabId, msg }); return Promise.resolve(); }
@@ -60,6 +80,8 @@ function loadServiceWorker({ storage = {}, fetchImpl, grantedOrigins = null } = 
     }
   };
 
+  if (syncStore) chrome.storage.sync = makeArea(() => syncStore, 'sync');
+
   const context = {
     chrome,
     console,
@@ -71,6 +93,7 @@ function loadServiceWorker({ storage = {}, fetchImpl, grantedOrigins = null } = 
     AbortSignal,
     DOMException,
     TextDecoder,
+    TextEncoder,
     setTimeout,
     clearTimeout,
     URL,
@@ -123,6 +146,8 @@ function loadServiceWorker({ storage = {}, fetchImpl, grantedOrigins = null } = 
     alarms,
     fetchCalls,
     permissionAsks,
+    syncStore,
+    emitChange: (changes, area) => changeListeners.forEach(fn => fn(changes, area)),
     fireAlarm: name => chrome.alarms._onAlarm({ name })
   };
 }
