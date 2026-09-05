@@ -97,6 +97,7 @@
         "lib/prompts.js",
         "lib/permissions.js",
         "lib/error-format.js",
+        "lib/control-prefs.js",
         "sidebar/error-panel.js",
         "sidebar/generation-bar.js",
         "sidebar/error-panel.css",

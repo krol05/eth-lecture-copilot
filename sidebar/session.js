@@ -361,6 +361,167 @@ function applyRestoredGuide(guideData, qaFromStorage, persistSession, qaChatsFro
   updateLectureSummaryBtn();
 }
 
+
+// ─── Controls the sidebar remembers between lectures ──────────────────────
+//
+// The sidebar is rebuilt from scratch on every lecture page, so until now
+// every one of these came back at its HTML default: you re-picked your
+// language, detail, card types and exam difficulty on every single lecture.
+// A few controls had grown their own persistence over time (per-tool thinking,
+// the script search method), which left two controls in the same panel
+// behaving differently for no reason a user could see.
+//
+// Values are stored under a stable key rather than an element id, because
+// several of these controls exist twice: once in the Tools tab and once in the
+// inline panel on the Guide tab. Sharing a key is what keeps the two copies
+// agreeing — previously the inline panel seeded itself from the tab's DOM one
+// way at open, and never wrote anything back.
+//
+// Deliberately absent: the per-tool language selects. Those are driven by the
+// guide's own language (see _syncToolLanguageSelects), so remembering them
+// would fight the sync every time a guide loaded.
+
+const CONTROL_PREFS_KEY = 'sidebarControlPrefs';
+let controlPrefs = {};
+
+const REMEMBERED_CONTROLS = [
+  // Guide generation
+  { key: 'guide.language',     kind: 'choice', ids: ['gen-lang-select'] },
+  { key: 'guide.languageText', kind: 'text',   ids: ['gen-lang-custom'] },
+  { key: 'guide.mode',         kind: 'choice', ids: ['gen-mode-select'] },
+  { key: 'guide.detail',       kind: 'choice', ids: ['gen-detail-select'] },
+  { key: 'guide.count',        kind: 'choice', ids: ['gen-count-select'] },
+  { key: 'guide.customTokens', kind: 'text',   ids: ['gen-custom-token-input'] },
+  { key: 'guide.temperature',  kind: 'number', ids: ['gen-temp-slider'], min: 0, max: 100 },
+  { key: 'guide.thinking',     kind: 'choice', ids: ['gen-thinking-select'] },
+  { key: 'guide.fallback',     kind: 'flag',   ids: ['gen-fallback-cb'] },
+
+  // Q&A
+  { key: 'qa.temperature',    kind: 'number', ids: ['qa-temp-slider'], min: 0, max: 100 },
+  { key: 'qa.thinking',       kind: 'choice', ids: ['qa-thinking-select'] },
+  { key: 'qa.responseLength', kind: 'choice', ids: ['qa-response-length-select'] },
+  { key: 'qa.responseStyle',  kind: 'choice', ids: ['qa-response-style-select'] },
+
+  // Course scripts
+  { key: 'scripts.strictness', kind: 'choice', ids: ['script-strictness-select'] },
+
+  // Flashcards — tab copy and inline copy share every key
+  { key: 'flashcards.count',       kind: 'pills',        ids: ['flashcards-count-pills', 'it-fc-count-pills'] },
+  { key: 'flashcards.customCount', kind: 'text',         ids: ['flashcards-custom-count', 'it-fc-custom-count'] },
+  { key: 'flashcards.cardTypes',   kind: 'multi-pills',  ids: ['flashcards-card-type-pills', 'it-fc-card-type-pills'] },
+  { key: 'flashcards.formulas',    kind: 'flag',         ids: ['flashcards-formulas-cb', 'it-fc-formulas-cb'] },
+
+  // Quiz
+  { key: 'quiz.count',       kind: 'pills', ids: ['quiz-count-pills', 'it-quiz-count-pills'] },
+  { key: 'quiz.customCount', kind: 'text',  ids: ['quiz-custom-count', 'it-quiz-custom-count'] },
+  { key: 'quiz.type',        kind: 'pills', ids: ['quiz-type-pills', 'it-quiz-type-pills'] },
+
+  // Exam
+  { key: 'exam.scope',        kind: 'pills', ids: ['exam-scope-pills', 'it-exam-scope-pills'] },
+  { key: 'exam.count',        kind: 'pills', ids: ['exam-count-pills', 'it-exam-count-pills'] },
+  { key: 'exam.customCount',  kind: 'text',  ids: ['exam-custom-count', 'it-exam-custom-count'] },
+  { key: 'exam.difficulty',   kind: 'pills', ids: ['exam-difficulty-pills', 'it-exam-difficulty-pills'] },
+  { key: 'exam.depth',        kind: 'pills', ids: ['exam-depth-pills', 'it-exam-depth-pills'] },
+  { key: 'exam.format',       kind: 'pills', ids: ['exam-format-pills', 'it-exam-format-pills'] },
+  { key: 'exam.answerLength', kind: 'pills', ids: ['exam-answer-pills', 'it-exam-answer-pills'] },
+
+  // Cross-lecture exam prediction (Tools tab only)
+  { key: 'crossExam.count',      kind: 'pills', ids: ['cross-exam-count-pills'] },
+  { key: 'crossExam.customCount', kind: 'text', ids: ['cross-exam-custom-count'] },
+  { key: 'crossExam.difficulty', kind: 'pills', ids: ['cross-exam-difficulty-pills'] },
+  { key: 'crossExam.format',     kind: 'pills', ids: ['cross-exam-format-pills'] }
+];
+
+/** Every element for a control that is currently on the page. */
+function controlElements(spec) {
+  return spec.ids.map(id => document.getElementById(id)).filter(Boolean);
+}
+
+/**
+ * Apply everything remembered to whichever of these controls exist now.
+ *
+ * Safe to call repeatedly: the inline tool panels are rebuilt from scratch
+ * each time they open, so they call this again to pick up the same values the
+ * Tools tab is showing.
+ */
+function hydrateRememberedControls() {
+  for (const spec of REMEMBERED_CONTROLS) {
+    const stored = controlPrefs[spec.key];
+    if (stored === undefined) continue;
+    // A stored value the control no longer offers leaves the HTML default in
+    // place rather than blanking the control.
+    for (const el of controlElements(spec)) {
+      ControlPrefs.restoreControl(el, spec.kind, stored, spec);
+    }
+  }
+  // The token row and hint follow the block-count select, which may have just
+  // changed underneath them.
+  updateCustomTokenVisibility?.();
+  updateTokenHint?.();
+  for (const id of ['gen-temp-slider', 'qa-temp-slider']) {
+    const el = document.getElementById(id);
+    if (el) updateSliderFill(el);
+  }
+  syncTempReadouts();
+}
+
+/** Keep the numeric label beside each temperature slider truthful. */
+function syncTempReadouts() {
+  const pairs = [['gen-temp-slider', 'gen-temp-value'], ['qa-temp-slider', 'qa-temp-value']];
+  for (const [sliderId, valueId] of pairs) {
+    const slider = document.getElementById(sliderId);
+    const label = document.getElementById(valueId);
+    if (slider && label) label.textContent = (slider.value / 100).toFixed(2);
+  }
+}
+
+/** Remember what `spec` is now set to, and mirror it to its other copy. */
+function rememberControl(spec, changedEl) {
+  const value = ControlPrefs.readControlValue(changedEl, spec.kind);
+  controlPrefs = ControlPrefs.withControlValue(controlPrefs, spec.key, value);
+  storageSet({ [CONTROL_PREFS_KEY]: controlPrefs });
+
+  // Both copies of a tool's controls share one key, so a change in one has to
+  // show up in the other the next time it is looked at.
+  for (const el of controlElements(spec)) {
+    if (el === changedEl) continue;
+    ControlPrefs.restoreControl(el, spec.kind, value, spec);
+  }
+}
+
+/**
+ * Listen for changes on whichever of these controls exist now.
+ *
+ * Pill clicks are caught on the group rather than the buttons, so this runs
+ * after the group's own handler has updated which pill is active — and so a
+ * panel rebuilt with fresh buttons needs no re-wiring of the buttons at all.
+ */
+function wireRememberedControls() {
+  for (const spec of REMEMBERED_CONTROLS) {
+    for (const el of controlElements(spec)) {
+      if (el.dataset.prefsWired === '1') continue;
+      el.dataset.prefsWired = '1';
+      const save = () => rememberControl(spec, el);
+      if (spec.kind === 'pills' || spec.kind === 'multi-pills') {
+        el.addEventListener('click', e => { if (e.target.closest('.pill')) save(); });
+      } else if (spec.kind === 'number' || spec.kind === 'text') {
+        // 'input', not 'change': these only fire change on blur, and a
+        // transcript arriving mid-typing re-hydrates from storage — which
+        // would put the old value back under the user's cursor.
+        el.addEventListener('input', save);
+      } else {
+        el.addEventListener('change', save);
+      }
+    }
+  }
+}
+
+/** Called once at startup, and again whenever a panel is built on the fly. */
+function setUpRememberedControls() {
+  hydrateRememberedControls();
+  wireRememberedControls();
+}
+
 /**
  * Load the settings that belong to the user rather than to a lecture: custom
  * prompt additions, per-tool thinking levels, summary options.
@@ -369,7 +530,7 @@ function applyRestoredGuide(guideData, qaFromStorage, persistSession, qaChatsFro
  * click, and the defaults in state.js are all usable on their own.
  */
 function loadStoredPreferences() {
-  chrome.storage?.local?.get(['customPromptExtras', TOOL_THINKING_KEY, SUMMARY_OPTS_KEY], (r) => {
+  chrome.storage?.local?.get(['customPromptExtras', TOOL_THINKING_KEY, SUMMARY_OPTS_KEY, CONTROL_PREFS_KEY], (r) => {
     if (r.customPromptExtras && typeof r.customPromptExtras === 'object') {
       customPromptExtras = { ...customPromptExtras, ...r.customPromptExtras };
     }
@@ -381,6 +542,8 @@ function loadStoredPreferences() {
       summaryOptions = { ...summaryOptions, ...r[SUMMARY_OPTS_KEY] };
       refreshInlineLectureSummaryIfOpen();
     }
+    controlPrefs = ControlPrefs.sanitizeControlPrefs(r[CONTROL_PREFS_KEY]);
+    setUpRememberedControls();
   });
 }
 

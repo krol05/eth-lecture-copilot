@@ -506,7 +506,6 @@ function buildLectureSummaryPrompt() {
     ? JSON.stringify(guide.guide, null, 2)
     : '(guide not available)';
   const fullTranscript = buildFullTranscriptText();
-  const qaExtraPrefix = customPromptExtras.qa ? customPromptExtras.qa.trim() + '\n\n' : '';
 
   const style = SUMMARY_STYLES[summaryOptions.style] || SUMMARY_STYLES.exam;
   const length = SUMMARY_LENGTHS[summaryOptions.length] || SUMMARY_LENGTHS.standard;
@@ -524,7 +523,7 @@ function buildLectureSummaryPrompt() {
     ? `\nEXTRA FOCUS FROM THE STUDENT (honour it, but never at the cost of coverage): ${focus}`
     : '';
 
-  return `${qaExtraPrefix}You are an expert ETH Zürich tutor. Produce ONE lecture summary based ONLY on the materials below.
+  return `You are an expert ETH Zürich tutor. Produce ONE lecture summary based ONLY on the materials below.
 
 STYLE: ${style.label} — ${style.hint}
 ${styleRules}
@@ -541,6 +540,7 @@ MUST NOT:
 - Invent facts, topics, or exam hints not supported by the guide or transcript
 - Filler, motivational padding, or meta-commentary about being an AI
 - Repeat the same point in multiple sections
+${promptExtrasBlock(customPromptExtras.qa)}
 
 --- FULL TRANSCRIPT (${title}) ---
 ${fullTranscript}
@@ -1126,13 +1126,6 @@ function guideErrorTip(raw) {
   return '';
 }
 
-/**
- * Build a token-efficient Q&A system prompt:
- * - Only sends a ±3 min transcript window around the current video time
- * - Only sends relevant guide blocks for that window
- * - Uses the transcript window content + user query for script retrieval
- * - Includes a compact lecture overview (block titles) for structural awareness
- */
 function buildQaResponseProfilePrompt(userQuery) {
   const lengthKey = qaResponseLengthSel?.value || 'default';
   const styleKey = qaResponseStyleSel?.value || 'default';
@@ -1161,6 +1154,24 @@ function buildQaResponseProfilePrompt(userQuery) {
   return `${tags.join(' ')}\n${lines.join('\n')}\n\n`;
 }
 
+/**
+ * Build the Q&A system prompt for one turn.
+ *
+ * What goes in:
+ * - the full guide, which is the whole lecture already compacted — cheap
+ *   next to the transcript and the thing most questions are actually about
+ * - a ±3 min transcript window around the current video time, for the wording
+ *   the guide had to leave out
+ * - a compact list of block titles, so the model can place a question that is
+ *   about a different part of the lecture
+ * - course-script excerpts, retrieved with the transcript window and the
+ *   question as the query
+ *
+ * This is rebuilt every turn because the video time, the response-profile tags
+ * and the retrieved excerpts all move. It is *not* accumulated: it goes in the
+ * request's own system field, while `messages` carries only the chat text, so
+ * the guide is sent exactly once per request no matter how long the chat is.
+ */
 async function buildQAPrompt(userQuery, options = {}) {
   const chatIdx = options.chatIdx ?? activeQaChatIdx;
   const title = transcript?.lectureTitle || 'Lecture';
@@ -1180,9 +1191,8 @@ async function buildQAPrompt(userQuery, options = {}) {
     ? windowCues.map(c => `[${fmtSec(c.start_time)}] ${c.text}`).join('\n')
     : (transcript?.text?.slice(0, 4000) || '(no transcript)');
 
-  // 2. Full guide — always included when available so the model has complete
-  //    lecture context on every turn. The API receives the full message history
-  //    separately, so rebuilding the system prompt each turn is intentional.
+  // 2. Full guide — the lecture in compacted form, so the model has complete
+  //    context for a question about any part of it.
   let guideBlocksStr = '(guide not yet generated)';
   if (guide?.guide?.length) {
     guideBlocksStr = JSON.stringify(guide.guide, null, 2);
@@ -1215,7 +1225,6 @@ async function buildQAPrompt(userQuery, options = {}) {
   }
 
   const hasScript = !!scriptContext;
-  const qaExtraPrefix = customPromptExtras.qa ? customPromptExtras.qa.trim() + '\n\n' : '';
   const qaResponseProfile = buildQaResponseProfilePrompt(userQuery);
 
   let summaryBlock = '';
@@ -1232,12 +1241,13 @@ ${lectureSummaryText}
 `;
   }
 
-  return `${qaExtraPrefix}${qaResponseProfile}${summaryBlock}You are a helpful study assistant for the ETH Zürich lecture: "${title}".
+  return `${qaResponseProfile}${summaryBlock}You are a helpful study assistant for the ETH Zürich lecture: "${title}".
 The student is currently at [${fmtSec(currentTime)}] in the video.
 
 Answer based on the transcript excerpt and guide below${hasScript ? ', plus course script excerpts' : ''}. Reference timestamps [HH:MM:SS] when relevant. Use LaTeX ($...$ inline, $$...$$ display) whenever math appears. Markdown formatting (e.g., #/## headings, short bullet lists) is allowed when it improves readability, but do not force markdown when plain text is clearer. If the question is about a different part of the lecture, reference the lecture structure to guide the student.
 
 If attached images contain user annotations (circles, highlights, underlines, arrows, or any drawn markings), pay special attention to those annotated regions and address them in extra detail — but do not reduce the depth of your answer for anything else.
+${promptExtrasBlock(customPromptExtras.qa)}
 ${lectureOverview}
 --- TRANSCRIPT (${fmtSec(windowStart)} to ${fmtSec(windowEnd)}) ---
 ${windowText}

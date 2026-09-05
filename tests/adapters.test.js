@@ -456,3 +456,64 @@ describe('an unverified host is sent no reasoning parameter', () => {
     expect(body.reasoning).toBeUndefined();
   });
 });
+
+// ─── Cross-adapter invariant: the system prompt is sent once, never per turn ──
+
+describe('the system prompt is sent exactly once per request', () => {
+  /**
+   * The Q&A system prompt carries the entire lecture guide, and it is rebuilt
+   * on every turn because the video time and retrieved excerpts move. That is
+   * only affordable because it goes in the request's own system slot while
+   * `messages` carries chat text alone — so a twenty-turn conversation still
+   * sends the guide once, not twenty times.
+   *
+   * An adapter that folded the system prompt into the message list, or into
+   * each turn, would multiply the cost of every long chat without any visible
+   * symptom other than the bill.
+   */
+  const GUIDE_MARKER = '<<<THE-WHOLE-LECTURE-GUIDE>>>';
+
+  /** A chat that has been going for a while. */
+  const longChat = Array.from({ length: 20 }, (_, i) => ({
+    role: i % 2 === 0 ? 'user' : 'assistant',
+    content: `turn ${i}`
+  }));
+
+  const cases = [
+    ['anthropic', { base: 'https://api.anthropic.com', model: 'claude-sonnet-5' }],
+    ['google', { base: 'https://generativelanguage.googleapis.com', model: 'gemini-2.5-flash' }],
+    ['oai', { base: 'https://api.openai.com/v1', model: 'gpt-5.6-terra' }]
+  ];
+
+  test.each(cases)('%s sends it once however long the chat is', (name, over) => {
+    const body = Adapters[name].buildRequest(
+      req({ ...over, system: `You are a tutor. ${GUIDE_MARKER}`, messages: longChat })
+    ).body;
+    const occurrences = JSON.stringify(body).split(GUIDE_MARKER).length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  test.each(cases)('%s keeps it out of the turn list', (name, over) => {
+    const body = Adapters[name].buildRequest(
+      req({ ...over, system: `You are a tutor. ${GUIDE_MARKER}`, messages: longChat })
+    ).body;
+    // Whichever field holds the conversation, no *user* or *assistant* turn may
+    // carry the guide — only a dedicated system slot may.
+    const turns = body.messages || body.contents || [];
+    const conversational = turns.filter(t => t.role === 'user' || t.role === 'assistant' || t.role === 'model');
+    expect(conversational.length).toBe(longChat.length);
+    for (const turn of conversational) {
+      expect(JSON.stringify(turn)).not.toContain(GUIDE_MARKER);
+    }
+  });
+
+  test.each(cases)('%s grows only by the new turns as a chat continues', (name, over) => {
+    // Two requests differing by one turn must differ by roughly that turn's
+    // size — not by another copy of the system prompt.
+    const system = `You are a tutor. ${'g'.repeat(20000)}`;
+    const size = (messages) =>
+      JSON.stringify(Adapters[name].buildRequest(req({ ...over, system, messages })).body).length;
+    const growth = size([...longChat, { role: 'user', content: 'one more question' }]) - size(longChat);
+    expect(growth).toBeLessThan(200);
+  });
+});
