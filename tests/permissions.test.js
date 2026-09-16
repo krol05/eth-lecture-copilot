@@ -3,7 +3,7 @@
  * Chrome host grant, so an install stops warning about "all websites".
  */
 const {
-  originPattern, providerPattern, hostLabel,
+  originPattern, hostLabel,
   hasPermission, requestPermission, EMBEDDING_ORIGINS
 } = require('../lib/permissions.js');
 
@@ -32,7 +32,7 @@ describe('originPattern', () => {
     const { Catalog } = require('../lib/providers/catalog.js');
     for (const provider of Catalog.list()) {
       if (!provider.base) continue;
-      const pattern = providerPattern(provider);
+      const pattern = originPattern(provider.base);
       expect(pattern).toMatch(/^https?:\/\/[^/*]+\/\*$/);
       // Never a wildcard host — the whole point is one prompt, one site
       expect(pattern).not.toContain('*.');
