@@ -503,7 +503,7 @@ function setSummaryOption(key, value) {
 function buildLectureSummaryPrompt() {
   const title = transcript?.lectureTitle || guide?.lecture_title || 'Lecture';
   const guideBlocksStr = guide?.guide?.length
-    ? JSON.stringify(guide.guide, null, 2)
+    ? JSON.stringify(guide.guide)
     : '(guide not available)';
   const fullTranscript = buildFullTranscriptText();
 
@@ -1195,7 +1195,12 @@ async function buildQAPrompt(userQuery, options = {}) {
   //    context for a question about any part of it.
   let guideBlocksStr = '(guide not yet generated)';
   if (guide?.guide?.length) {
-    guideBlocksStr = JSON.stringify(guide.guide, null, 2);
+    // Compact, not pretty-printed. The guide is ~86% of this prompt and it is
+    // rebuilt every turn, so two-space indentation was costing about 2,400
+    // tokens a message — a fifth of the guide payload — to produce whitespace
+    // no model needs. JSON meant for a person (the history export) stays
+    // indented; JSON meant for a model does not.
+    guideBlocksStr = JSON.stringify(guide.guide);
   }
 
   // 3. Compact lecture overview so the model can orient itself quickly
