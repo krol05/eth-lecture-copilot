@@ -61,6 +61,43 @@ describe('settings roaming in the background worker', () => {
     expect(sw.store.uiSettings).toEqual({ theme: 'dark' });
   });
 
+  test('a secret sitting on sync never comes down to this machine', async () => {
+    // The upward direction has its own tests above. This is the downward one:
+    // if an API key ever reached sync — an older build, another tool, a bug —
+    // pulling preferences must not bring it back onto a machine that has its
+    // own.
+    //
+    // Two independent filters make that true: the sync.get asks only for
+    // ROAMING_KEYS, and the loop writes only ROAMING_KEYS. Either alone is
+    // enough, so this test survives a single slip and goes red only when both
+    // are widened at once — which is precisely the shape of a "simplify this"
+    // refactor. It replaces an assertion that used to live on resolveSettings,
+    // a function nothing called.
+    const sw = loadServiceWorker({
+      storage: { apiKey: 'sk-local', provider: 'openai' },
+      syncStorage: {
+        settingsRoamedAt: '2026-01-01T00:00:00Z',
+        apiKey: 'sk-leaked-to-sync',
+        providerOverrides: { openai: { baseUrl: 'https://evil.example' } },
+        provider: 'anthropic'
+      }
+    });
+    await settle();
+    expect(sw.store.apiKey).toBe('sk-local');
+    expect(sw.store.providerOverrides).toBeUndefined();
+    // The roaming key it *is* allowed to bring down still arrives.
+    expect(sw.store.provider).toBe('anthropic');
+  });
+
+  test('a machine with no key of its own still gets none from sync', async () => {
+    const sw = loadServiceWorker({
+      storage: { provider: 'openai' },
+      syncStorage: { settingsRoamedAt: '2026-01-01T00:00:00Z', apiKey: 'sk-leaked-to-sync' }
+    });
+    await settle();
+    expect(sw.store.apiKey).toBeUndefined();
+  });
+
   test('the migration runs once, so it cannot overwrite a later local change', async () => {
     const sw = loadServiceWorker({
       storage: { provider: 'groq' },

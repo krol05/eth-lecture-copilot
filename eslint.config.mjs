@@ -43,7 +43,6 @@ const libGlobals = {
   splitConceptText: 'readonly',
   isAbbreviationDot: 'readonly',
   conceptToParts: 'readonly',
-  conceptToText: 'readonly',
   // lib/render-inline.js
   escHtml: 'readonly',
   renderMarkdownInline: 'readonly',
@@ -69,7 +68,6 @@ const libGlobals = {
   GUIDE_COUNT_PROFILES: 'readonly',
   buildGuidePrompt: 'readonly',
   buildStudyFlowGuidePrompt: 'readonly',
-  buildQASystemPrompt: 'readonly',
   buildFlashcardsPrompt: 'readonly',
   normalizeFlashcardTypeSelection: 'readonly',
   buildQuizPrompt: 'readonly',

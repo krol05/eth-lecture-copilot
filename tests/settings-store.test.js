@@ -2,7 +2,7 @@
 
 const {
   ROAMING_KEYS, LOCAL_ONLY_KEYS, MIGRATION_FLAG, SYNC_SAFE_ITEM,
-  fitsInSync, partitionSettings, planMigration, resolveSettings, estimateSyncBytes
+  fitsInSync, partitionSettings, planMigration
 } = require('../lib/settings-store.js');
 
 describe('what is allowed to leave this machine', () => {
@@ -73,10 +73,6 @@ describe('staying inside what Chrome accepts', () => {
     expect(local).toEqual({});
   });
 
-  test('estimateSyncBytes adds up what would be written', () => {
-    expect(estimateSyncBytes({ a: 'xx' })).toBe('a"xx"'.length);
-    expect(estimateSyncBytes(null)).toBe(0);
-  });
 });
 
 describe('the one-time migration', () => {
@@ -100,35 +96,5 @@ describe('the one-time migration', () => {
   test('nothing to copy is not a migration', () => {
     expect(planMigration({ apiKey: 'sk' }, {}).migrate).toBe(false);
     expect(planMigration({}, {}).migrate).toBe(false);
-  });
-});
-
-describe('reading settings back', () => {
-  test('a synced preference wins over the local copy', () => {
-    const merged = resolveSettings(
-      { uiSettings: { theme: 'light' }, apiKey: 'sk-local' },
-      { uiSettings: { theme: 'dark-blue' } }
-    );
-    expect(merged.uiSettings).toEqual({ theme: 'dark-blue' });
-  });
-
-  test('this machine keeps its own key regardless of what sync holds', () => {
-    const merged = resolveSettings({ apiKey: 'sk-local' }, { apiKey: 'sk-from-another-machine' });
-    expect(merged.apiKey).toBe('sk-local');
-  });
-
-  test('a secret that somehow reached sync is not read back out', () => {
-    const merged = resolveSettings({}, { apiKey: 'sk-leaked', providerOverrides: { x: 1 } });
-    expect(merged.apiKey).toBeUndefined();
-    expect(merged.providerOverrides).toBeUndefined();
-  });
-
-  test('a key that has never synced keeps whatever this machine had', () => {
-    const merged = resolveSettings({ provider: 'groq', model: 'llama' }, {});
-    expect(merged).toMatchObject({ provider: 'groq', model: 'llama' });
-  });
-
-  test('empty inputs give an empty result rather than throwing', () => {
-    expect(resolveSettings(null, null)).toEqual({});
   });
 });
