@@ -5,7 +5,6 @@ const {
   buildStudyFlowGuidePrompt,
   promptExtrasBlock,
   appendPromptExtras,
-  buildQASystemPrompt,
   normalizeFlashcardTypeSelection,
   buildFlashcardsPrompt,
   buildQuizPrompt,
@@ -48,8 +47,7 @@ const builders = {
   buildCrossLecturePredictionPrompt: () => buildCrossLecturePredictionPrompt([{ ...guide }], {}),
   buildToolAskPrompt: () => buildToolAskPrompt({
     sourceType: 'flashcard', itemPayload: { front: 'f', back: 'b' }, lectureTitle: 'L', guide
-  }),
-  buildQASystemPrompt: () => buildQASystemPrompt('transcript text', guide, 'Probability')
+  })
 };
 
 describe('every prompt builder produces something usable', () => {
@@ -67,8 +65,7 @@ describe('every prompt builder produces something usable', () => {
         case 'buildQuizPrompt': return buildQuizPrompt(empty, {});
         case 'buildExamQuestionsPrompt': return buildExamQuestionsPrompt(empty, [], {});
         case 'buildCrossLecturePredictionPrompt': return buildCrossLecturePredictionPrompt([], {});
-        case 'buildToolAskPrompt': return buildToolAskPrompt({});
-        default: return buildQASystemPrompt('', empty, '');
+        default: return buildToolAskPrompt({});
       }
     }).not.toThrow();
   });
@@ -333,5 +330,50 @@ describe('the keys the sidebar streams against match the keys the prompts ask fo
     const scanner = createJsonArrayScanner(declared.FLASHCARDS_REQUEST);
     scanner.push('{"flashcards":[{"front":"a","back":"b"},{"front":"c","back":"d"}]}');
     expect(scanner.count).toBe(2);
+  });
+});
+
+describe('JSON sent to a model is compact; JSON shown to a person is not', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+
+  /**
+   * The guide is about 86% of a Q&A system prompt and it is rebuilt on every
+   * turn, so two-space indentation was spending roughly 2,400 tokens a message
+   * to produce whitespace no model reads. Compact is not a micro-optimisation
+   * here; it is a fifth of the largest thing in the prompt.
+   *
+   * The reverse holds for anything a person reads: the history export is a
+   * file someone may open in an editor, and the error panel is on screen.
+   * Those stay indented.
+   */
+  test.each([
+    ['lib/prompts.js'],
+    ['sidebar/qa.js']
+  ])('%s builds no indented payload', (file) => {
+    const offenders = read(file)
+      .split('\n')
+      .map((line, i) => [i + 1, line])
+      .filter(([, line]) => /JSON\.stringify\([^)]*null,\s*2\s*\)/.test(line));
+    expect(offenders.map(([n, l]) => `${file}:${n} ${l.trim()}`)).toEqual([]);
+  });
+
+  test.each([
+    ['sidebar/history.js'],
+    ['lib/error-format.js']
+  ])('%s still indents, because a person reads it', (file) => {
+    expect(read(file)).toMatch(/JSON\.stringify\([^)]*null,\s*2\s*\)/);
+  });
+
+  test('a tool-ask item is serialised compactly', () => {
+    // The one model-facing payload in this file that can be checked directly.
+    const out = buildToolAskPrompt({
+      sourceType: 'flashcard',
+      itemPayload: { front: 'What is amortised cost?', back: 'Average over a worst-case sequence.' },
+      lectureTitle: 'A&D', guide
+    });
+    expect(out).toContain('{"front":"What is amortised cost?"');
+    expect(out).not.toMatch(/\{\n\s+"front"/);
   });
 });
