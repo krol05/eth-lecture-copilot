@@ -37,8 +37,8 @@ describe('splitConceptText', () => {
 // Guides hold key_concepts in two shapes: structured objects (current) and
 // plain strings (saved before the schema changed). Assuming strings is what
 // broke Markdown export with "c.replace is not a function".
-describe('conceptToParts / conceptToText handle both guide shapes', () => {
-  const { conceptToParts, conceptToText } = require('../lib/concept-split.js');
+describe('conceptToParts handles both guide shapes', () => {
+  const { conceptToParts } = require('../lib/concept-split.js');
 
   test('structured concept keeps its label, lead and body', () => {
     expect(conceptToParts({ label: 'MOTIVATION', lead: 'Big systems use distributed memory.', body: 'Models over 70B do not fit on one machine.' }))
@@ -65,13 +65,7 @@ describe('conceptToParts / conceptToText handle both guide shapes', () => {
   test('empty and malformed entries never throw', () => {
     for (const bad of [null, undefined, '', {}, [], 42]) {
       expect(() => conceptToParts(bad)).not.toThrow();
-      expect(() => conceptToText(bad)).not.toThrow();
     }
     expect(conceptToParts(null)).toEqual({ label: '', lead: '', body: '' });
-  });
-
-  test('conceptToText flattens either shape to one line', () => {
-    expect(conceptToText({ lead: 'Lead here.', body: 'Body here.' })).toBe('Lead here. Body here.');
-    expect(conceptToText('Just a string')).toBe('Just a string');
   });
 });
