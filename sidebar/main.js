@@ -88,27 +88,17 @@ function init() {
     updateSliderFill(qaTempSlider);
   });
   if (qaTempSlider) updateSliderFill(qaTempSlider);
-  qaThinkingSel?.addEventListener('change', () => {
-    localStorage.setItem('eth-copilot-qa-thinking', qaThinkingSel.value || 'none');
-  });
-  if (qaThinkingSel) qaThinkingSel.value = localStorage.getItem('eth-copilot-qa-thinking') || 'none';
+  // qa-thinking, qa-response-length and qa-response-style used to be saved
+  // here in localStorage. They are in the remembered-controls registry in
+  // session.js now, so keeping this would mean two owners for one value —
+  // exactly the duplication that registry exists to end. The disclosure state
+  // below stays: it is a panel-open flag, not a preference, and it has to be
+  // read synchronously before the details element first paints.
   if (qaCustomization) {
     qaCustomization.open = localStorage.getItem('eth-copilot-qa-customization-open') === '1';
     qaCustomization.addEventListener('toggle', () => {
       localStorage.setItem('eth-copilot-qa-customization-open', qaCustomization.open ? '1' : '0');
     });
-  }
-  qaResponseLengthSel?.addEventListener('change', () => {
-    localStorage.setItem('eth-copilot-qa-response-length', qaResponseLengthSel.value || 'default');
-  });
-  if (qaResponseLengthSel) {
-    qaResponseLengthSel.value = localStorage.getItem('eth-copilot-qa-response-length') || 'default';
-  }
-  qaResponseStyleSel?.addEventListener('change', () => {
-    localStorage.setItem('eth-copilot-qa-response-style', qaResponseStyleSel.value || 'default');
-  });
-  if (qaResponseStyleSel) {
-    qaResponseStyleSel.value = localStorage.getItem('eth-copilot-qa-response-style') || 'default';
   }
   genFallbackCb?.addEventListener('change', () => {
     genSettings?.classList.toggle('disabled-controls', genFallbackCb.checked);
