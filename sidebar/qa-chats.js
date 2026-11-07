@@ -83,7 +83,7 @@ function closeQaChat(idx) {
   // to disappear), but leave streams in OTHER chats alone — they must keep flowing.
   for (const [reqId, state] of qaActiveStreams.entries()) {
     if (state.chatIdx === idx) {
-      try { state.abortFn?.(); } catch (_) {}
+      try { state.abortFn?.(); } catch {}
       QaStreamFlush.stopStreamFlush(state);
       qaActiveStreams.delete(reqId);
     }
