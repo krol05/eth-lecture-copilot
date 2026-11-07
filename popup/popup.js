@@ -40,7 +40,7 @@ function init() {
     const v = chrome.runtime.getManifest().version;
     const vEl = document.getElementById('footer-version');
     if (vEl && v) vEl.textContent = `Lecture Copilot v${v}`;
-  } catch (_) {}
+  } catch {}
 
   // Load saved settings + provider customizations, then build the UI
   chrome.storage.local.get(
