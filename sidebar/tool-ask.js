@@ -92,7 +92,7 @@ function getToolAskItemLabel(sourceType, itemIndex, payload) {
   }
 }
 
-function buildToolAskResponseProfilePrompt(userQuery) {
+function buildToolAskResponseProfilePrompt() {
   const lengthKey = toolAskLengthSel?.value || 'default';
   const styleKey = toolAskStyleSel?.value || 'default';
   const lines = [];
@@ -112,7 +112,7 @@ function buildToolAskResponseProfilePrompt(userQuery) {
 }
 
 function buildToolAskSystemPrompt(userQuery, session) {
-  const profile = buildToolAskResponseProfilePrompt(userQuery);
+  const profile = buildToolAskResponseProfilePrompt();
   const base = buildToolAskPrompt({
     sourceType: session.sourceType,
     itemPayload: session.itemPayload,
@@ -253,10 +253,10 @@ async function sendToolAskMessage() {
   renderToolAskPanel();
 
   const useStream = !!settings.provider;
-  let streamEl = null;
   let streamBubble = null;
   if (useStream) {
-    streamEl = document.createElement('div');
+    // Only ever touched in here; the bubble is what the rest of the function needs.
+    const streamEl = document.createElement('div');
     streamEl.className = 'chat-msg assistant';
     streamEl.innerHTML = '<div class="chat-bubble"><div class="qa-katex-zone"></div><span class="qa-stream-cursor" aria-hidden="true"></span></div>';
     toolAskMessagesEl?.appendChild(streamEl);

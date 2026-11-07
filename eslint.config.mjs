@@ -219,8 +219,17 @@ export default [
     files: ['playwright.config.js', 'tests/e2e/**/*.js'],
     languageOptions: {
       sourceType: 'commonjs',
-      // page.evaluate bodies run inside the extension page, where `chrome` exists.
-      globals: { ...globals.node, ...globals.browser, chrome: 'readonly' }
+      // page.evaluate bodies run inside the extension page, not in Node, so
+      // they see the extension's own globals. Listed one by one rather than
+      // wholesale: a typo in a page.evaluate body is otherwise invisible until
+      // the assertion fails for the wrong reason.
+      globals: {
+        ...globals.node,
+        ...globals.browser,
+        chrome: 'readonly',
+        currentLectureUrl: 'writable',
+        loadHistory: 'readonly'
+      }
     }
   }
 ];

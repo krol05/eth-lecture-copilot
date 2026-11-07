@@ -9,7 +9,7 @@
 // ─── Q&A Chat ─────────────────────────────────────────────────────────────
 
 function abortQaStream(chatIdx) {
-  for (const [reqId, state] of qaActiveStreams.entries()) {
+  for (const state of qaActiveStreams.values()) {
     if (state.chatIdx === chatIdx) {
       state.abortFn?.();
       return;
@@ -661,7 +661,6 @@ async function runLectureSummaryGeneration({ source, chatIdx, guideBodyEl }) {
   const useStream = !!settings.provider;
   const apiUserMessage = 'Generate the complete lecture summary now. Follow every instruction in the system prompt.';
 
-  let typingEl = null;
   let streamEl = null;
   let streamBubble = null;
   let guideStreamBubble = null;
@@ -1033,8 +1032,6 @@ async function sendQaMessage() {
       } else {
         streamEl.remove();
       }
-      streamEl = null;
-      streamBubble = null;
     } else {
       typingEl?.remove();
     }
@@ -1094,7 +1091,7 @@ function extractApiErrorMessage(raw) {
       const parsed = JSON.parse(text.slice(jsonStart));
       const nested = parsed?.error?.message || parsed?.message || parsed?.error;
       if (typeof nested === 'string') return extractApiErrorMessage(nested);
-    } catch (_) {}
+    } catch {}
   }
   const escaped = text.match(/\\"message\\":\\"([^"]+)/);
   if (escaped?.[1]) {

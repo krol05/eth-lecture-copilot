@@ -10,7 +10,7 @@
 function renderFormulaLatexForExport(latex) {
   try {
     return katex.renderToString(normalizeLatexForKatex(String(latex || '')), { displayMode: true, throwOnError: false, trust: false });
-  } catch (e) {
+  } catch {
     return `<span class="formula-fallback">${escHtml(latex)}</span>`;
   }
 }
@@ -22,7 +22,7 @@ function renderInlineLatexForExport(text) {
       if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
         try {
           return katex.renderToString(part.slice(1, -1), { displayMode: false, throwOnError: false, trust: false });
-        } catch (e) {
+        } catch {
           return escHtml(part);
         }
       }

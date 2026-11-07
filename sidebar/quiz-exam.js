@@ -428,7 +428,7 @@ function renderExamQuestionList(containerId, questions) {
       const isShown = !answerContent.hidden;
       answerContent.hidden = isShown;
       toggle.setAttribute('aria-expanded', String(!isShown));
-      toggle.querySelector('.exam-toggle-chevron').style.transform = isShown ? '' : 'rotate(180deg)';
+      if (chevron) chevron.style.transform = isShown ? '' : 'rotate(180deg)';
       toggle.childNodes[toggle.childNodes.length - 1].textContent =
         isShown ? ' Show model answer' : ' Hide model answer';
 

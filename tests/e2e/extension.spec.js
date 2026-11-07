@@ -175,3 +175,54 @@ test('a remembered value the control no longer offers is ignored, not applied', 
   await page.evaluate(async () => { await chrome.storage.local.remove('sidebarControlPrefs'); });
   await page.close();
 });
+
+test('History opens on the course you are watching', async () => {
+  // Every level of the History tree already worked out whether it held the
+  // active lecture — buildYearGroup got activeYS, buildSeasonGroup got
+  // isActiveSeason, buildCourseGroup computed hasActive — and none of them
+  // acted on it, so History always opened fully collapsed. This drives the
+  // real render path rather than asserting on source.
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/sidebar/sidebar.html`);
+  await expect(page.locator('#history-list')).toBeAttached();
+
+  const ACTIVE = 'https://video.ethz.ch/lectures/d-infk/2026/spring/401-0663-00L/aaa.html';
+  const OTHER = 'https://video.ethz.ch/lectures/d-infk/2025/fall/252-0061-00L/bbb.html';
+
+  await page.evaluate(async ([activeUrl, otherUrl]) => {
+    const entry = (url, title, date) => ({
+      lectureUrl: url, courseName: title, courseKey: url.split('/')[6],
+      date, guideDate: date, guideTitle: title,
+      guide: { guide_title: title, guide: [{ title: 'Block', start_time: 0, end_time: 60 }] }
+    });
+    await chrome.storage.local.set({
+      guideHistory: [
+        entry(activeUrl, 'Numerical Methods', '2026-03-01'),
+        entry(otherUrl, 'Systems Programming', '2025-10-01')
+      ],
+      hiddenCourses: []
+    });
+  }, [ACTIVE, OTHER]);
+
+  // currentLectureUrl normally arrives from the content script, which is not
+  // in play on a directly-opened page.
+  await page.evaluate((url) => {
+    currentLectureUrl = url;
+    loadHistory();
+  }, ACTIVE);
+
+  const active = page.locator('.history-course-group', { hasText: 'Numerical Methods' });
+  const other = page.locator('.history-course-group', { hasText: 'Systems Programming' });
+  await expect(active).toHaveAttribute('open', '');
+  await expect(other).not.toHaveAttribute('open', '');
+
+  // The course is only visible if the year and season above it opened too.
+  await expect(page.locator('.history-year-group', { hasText: '2026' })).toHaveAttribute('open', '');
+  await expect(page.locator('.history-season-group', { hasText: 'Spring' })).toHaveAttribute('open', '');
+  await expect(page.locator('.history-year-group', { hasText: '2025' })).not.toHaveAttribute('open', '');
+
+  await page.evaluate(async () => {
+    await chrome.storage.local.remove(['guideHistory', 'hiddenCourses']);
+  });
+  await page.close();
+});

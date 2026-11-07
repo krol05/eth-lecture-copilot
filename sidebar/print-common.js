@@ -20,7 +20,7 @@
       let payload;
       try {
         payload = JSON.parse(raw);
-      } catch (e) {
+      } catch {
         rootEl.innerHTML = '<p style="color:#d1242f">Invalid export data.</p>';
         return;
       }

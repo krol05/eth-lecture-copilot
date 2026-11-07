@@ -196,7 +196,7 @@ function openImageEditor(imageIdx) {
 
 function _imgEdRender() {
   if (!_imgEd) return;
-  const { img, canvas, ctx, drawCanvas, crop } = _imgEd;
+  const { img, ctx, drawCanvas, crop } = _imgEd;
   const W = _imgEd.cssW, H = _imgEd.cssH;
 
   ctx.clearRect(0, 0, W, H);
@@ -409,7 +409,7 @@ function closeImageEditor() {
 
 function applyImageEditor() {
   if (!_imgEd) return;
-  const { img, canvas, drawCanvas, crop, imageIdx } = _imgEd;
+  const { img, drawCanvas, crop, imageIdx } = _imgEd;
 
   // The editor shows the image shrunk to fit the panel, but the crop must be
   // saved at the SOURCE scale. Sizing the output canvas in display pixels

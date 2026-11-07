@@ -350,7 +350,7 @@ function renderBlock(idx) {
     const latex = el.dataset.latex;
     try {
       katex.render(normalizeLatexForKatex(latex), el, { displayMode: true, throwOnError: false, trust: false });
-    } catch (e) {
+    } catch {
       el.textContent = latex;
     }
   });
@@ -464,7 +464,7 @@ async function copyTextToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
-  } catch (_) {
+  } catch {
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
