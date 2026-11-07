@@ -193,7 +193,7 @@ function loadHistory() {
       const g = groups[e.courseKey || 'other'];
       e._displayNum = g ? e._displayNum : null;
     });
-    container.appendChild(buildRecentSection(allEntriesByDate, normCurrent, hiddenSet));
+    container.appendChild(buildRecentSection(allEntriesByDate, normCurrent));
 
     // ── Section B: Year/Season tree ───────────────────────────────────────
     const visibleKeys = Object.keys(groups).filter(k => !hiddenSet.has(k));
@@ -232,7 +232,7 @@ function loadHistory() {
       hiddenSection.className = 'history-hidden-section';
       hiddenSection.innerHTML = `<summary class="history-hidden-summary">Hidden courses (${hiddenKeys.length})</summary>`;
       for (const k of hiddenKeys) {
-        hiddenSection.appendChild(buildCourseGroup(k, groups[k], hiddenSet, true, activeCourseKey));
+        hiddenSection.appendChild(buildCourseGroup(k, groups[k], hiddenSet, true));
       }
       container.appendChild(hiddenSection);
     }
@@ -241,7 +241,7 @@ function loadHistory() {
 
 const RECENT_PAGE_SIZE = 6;
 
-function buildRecentSection(entriesByDate, normCurrent, hiddenSet) {
+function buildRecentSection(entriesByDate, normCurrent) {
   const wrapper = document.createElement('details');
   wrapper.className = 'history-recent-group';
   wrapper.innerHTML = `<summary class="history-recent-summary">
@@ -322,6 +322,11 @@ function buildYearGroup(year, seasonMap, groups, hiddenSet, activeCourseKey, act
 
   const details = document.createElement('details');
   details.className = 'history-year-group';
+  // Open the path down to the lecture being watched. Every level already
+  // worked out whether it was the active one and then threw the answer away,
+  // so History always opened fully collapsed — including on the course you
+  // are in the middle of.
+  if (activeYS?.year === year) details.open = true;
   details.innerHTML = `<summary class="history-year-summary">
       <span class="history-year-chevron">›</span>
       <span class="history-year-label">${escHtml(year)}</span>
@@ -349,6 +354,7 @@ function buildSeasonGroup(season, courseKeys, groups, hiddenSet, activeCourseKey
 
   const details = document.createElement('details');
   details.className = 'history-season-group';
+  if (isActiveSeason) details.open = true;
   details.innerHTML = `<summary class="history-season-summary">
       <span class="history-season-chevron">›</span>
       <span class="history-season-label">${escHtml(season)}</span>
@@ -363,19 +369,20 @@ function buildSeasonGroup(season, courseKeys, groups, hiddenSet, activeCourseKey
   });
 
   for (const k of sortedCourseKeys) {
-    details.appendChild(buildCourseGroup(k, groups[k], hiddenSet, false, activeCourseKey));
+    details.appendChild(buildCourseGroup(k, groups[k], hiddenSet, false));
   }
 
   return details;
 }
 
-function buildCourseGroup(courseKey, group, hiddenSet, isHidden, activeCourseKey) {
+function buildCourseGroup(courseKey, group, hiddenSet, isHidden) {
   const normCurrent = normalizeLectureUrl(currentLectureUrl);
   const hasActive   = group.entries.some(e => normalizeLectureUrl(e.lectureUrl) === normCurrent);
   const count       = group.entries.length;
 
   const details = document.createElement('details');
   details.className = 'history-course-group';
+  if (hasActive) details.open = true;
 
   const guideWord = count === 1 ? 'guide' : 'guides';
   details.innerHTML = `
