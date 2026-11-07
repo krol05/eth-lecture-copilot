@@ -43,7 +43,6 @@
   let videoEl = null;
   let fsVideoTarget = null;
   let timestampInterval = null;
-  let lastBlockIndex = -1;
   let speedOverlayTimeout = null;
   /** Bumped on SPA navigation so in-flight FETCH_JSON/VTT callbacks cannot complete with a stale generation. */
   let extractionGen = 0;
@@ -195,15 +194,22 @@
   }
 
   function waitForVideo(timeout = 15000) {
-    return new Promise((resolve, reject) => {
+    const existing = document.querySelector(REAL_VIDEO);
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve) => {
+      let timer;
       const check = () => {
         const v = document.querySelector(REAL_VIDEO);
-        if (v) return resolve(v);
+        if (!v) return;
+        // Stop observing as soon as the video shows up; this used to keep
+        // watching every DOM mutation on the page until the timeout fired.
+        obs.disconnect();
+        clearTimeout(timer);
+        resolve(v);
       };
-      check();
       const obs = new MutationObserver(check);
       obs.observe(document.body, { childList: true, subtree: true });
-      setTimeout(() => {
+      timer = setTimeout(() => {
         obs.disconnect();
         // Return null video rather than rejecting — sidebar still useful without video
         const v = document.querySelector(REAL_VIDEO);
@@ -688,7 +694,7 @@
           }
         }
       }
-    } catch (_) {}
+    } catch {}
 
     // ── Strategy 2: Tobira breadcrumb nav ─────────────────────────────────────
     // ETH's Tobira SPA uses aria-label="breadcrumbs" (plural). We intentionally
@@ -716,12 +722,6 @@
       .trim() || lectureTitle;
   }
 
-  function stripVttHeader(vtt) {
-    return vtt
-      .replace(/\r\n/g, '\n')
-      .replace(/^WEBVTT[\s\S]*?\n\n/, '')
-      .trim();
-  }
 
   function extractEventId() {
     // From JSON-LD VideoObject thumbnailUrl
@@ -732,7 +732,7 @@
         const url = d.thumbnailUrl || d.contentUrl || '';
         const m = url.match(/engage-player\/([0-9a-f-]{36})\//i);
         if (m) return m[1];
-      } catch (_) {}
+      } catch {}
     }
     // From img sources
     for (const img of document.querySelectorAll('img[src*="dist.tobira.ethz.ch"]')) {
@@ -793,7 +793,7 @@
   }
 
   function getPerfNow() {
-    try { return performance.now(); } catch (_) { return 0; }
+    try { return performance.now(); } catch { return 0; }
   }
 
   function findCaptionsUrlFromPage({ recentOnly = false } = {}) {
@@ -821,7 +821,7 @@
         if (recentOnly && startTime < minStart) continue;
         if (/\.vtt(\?|$)/i.test(name)) return name;
       }
-    } catch (_) {}
+    } catch {}
 
     if (recentOnly) return null;
 
@@ -979,7 +979,7 @@
     try {
       // Restrict to our own extension origin — prevents other pages from spoofing reads.
       sidebarIframe.contentWindow.postMessage(msg, _extOrigin);
-    } catch (_) {}
+    } catch {}
   }
 
   function onSidebarMessage(e) {
