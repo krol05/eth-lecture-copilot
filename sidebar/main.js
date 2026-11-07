@@ -501,6 +501,10 @@ function hasUsableSettings() {
 
     let top = r.top - th - 6;
     if (top < 4) top = r.bottom + 6;
+    // Flipping below can overflow the bottom just as easily; vh was already
+    // measured for this and never used, so a tall tooltip near the foot of the
+    // sidebar was simply cut off.
+    if (top + th > vh - 4) top = Math.max(4, vh - 4 - th);
 
     tip.style.left = left + 'px';
     tip.style.top = top + 'px';
